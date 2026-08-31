@@ -1,0 +1,6 @@
+numpy>=1.26
+pandas>=2.2
+pyarrow>=15
+akshare>=1.14        # 可选：拉真实 A 股日线
+scipy>=1.11          # 可选（因子统计）
+pytest>=8            # 引擎回归测试

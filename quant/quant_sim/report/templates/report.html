@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+ body{font-family:"Microsoft YaHei",system-ui,sans-serif;margin:24px;background:#f7f8fa;color:#222}
+ h1{font-size:20px} h2{font-size:16px;margin-top:28px;border-left:4px solid #2b6cb0;padding-left:8px}
+ table{border-collapse:collapse;background:#fff;font-size:13px}
+ th,td{border:1px solid #e2e8f0;padding:4px 10px;text-align:right}
+ th:first-child,td:first-child{text-align:left}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin:12px 0}
+ .card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px}
+ .card .k{font-size:12px;color:#666}.card .v{font-size:18px;font-weight:600;margin-top:2px}
+ .pos{color:#c0392b}.neg{color:#27ae60}
+ #equity,#drawdown{height:360px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-top:8px}
+ .note{color:#888;font-size:12px}
+ details{margin-top:16px} summary{cursor:pointer;font-weight:600}
+</style></head><body>
+<h1>__TITLE__</h1>
+<p class="note">__GEN_TIME__ ｜ 引擎：quant_sim v0.1 ｜ 撮合：__EXEC__ ｜ __DATA_NOTE__</p>
+<div class="grid">__CARDS__</div>
+<h2>净值与回撤</h2>
+<div id="equity"></div><div id="drawdown"></div>
+<h2>指标明细</h2>__METRICS_TABLE__
+<h2>最新持仓</h2>__POSITIONS_TABLE__
+<details open><summary>交易明细（前 200 条）</summary>__TRADES_TABLE__</details>
+<details><summary>拒单记录（前 100 条）</summary>__REJECTS_TABLE__</details>
+<script>
+const D = __DATA__;
+if (window.echarts) {
+  const eq = echarts.init(document.getElementById('equity'));
+  eq.setOption({
+    title:{text:'净值曲线',left:10,top:6,textStyle:{fontSize:14}},
+    tooltip:{trigger:'axis'}, legend:{top:6,right:10},
+    xAxis:{type:'category',data:D.dates},
+    yAxis:{type:'value',scale:true},
+    series:[{name:'策略',type:'line',showSymbol:false,data:D.equity,lineStyle:{width:1.6}},
+            {name:'基准',type:'line',showSymbol:false,data:D.benchmark,lineStyle:{width:1,opacity:.7}}]
+  });
+  const dd = echarts.init(document.getElementById('drawdown'));
+  dd.setOption({
+    title:{text:'回撤',left:10,top:6,textStyle:{fontSize:14}},
+    tooltip:{trigger:'axis'},
+    xAxis:{type:'category',data:D.dates},yAxis:{type:'value'},
+    series:[{name:'drawdown',type:'line',areaStyle:{opacity:.25},showSymbol:false,data:D.drawdown,color:'#c0392b'}]
+  });
+  window.addEventListener('resize',()=>{eq.resize();dd.resize();});
+} else {
+  document.getElementById('equity').innerText='（离线打开：图表需要联网加载 ECharts）';
+  document.getElementById('drawdown').style.display='none';
+}
+</script></body></html>

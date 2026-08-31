@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A股看板统一图标：纸底 + 墨线圆角框 + 三连上行蜡烛（A股红涨语义） -->
+  <rect width="64" height="64" rx="10" fill="#F6F3EC"/>
+  <rect x="1" y="1" width="62" height="62" rx="9" fill="none" stroke="#21201C" stroke-width="2"/>
+  <!-- 小绿烛（起） -->
+  <line x1="18" y1="38" x2="18" y2="54" stroke="#23714A" stroke-width="2.4" stroke-linecap="round"/>
+  <rect x="13" y="41" width="10" height="9" rx="1.5" fill="#23714A"/>
+  <!-- 中红烛（抬） -->
+  <line x1="32" y1="26" x2="32" y2="44" stroke="#B4372C" stroke-width="2.4" stroke-linecap="round"/>
+  <rect x="27" y="29" width="10" height="12" rx="1.5" fill="#B4372C"/>
+  <!-- 大红烛（升） -->
+  <line x1="46" y1="12" x2="46" y2="34" stroke="#B4372C" stroke-width="2.4" stroke-linecap="round"/>
+  <rect x="41" y="15" width="10" height="16" rx="1.5" fill="#B4372C"/>
+</svg>

@@ -1,0 +1,258 @@
+"""Data store: loads all datasets for the iteration engine."""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+BASE = Path(__file__).resolve().parent.parent
+DATA = BASE / "data"
+RAW = BASE / "raw"
+
+WIN_START = "2025-11-03"   # warm-up start for pools/industries
+SEL_START = "2026-01-02"   # first selection day (first 2026 trade day)
+SEL_END = "2026-09-02"     # last selectable T (T+1 = 2026-09-03)
+
+
+def load_daily() -> tuple[pd.DataFrame, pd.DataFrame]:
+    raw = pd.read_parquet(DATA / "daily_raw.parquet")
+    qfq = pd.read_parquet(DATA / "daily_qfq.parquet")
+    for df in (raw, qfq):
+        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    raw = raw.sort_values(["thscode", "date"]).reset_index(drop=True)
+    qfq = qfq.sort_values(["thscode", "date"]).reset_index(drop=True)
+    return raw, qfq
+
+
+def load_symbols() -> pd.DataFrame:
+    df = pd.read_csv(DATA / "symbols.csv", dtype=str)
+    return df
+
+
+def load_trade_dates() -> list[str]:
+    txt = (DATA / "trade_dates.txt").read_text(encoding="utf-8").strip()
+    return txt.split("\n")
+
+
+def load_limit_up_pool() -> pd.DataFrame:
+    rows = []
+    for p in sorted((RAW / "pool").glob("lu_*.json")):
+        d = json.loads(p.read_text(encoding="utf-8"))
+        date = d["trade_date"]
+        for it in d["items"]:
+            rows.append({
+                "date": date,
+                "thscode": it.get("thscode"),
+                "lu_name": it.get("name"),
+                "is_st": bool(it.get("is_st")),
+                "is_new": bool(it.get("is_new")),
+                "last_price": it.get("last_price"),
+                "pct": it.get("price_change_ratio_pct"),
+                "lu_time": it.get("limit_up_time"),
+                "lu_reason": it.get("limit_up_reason"),
+                "cont_cnt": it.get("continue_day_cnt"),
+                "seal_money": it.get("seal_money"),
+                "max_seal_money": it.get("max_seal_money"),
+            })
+    df = pd.DataFrame(rows)
+    df["cont_cnt"] = pd.to_numeric(df["cont_cnt"], errors="coerce").fillna(1).astype(int)
+    df["seal_money"] = pd.to_numeric(df["seal_money"], errors="coerce")
+    df["max_seal_money"] = pd.to_numeric(df["max_seal_money"], errors="coerce")
+    return df
+
+
+def load_dragon_tiger() -> pd.DataFrame:
+    rows = []
+    for p in sorted((RAW / "dt").glob("dt_*.json")):
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            continue
+        date = d.get("trade_date")
+        for it in (d.get("stock_items") or []):
+            rows.append({
+                "date": date,
+                "thscode": it.get("thscode"),
+                "concepts": "|".join(c.get("name", "") for c in (it.get("concept_list") or [])),
+                "change": it.get("change"),
+                "net_value": it.get("net_value"),
+                "buy_value": it.get("buy_value"),
+                "sell_value": it.get("sell_value"),
+                "hot_money_net": it.get("hot_money_net_value"),
+            })
+    return pd.DataFrame(rows)
+
+
+def load_industries() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return (membership[thscode, ind_code, ind_name, level], industry_daily[date, ind_code, close, pct])."""
+    cat = json.loads((RAW / "ind" / "catalog_industry.json").read_text(encoding="utf-8"))
+    name_by_code = {c["thscode"]: c["name"] for c in cat}
+    mem_rows = []
+    for p in sorted((RAW / "ind").glob("cons_*.json")):
+        code = p.stem.replace("cons_", "").replace("_", ".")
+        d = json.loads(p.read_text(encoding="utf-8"))
+        items = d.get("item") if isinstance(d, dict) else d
+        if not items:
+            continue
+        level = 1 if code.startswith("881") else (2 if code.startswith("884") else 3)
+        for it in items:
+            tc = it.get("thscode") or it.get("stock_thscode") or it.get("code")
+            if tc:
+                mem_rows.append({"thscode": tc, "ind_code": code,
+                                 "ind_name": name_by_code.get(code, code), "level": level})
+    membership = pd.DataFrame(mem_rows)
+
+    hist_rows = []
+    for p in sorted((RAW / "ind").glob("hist_*.json")):
+        code = p.stem.replace("hist_", "").replace("_", ".")
+        d = json.loads(p.read_text(encoding="utf-8"))
+        items = (d or {}).get("item") or []
+        for it in items:
+            hist_rows.append({
+                "date": pd.Timestamp(it["date_ms"], unit="ms", tz="Asia/Shanghai").strftime("%Y-%m-%d"),
+                "ind_code": code,
+                "ind_close": it.get("close_price"),
+                "ind_amount": it.get("turnover"),
+            })
+    ind_daily = pd.DataFrame(hist_rows)
+    if not ind_daily.empty:
+        ind_daily = ind_daily.sort_values(["ind_code", "date"])
+        ind_daily["ind_pct"] = ind_daily.groupby("ind_code")["ind_close"].pct_change() * 100
+        ind_daily["ind_pct_5d"] = (ind_daily.groupby("ind_code")["ind_close"]
+                                   .transform(lambda s: s.pct_change(5) * 100))
+    return membership, ind_daily
+
+
+def load_indices() -> pd.DataFrame:
+    rows = []
+    for p in sorted((RAW / "idx").glob("hist_*.json")):
+        code = p.stem.replace("hist_", "").replace("_", ".")
+        d = json.loads(p.read_text(encoding="utf-8"))
+        for it in (d or {}).get("item") or []:
+            rows.append({
+                "date": pd.Timestamp(it["date_ms"], unit="ms", tz="Asia/Shanghai").strftime("%Y-%m-%d"),
+                "idx_code": code,
+                "idx_close": it.get("close_price"),
+                "idx_amount": it.get("turnover"),
+            })
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["idx_code", "date"])
+        df["idx_pct"] = df.groupby("idx_code")["idx_close"].pct_change() * 100
+        df["idx_pct_5d"] = df.groupby("idx_code")["idx_close"].pct_change(5) * 100
+    return df
+
+
+def load_concept_catalog() -> dict:
+    """概念名 -> 885xxx.TI（raw/concept/catalog_concept.json；缺失返回 {}）。"""
+    p = RAW / "concept" / "catalog_concept.json"
+    if not p.exists():
+        return {}
+    out = {}
+    for it in json.loads(p.read_text(encoding="utf-8")):
+        if it.get("thscode") and it.get("name"):
+            out[it["name"]] = it["thscode"]
+    return out
+
+
+def load_concept_membership() -> dict:
+    """{6位代码: [概念名...]}（剔除机械概念）。
+
+    单一来源：backend/recap/concept_map.py 的 load()（GENERIC 黑名单 + 7 天新鲜度
+    都在那边收口）；import 失败或映射过期返回 {}，概念维度诚实降级。
+    """
+    try:
+        sys.path.insert(0, str(BASE.parent / "backend" / "recap"))
+        import concept_map  # noqa: PLC0415
+        return concept_map.load()
+    except Exception:
+        return {}
+
+
+def load_concept_daily() -> pd.DataFrame:
+    """概念指数日线 [date, con_code, con_close, con_pct, con_pct_5d]（raw/concept/hist_*）。"""
+    rows = []
+    for p in sorted((RAW / "concept").glob("hist_*.json")):
+        code = p.stem.replace("hist_", "").replace("_", ".")
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for it in (d or {}).get("item") or []:
+            if not it.get("close_price"):
+                continue
+            rows.append({
+                "date": pd.Timestamp(it["date_ms"], unit="ms", tz="Asia/Shanghai").strftime("%Y-%m-%d"),
+                "con_code": code,
+                "con_close": it.get("close_price"),
+                "con_amount": it.get("turnover"),
+            })
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["con_code", "date"])
+        g = df.groupby("con_code")["con_close"]
+        df["con_pct"] = g.pct_change() * 100
+        df["con_pct_5d"] = g.pct_change(5) * 100
+    return df
+
+
+class Store:
+    """All datasets + derived indexes in one object."""
+
+    def __init__(self):
+        self.raw, self.qfq = load_daily()
+        self.symbols = load_symbols()
+        self.trade_dates = load_trade_dates()
+        self.pool = load_limit_up_pool()
+        self.dt = load_dragon_tiger()
+        self.membership, self.ind_daily = load_industries()
+        self.indices = load_indices()
+        self.con_catalog = load_concept_catalog()
+        self.con_membership = load_concept_membership()
+        self.con_daily = load_concept_daily()
+        self.name = self.symbols.set_index("thscode")["name"].to_dict()
+        # quick lookups
+        self.pool_by_date = {d: g for d, g in self.pool.groupby("date")}
+        self.dt_by_date = {d: g for d, g in self.dt.groupby("date")} if not self.dt.empty else {}
+        self.raw_idx = {(r.thscode, r.date): r for r in self.raw.itertuples()}
+        self.qfq_idx = {(r.thscode, r.date): r for r in self.qfq.itertuples()}
+        # primary industry per stock: finest level first
+        if not self.membership.empty:
+            m = self.membership.sort_values(["thscode", "level"])
+            self.prim_ind = m.groupby("thscode").first()
+        else:
+            self.prim_ind = pd.DataFrame()
+        self.date_set = set(self.trade_dates)
+        self.first_date = self.raw.groupby("thscode")["date"].min().to_dict()
+
+    def next_trade_date(self, d: str) -> str | None:
+        ts = self.trade_dates
+        try:
+            i = ts.index(d)
+        except ValueError:
+            return None
+        return ts[i + 1] if i + 1 < len(ts) else None
+
+    def prev_trade_date(self, d: str) -> str | None:
+        ts = self.trade_dates
+        try:
+            i = ts.index(d)
+        except ValueError:
+            return None
+        return ts[i - 1] if i > 0 else None
+
+
+def build_store() -> Store:
+    return Store()
+
+
+if __name__ == "__main__":
+    s = build_store()
+    print("raw", s.raw.shape, "qfq", s.qfq.shape)
+    print("pool rows", len(s.pool), "dates", s.pool["date"].nunique())
+    print("dt rows", len(s.dt), "dates", s.dt["date"].nunique() if not s.dt.empty else 0)
+    print("membership", s.membership.shape, "prim_ind", s.prim_ind.shape)
+    print("ind_daily", s.ind_daily.shape, "indices", s.indices.shape)
+    print("trade dates", s.trade_dates[0], "..", s.trade_dates[-1], len(s.trade_dates))

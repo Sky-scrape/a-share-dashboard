@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<title>全球总览 · A股看板</title>
+<link rel="stylesheet" href="/lib/tokens.css">
+<script src="/lib/util.js"></script>
+<script src="/lib/theme.js"></script>
+<script src="/lib/echarts.min.js"></script>
+<script src="/lib/appbar.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scrollbar-gutter: stable; } /* 固定滚动条槽：页面高度变化时宽度不突变，避免整页看起来"缩放" */
+body {
+  background: var(--bg-0); color: var(--text-1);
+  font-family: var(--sans); font-size: 13px; min-height: 100vh;
+  display: flex; flex-direction: column; font-variant-numeric: tabular-nums;
+}
+/* 顶栏统一样式见 lib/tokens.css（header.appbar） */
+select, button {
+  background: var(--bg-2); color: var(--text-1); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 5px 10px; font-size: 12px; outline: none; cursor: pointer; white-space: nowrap; flex: none;
+  transition: border-color .18s ease, color .18s ease, transform .12s ease;
+}
+select:hover, button:hover { border-color: var(--line-2); }
+button:active { transform: translateY(1px); }
+/* ------- 时钟条 ------- */
+#clocks {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 10px 10px 0;
+}
+@media (max-width: 900px) { #clocks { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { #clocks { grid-template-columns: repeat(2, 1fr); } }
+.clock-card {
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: 9px 12px 8px; box-shadow: var(--shadow-card); position: relative; overflow: hidden;
+}
+.clock-card .city { font-size: 12px; color: var(--text-2); display: flex; align-items: baseline; gap: 6px; }
+.clock-card .city .cn { font-family: var(--serif); font-weight: 700; font-size: 13px; color: var(--text-1); }
+.clock-card .time { font-family: var(--mono); font-size: 21px; letter-spacing: .5px; margin-top: 2px; }
+.clock-card .date { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.clock-card .mkt { position: absolute; right: 10px; top: 9px; font-size: 10px; padding: 2px 7px; border-radius: 9px; border: 1px solid var(--line); color: var(--text-3); }
+.clock-card .mkt.open { color: var(--up); border-color: rgba(180,55,44,.45); background: var(--up-soft); }
+.clock-card .mkt.lunch { color: var(--flat); border-color: rgba(138,109,46,.4); background: rgba(140,109,31,.07); }
+.clock-card .idx { font-size: 11px; color: var(--text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ------- 主网格 ------- */
+main { flex: 1; display: grid; gap: 10px; padding: 10px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(430px, 1.15fr);
+  grid-template-rows: minmax(430px, auto) minmax(360px, auto);
+  grid-template-areas: "map trend" "radar heat";
+}
+@media (max-width: 1150px) {
+  /* 堆叠布局下雷达/热力是隐式行：不给最小行高，.body(flex:1+绝对定位图表)会塌成 0 高 */
+  main { grid-template-columns: 1fr; grid-template-areas: "map" "trend" "radar" "heat"; grid-auto-rows: minmax(420px, auto); }
+}
+.panel {
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card); display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+}
+.panel > .ph {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); flex: none; flex-wrap: wrap;
+}
+.panel > .ph h2 { font-family: var(--serif); font-size: 14px; font-weight: 900; letter-spacing: 1px; }
+.panel > .ph .note { font-size: 11px; color: var(--text-3); }
+.panel > .ph .spacer { flex: 1; margin-left: 0; }
+.panel .body { flex: 1; min-height: 0; position: relative; }
+#mapPanel { grid-area: map; } #trendPanel { grid-area: trend; }
+#radarPanel { grid-area: radar; } #heatPanel { grid-area: heat; }
+.chart { position: absolute; inset: 0; }
+/* 趋势头部 chips */
+#trendStats { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+#trendRange { display: flex; align-items: center; gap: 8px; padding: 6px 12px 0; flex-wrap: wrap; }
+#trendRange .tr-pick { position: relative; display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: 11px; white-space: nowrap; }
+#trendRange .tr-btn { font-family: var(--mono); font-size: 11px; padding: 2px 8px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--text-1); cursor: pointer; min-width: 56px; }
+#trendRange .tr-btn:hover { border-color: var(--line-2); }
+#trendRange .tr-btn.empty { color: var(--text-3); font-family: var(--sans); }
+#trendRange input[type=date] { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: 0; padding: 0; }
+#trNote { margin-left: auto; font-size: 11px; color: var(--text-3); font-family: var(--mono); white-space: nowrap; }
+#trNote.warn { color: var(--up); }
+.chip { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 2px 9px; color: var(--text-2); background: var(--bg-1); }
+.chip b { font-weight: 700; }
+.chip .up { color: var(--up); } .chip .down { color: var(--down); }
+/* 分段按钮（雷达窗口 / 热力市场切换） */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.seg button { border: none; border-radius: 0; padding: 3px 10px; font-size: 11px; background: var(--bg-1); color: var(--text-2); }
+.seg button.on { background: var(--bg-3); color: var(--up); font-weight: 700; }
+/* 轮动雷达：左象限图 + 右当日涨跌榜单 */
+#radarBody { display: grid; grid-template-columns: minmax(0,1fr) 224px; height: 100%; }
+#heatFoot { display: flex; align-items: center; gap: 10px; row-gap: 5px; padding: 6px 12px; flex-wrap: wrap;
+  border-top: 1px solid var(--line); flex: 0 0 auto; }
+#heatFoot .spacer { flex: 1; }
+#heatCrumbs { display: none; align-items: center; gap: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-2);
+  flex-wrap: nowrap; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+#heatCrumbs::-webkit-scrollbar { display: none; }
+#heatCrumbs.show { display: inline-flex; }
+#heatCrumbs .hc-chip { border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; background: var(--bg-1); cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+#heatCrumbs .hc-chip:hover { color: var(--up); border-color: var(--line-2); }
+#heatCrumbs .hc-chip.cur { cursor: default; color: var(--text-1); background: var(--bg-3); font-weight: 700; }
+#heatCrumbs .hc-chip.cur:hover { color: var(--text-1); }
+#heatCrumbs .hc-sep { color: var(--text-3); }
+#heatBar { display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
+#heatBar .hb-neg b { color: var(--down); margin-left: 3px; }
+#heatBar .hb-pos b { color: var(--up); margin-right: 3px; }
+#heatBar .hb-neg, #heatBar .hb-pos { display: inline-flex; align-items: center; }
+#heatBar .hb-bar { flex: 0 0 220px; height: 10px; border-radius: 5px; border: 1px solid var(--line); position: relative;
+  background: linear-gradient(to right, rgb(35,113,74), rgb(253,251,246) 50%, rgb(180,55,44)); }
+#heatBar .hb-bar::before { content: ''; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: rgba(74,63,47,.55); }
+#heatBar .hb-bar::after { content: ''; position: absolute; left: 25%; top: 1px; bottom: 1px; width: 1px; background: rgba(74,63,47,.28);
+  box-shadow: 110px 0 0 rgba(74,63,47,.28); }
+.tl-row[data-theme] { cursor: pointer; border-radius: 4px; }
+.tl-row[data-theme]:hover { background: var(--bg-2); }
+#radarBody .chartwrap { position: relative; min-width: 0; }
+#radarList { border-left: 1px solid var(--line); overflow: auto; padding: 6px 10px 8px; font-size: 11px; }
+.tl-h { color: var(--text-3); font-size: 10.5px; margin: 8px 0 5px; letter-spacing: .5px; }
+.tl-row { display: grid; grid-template-columns: 66px 1fr 54px; align-items: center; gap: 6px; margin: 4px 0; }
+.tl-row .nm { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-row .bar { height: 7px; background: var(--bg-3); border-radius: 2px; position: relative; overflow: hidden; }
+.tl-row .bar i { position: absolute; left: 0; top: 0; bottom: 0; display: block; opacity: .85; }
+.tl-row .pc { text-align: right; font-family: var(--mono); font-size: 11px; }
+@media (max-width: 760px) {
+  #radarBody { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 1fr) auto; }
+  #radarList { border-left: none; border-top: 1px solid var(--line); max-height: 190px; }
+}
+#msgBar { display: none; margin: 0 10px; padding: 8px 12px; border: 1px solid rgba(180,55,44,.4);
+  background: var(--up-soft); color: var(--up); border-radius: var(--r-md); font-size: 12px; }
+.loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 12px; }
+footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display: flex; gap: 12px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header class="appbar">
+  <h1><span class="dot">●</span> 全球总览</h1>
+  <span class="sub">五城时钟 · 环球指数地图 · 中美轮动雷达 · 市场热力图</span>
+  <button id="btnRefresh" title="重新加载页面">刷新</button>
+  <button id="btnFetch" title="后台重新抓取全球数据（约4-5分钟）"><span class="b-full">重新抓取</span><span class="b-mini">重抓</span></button>
+  <div class="spacer"></div>
+  <span id="gpPill" class="fresh-pill warn" title="数据新鲜度"><span class="dot"></span>检查中…</span>
+  <div class="navgroup" id="navgroupSlot"></div>
+</header>
+<div id="msgBar"></div>
+
+<div id="clocks"></div>
+
+<main>
+  <section class="panel" id="mapPanel">
+    <div class="ph">
+      <h2>环球指数地图</h2>
+      <span class="note" id="mapNote">国家底色 = 代表性指数最新涨跌幅；圆点可点击看走势</span>
+      <div class="spacer"></div>
+      <span class="note" id="mapAsOf"></span>
+    </div>
+    <div class="body"><div class="chart" id="mapChart"><div class="loading">世界地图加载中…</div></div></div>
+  </section>
+
+  <section class="panel" id="trendPanel">
+    <div class="ph">
+      <h2 id="trendTitle">指数走势</h2>
+      <div class="spacer"></div>
+      <select id="trendCompare" title="叠加对比指数">
+        <option value="">不对比</option>
+      </select>
+    </div>
+    <div id="trendStats"></div>
+    <div id="trendRange">
+      <div class="seg" id="trQuick" title="快捷区间">
+        <button data-d="0" class="on">全部</button><button data-d="60">60日</button><button data-d="120">120日</button>
+      </div>
+      <div class="seg" id="trKind" title="显示形态">
+        <button data-k="min">日内</button><button data-k="line" class="on">折线</button><button data-k="k">K线</button>
+      </div>
+      <span class="tr-pick">从<button type="button" class="tr-btn empty" id="trStartBtn" title="选择起始日期">不限</button><input type="date" id="trStart" tabindex="-1" aria-hidden="true"></span>
+      <span class="tr-pick">到<button type="button" class="tr-btn empty" id="trEndBtn" title="选择截止日期">不限</button><input type="date" id="trEnd" tabindex="-1" aria-hidden="true"></span>
+      <span id="trNote"></span>
+    </div>
+    <div class="body" style="min-height:260px"><div class="chart" id="trendChart"></div></div>
+  </section>
+
+  <section class="panel" id="radarPanel">
+    <div class="ph">
+      <h2>轮动雷达 <span style="font-family:var(--mono);font-weight:400;font-size:11px;color:var(--text-3)">ROTATION RADAR · RS × MOM · 4W TRAIL</span></h2>
+      <span class="note">X 相对强度 · Y 动量（20日）· 轨迹=近4周 · 红涨绿跌；方块=A股 菱形=美股</span>
+      <div class="spacer"></div>
+      <div class="seg" id="radarMkt">
+        <button data-m="all" class="on">全部</button><button data-m="us">美股</button><button data-m="cn">中国主题</button>
+      </div>
+    </div>
+    <div class="body" id="radarBody">
+      <div class="chartwrap"><div class="chart" id="radarChart"></div></div>
+      <div id="radarList"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="heatPanel">
+    <div class="ph">
+      <h2>市场热力图</h2>
+      <span class="note">矩形大小 = 市值 / 成交额，颜色 = <span id="heatWinNote">当日</span>涨跌幅（缺失显灰）· 点击任意块放大其板块</span>
+      <div class="spacer"></div>
+      <span class="note" id="heatAsOf"></span>
+    </div>
+    <div class="body"><div class="chart" id="heatChart"></div></div>
+    <div id="heatFoot">
+      <div class="seg" id="heatSeg">
+        <button data-m="us">美股巨头</button><button data-m="cn" class="on">A股行业</button>
+      </div>
+      <div class="seg" id="heatWinSeg" title="颜色周期">
+        <button data-w="0" class="on">当日</button><button data-w="5">5日</button><button data-w="20">20日</button>
+      </div>
+      <div id="heatCrumbs"></div>
+      <div class="spacer"></div>
+      <div id="heatBar"><span class="hb-neg" id="hbNeg"></span><i class="hb-bar"></i><span class="hb-pos" id="hbPos"></span></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>数据源：新浪/同花顺(hithink)，每日收盘后抓取，非实时</span>
+  <span id="footErr"></span>
+  <span>本页面仅为信息呈现，不构成投资建议</span>
+</footer>
+
+<script>
+"use strict";
+/* ================= 设计 token 取值 ================= */
+const css = getComputedStyle(document.documentElement);
+const T = k => css.getPropertyValue(k).trim();
+/* COL 全部 getter：canvas 图表不认 var()，且主题切换后必须取到新值，故即时读 CSS 变量 */
+const COL = {
+  get up() { return T('--up') || '#B4372C'; }, get down() { return T('--down') || '#23714A'; },
+  get blue() { return T('--blue') || '#3D5A80'; }, get gold() { return T('--accent') || '#8C6D1F'; },
+  get text1() { return T('--text-1') || '#21201C'; }, get text2() { return T('--text-2') || '#57534A'; },
+  get text3() { return T('--text-3') || '#8A8478'; },
+  get line() { return T('--line') || '#DDD5C6'; }, get line2() { return T('--line-2') || '#C4BBA6'; },
+  get bg2() { return T('--bg-2') || '#FDFBF6'; }, get bg1() { return T('--bg-1') || '#F6F3EC'; }
+};
+const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
+const $ = id => document.getElementById(id);
+/* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
+const pctHtml = v => v == null ? '-' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
+const pctColor = v => v == null ? COL.text2 : (v > 0 ? COL.up : v < 0 ? COL.down : COL.text2);
+
+/* 热力颜色：绿(跌) → 纸色 → 红(涨)；封顶涨跌停感知：A股 ±10%、美股 ±5% */
+const HEAT_CLAMP = { us: 5, cn: 10 };
+function heatColor(pct, clamp) {
+  if (pct == null) return COL.bg1;
+  const t = Math.max(-1, Math.min(1, pct / (clamp || 5)));
+  const mix = (a, b, k) => Math.round(a + (b - a) * k);
+  const from = AKTHEME.rgbOf('--bg-2', [253, 251, 246]);
+  const to = t > 0 ? AKTHEME.rgbOf('--up', [180, 55, 44]) : AKTHEME.rgbOf('--down', [35, 113, 74]);
+  const k = Math.abs(t);
+  const rgb = from.map((f, i) => mix(f, to[i], k));
+  return `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+}
+function heatTextColor(pct, clamp) {
+  const c = clamp || 5;
+  return (pct != null && Math.abs(pct) >= c * 0.64) ? COL.bg2 : COL.text1;
+}
+/* 周期窗口：0=当日 5=5日 20=20日；heatTheme=雷达联动的主题筛选 */
+let heatWin = 0;
+const WIN_LABEL = { 0: '当日', 5: '5日', 20: '20日' };
+let heatTheme = null;
+function heatPct(x) { return heatWin === 0 ? (x.pct ?? null) : heatWin === 5 ? (x.pct5 ?? null) : (x.pct20 ?? null); }
+function renderHeatBar() {
+  const clamp = HEAT_CLAMP[heatMode];
+  $('heatBar').title = `色阶：${WIN_LABEL[heatWin]}涨跌幅 ±${clamp}% 封顶，中间为 0%`;
+  $('hbNeg').innerHTML = `−${clamp}%<b>跌</b>`;
+  $('hbPos').innerHTML = `<b>涨</b>+${clamp}%`;
+}
+
+/* ================= 1. 五城时钟 ================= */
+const CITIES = [
+  { cn: '纽约',  en: 'New York', tz: 'America/New_York', hours: '09:30–16:00', sessions: [[570, 960]] },
+  { cn: '伦敦',  en: 'London',   tz: 'Europe/London',    hours: '08:00–16:30', sessions: [[480, 990]] },
+  { cn: '东京',  en: 'Tokyo',    tz: 'Asia/Tokyo',       hours: '09:00–15:30', sessions: [[540, 930]] },
+  { cn: '上海',  en: 'Shanghai', tz: 'Asia/Shanghai',    hours: '09:30–15:00', sessions: [[570, 690], [780, 900]] },
+  { cn: '香港',  en: 'Hong Kong',tz: 'Asia/Hong_Kong',   hours: '09:30–16:00', sessions: [[570, 720], [780, 960]] },
+];
+/* formatter 按 tz 缓存：旧版每秒 × 5 城各新建一个 Intl.DateTimeFormat，纯 GC churn */
+const _tzFmt = {};
+function tzFmt(tz) {
+  return _tzFmt[tz] || (_tzFmt[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour12: false,
+    weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+}
+function tzParts(tz) {
+  const p = {};
+  tzFmt(tz).formatToParts(new Date()).forEach(x => { if (x.type !== 'literal') p[x.type] = x.value; });
+  const wd = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 }[p.weekday];
+  const hh = +p.hour % 24;   // 部分引擎 hour12:false 午夜返回 "24"（en-GB），统一 %24 归一
+  return { h: hh, m: +p.minute, s: +p.second, wd,
+    date: `${p.year}-${p.month}-${p.day}`, clock: `${String(hh).padStart(2, '0')}:${p.minute}:${p.second}` };
+}
+function mktStatus(c) {
+  /* 注：只判周末，不识别法定节假日（启动路径不联网查历的既定代价，页脚已注明「非实时」） */
+  const t = tzParts(c.tz);
+  if (t.wd === 0 || t.wd === 6) return { cls: '', txt: '休市' };
+  const mm = t.h * 60 + t.m;
+  for (const [a, b] of c.sessions) if (mm >= a && mm < b) return { cls: 'open', txt: '盘中' };
+  const last = c.sessions[c.sessions.length - 1][1];
+  if (mm < c.sessions[0][0]) return { cls: '', txt: '盘前' };
+  if (mm >= last) return { cls: '', txt: '已收盘' };
+  return { cls: 'lunch', txt: '午间休市' };
+}
+function buildClocks() {
+  $('clocks').innerHTML = CITIES.map((c, i) => `
+    <div class="clock-card" data-i="${i}">
+      <div class="mkt" id="mk${i}"></div>
+      <div class="city"><span class="cn">${c.cn}</span><span>${c.en}</span></div>
+      <div class="time" id="t${i}">--:--:--</div>
+      <div class="date" id="d${i}"></div>
+      <div class="idx" id="x${i}" data-tz="${c.tz}"></div>
+    </div>`).join('');
+}
+function tickClocks() {
+  CITIES.forEach((c, i) => {
+    const t = tzParts(c.tz);
+    $('t' + i).textContent = t.clock;
+    $('d' + i).textContent = `${fmtCn(t.date)} 周${'日一二三四五六'[t.wd]} · 开市 ${c.hours}`;
+    const st = mktStatus(c);
+    const mk = $('mk' + i);
+    mk.textContent = st.txt; mk.className = 'mkt ' + st.cls;
+  });
+}
+buildClocks(); tickClocks(); setInterval(tickClocks, 1000);
+
+/* ================= 全局状态 ================= */
+let G = null;                 // /api/global 数据
+let idxById = {};
+let selIdx = null;            // 当前趋势选中的指数 id
+let radarMkt = 'all';
+let heatMode = 'cn';
+let mapChart, trendChart, radarChart, heatChart;
+let radarRO = null, heatRO = null;  // 面板行高跟随器（榜单行数变化时画布补 resize）
+
+/* ================= 2. 世界地图 + 趋势 ================= */
+function shortPct(v) { return v == null ? '' : (v > 0 ? '+' : '') + v.toFixed(2) + '%'; }
+/* 中文日期显示：当年省略年份，如 2026-08-28 → 8月28日；跨年 → 2025年11月3日 */
+function fmtCn(d) {
+  if (!d) return '';
+  const mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
+  if (!mt) return String(d);
+  return (+mt[1] === new Date().getFullYear() ? '' : mt[1] + '年') + (+mt[2]) + '月' + (+mt[3]) + '日';
+}
+
+function mapOption(geoReady) {
+  const idx = G.indices || [];
+  const countryPct = {};
+  idx.forEach(x => { if (x.geo && countryPct[x.geo] == null) countryPct[x.geo] = x.pct; }); // 同国取第一个(优先序见后端)
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'item', backgroundColor: COL.bg2, borderColor: COL.line,
+      textStyle: { color: COL.text1, fontSize: 12 },
+      formatter: p => {
+        if (p.seriesType === 'scatter') {
+          const d = p.data.meta;
+          return `<b>${esc(d.name)}</b>（${esc(d.country)} · ${esc(d.city)}）<br/>` +
+            `最新 ${d.close} <span style="color:${pctColor(d.pct)}">${shortPct(d.pct)}</span><br/>` +
+            `5日 ${shortPct(d.chg5)} · 20日 ${shortPct(d.chg20)}<br/><span style="color:${COL.text3}">${esc(fmtCn(d.last_date))} · 点击查看走势</span>`;
+        }
+        if (p.value == null || isNaN(p.value)) return p.name;
+        return `<b>${esc(p.name)}</b> 代表指数 ${shortPct(p.value)}`;
+      } },
+    geo: { map: 'world', roam: true, zoom: 1.15, center: [30, 25],
+      itemStyle: { areaColor: COL.bg1, borderColor: COL.line },
+      emphasis: { disabled: true },
+      select: { disabled: true } },
+    visualMap: { show: true, type: 'continuous', min: -3, max: 3, calculable: true,
+      seriesIndex: 0,
+      left: 12, bottom: 14, itemWidth: 10, itemHeight: 90, text: ['涨', '跌'],
+      textStyle: { color: COL.text3, fontSize: 10 },
+      inRange: { color: [COL.down, COL.bg1, COL.up] } },   // 中点=面板纸色（随主题）
+    series: [
+      { id: 'country', name: 'country', type: 'map', map: 'world', geoIndex: 0, data:
+          Object.entries(countryPct).map(([name, val]) => ({ name, value: val })),
+        emphasis: { itemStyle: { areaColor: COL.line2 } }, select: { disabled: true },
+        tooltip: { show: true } },
+      { id: 'idx', name: 'idx', type: 'scatter', coordinateSystem: 'geo',
+        data: idx.map(x => ({ name: x.name, value: [x.lon, x.lat, x.pct],
+          meta: x, symbolSize: 8 + Math.min(12, Math.abs(x.pct || 0) * 4),
+          itemStyle: { color: pctColor(x.pct), borderColor: COL.bg2, borderWidth: 1.2,
+            opacity: selIdx && selIdx !== x.id ? .75 : 1 } })),
+        label: { show: true, position: 'right', fontSize: 10, distance: 4,
+          color: COL.text2, formatter: p => p.data.meta.name },
+        labelLayout: { hideOverlap: true },
+        emphasis: { scale: 1.3, label: { fontWeight: 700, color: COL.text1 } },
+        z: 5 },
+      selIdx && (() => { const x = idxById[selIdx]; if (!x) return null;
+        return { id: 'sel', name: 'sel', type: 'effectScatter', coordinateSystem: 'geo',
+          data: [{ value: [x.lon, x.lat], meta: x }], symbolSize: 14,
+          rippleEffect: { brushType: 'stroke', scale: 3 },
+          itemStyle: { color: 'rgba(0,0,0,0)', borderColor: pctColor(x.pct), borderWidth: 2 },
+          z: 6, silent: true, tooltip: { show: false }, label: { show: false } }; })()
+    ].filter(Boolean)
+  };
+}
+
+function renderMap(full) {
+  if (!mapChart) return;
+  if (full) { mapChart.setOption(mapOption(true), { notMerge: true }); return; }
+  // 选中态变化只增量更新圆点透明度与高亮环：notMerge 全量重建会把 geo 的 zoom/center 重置，
+  // 用户缩放/平移过的地图视角会弹回默认（点圆点即触发，地图交互的主打功能不能这样被砸掉）
+  const idx = G.indices || [];
+  const x = selIdx ? idxById[selIdx] : null;
+  mapChart.setOption({ series: [
+    { id: 'idx', data: idx.map(it => ({ name: it.name, value: [it.lon, it.lat, it.pct],
+      meta: it, symbolSize: 8 + Math.min(12, Math.abs(it.pct || 0) * 4),
+      itemStyle: { color: pctColor(it.pct), borderColor: COL.bg2, borderWidth: 1.2,
+        opacity: selIdx && selIdx !== it.id ? .75 : 1 } })) },
+    { id: 'sel', name: 'sel', type: 'effectScatter', coordinateSystem: 'geo',
+      data: x ? [{ value: [x.lon, x.lat], meta: x }] : [], symbolSize: 14,
+      rippleEffect: { brushType: 'stroke', scale: 3 },
+      itemStyle: { color: 'rgba(0,0,0,0)', borderColor: x ? pctColor(x.pct) : 'transparent', borderWidth: 2 },
+      z: 6, silent: true, tooltip: { show: false }, label: { show: false } }
+  ] });
+}
+
+/* --------- 趋势面板 --------- */
+function normSeries(hist) {  // 归一化到首日=100（空序列/首点缺失时返回空，不炸 base 取值）
+  if (!hist || !hist.length || hist[0][1] == null) return [];
+  const base = hist[0][1];
+  return hist.map(([d, c]) => [d, +(c / base * 100).toFixed(2)]);
+}
+function mergeDates(a, b) {
+  const set = new Set([...a.map(x => x[0]), ...b.map(x => x[0])]);
+  return [...set].sort();
+}
+function ff(pairs, dates) {  // forward fill 到统一日期轴
+  const m = new Map(pairs); let last = null;
+  return dates.map(d => { if (m.has(d)) last = m.get(d); return last; });
+}
+/* 自选日期区间：days=快捷近 N 日（0=全部）；custom=从/到日期框 */
+let trendRange = { days: 0, custom: false, start: '', end: '' };
+let trendKind = 'line';   // min=日内分时 / line=折线 / k=日线 K 线
+function setRgDim(on) {
+  document.querySelectorAll('#trQuick, .tr-pick').forEach(el => {
+    el.style.opacity = on ? .35 : '';
+    el.style.pointerEvents = on ? 'none' : '';
+  });
+}
+function renderTrendMin(x) {
+  const im = (G.intraday || {})[selIdx];
+  setRgDim(true);
+  if (!im || (im.bars || []).length < 2) {
+    trendChart.clear();
+    $('trendTitle').textContent = x.name + ' 日内';
+    $('trendStats').innerHTML = `<span class="chip" style="color:${COL.up}">暂无日内分钟数据（当前仅支持上证指数/深证成指）</span>`;
+    setRangeNote('', false);
+    return;
+  }
+  const times = im.bars.map(b => b[0]), px = im.bars.map(b => b[1]);
+  const pc = im.prev_close, last = px[px.length - 1];
+  const chg = pc ? (last / pc - 1) * 100 : null;
+  const lineCol = (chg ?? 0) >= 0 ? COL.up : COL.down;
+  const rgb = (chg ?? 0) >= 0 ? AKTHEME.rgbOf('--up', [180,55,44]).join(',') : AKTHEME.rgbOf('--down', [35,113,74]).join(',');
+  trendChart.setOption({
+    backgroundColor: 'transparent', animation: false,
+    grid: { left: 8, right: 14, top: 16, bottom: 26, containLabel: true },
+    legend: { show: false },
+    tooltip: { trigger: 'axis', backgroundColor: COL.bg2, borderColor: COL.line,
+      textStyle: { color: COL.text1, fontSize: 12 },
+      formatter: ps => {
+        const p = (ps || []).find(q => q.seriesName === '分时') || (ps || [])[0];
+        if (!p || p.value == null) return '';
+        const c = pc ? (p.value / pc - 1) * 100 : null;
+        return `<b>${esc(String(p.axisValue))}</b>　价格 <b>${(+p.value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</b>` +
+          (c == null ? '' : `　<span style="color:${pctColor(c)}">${shortPct(c)}</span>`);
+      } },
+    xAxis: { type: 'category', data: times, boundaryGap: false,
+      axisLine: { lineStyle: { color: COL.line } },
+      axisLabel: { color: COL.text3, fontSize: 10, hideOverlap: true, margin: 10,
+        interval: Math.max(0, Math.floor(times.length / 7) - 1) },
+      axisTick: { show: false } },
+    yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: COL.line, type: 'dashed', opacity: .6 } },
+      axisLabel: { color: COL.text3, fontSize: 10, margin: 8,
+        formatter: v => Math.abs(v) >= 1e4 ? (v / 1e4).toFixed(v % 1e4 ? 1 : 0) + '万' : v.toLocaleString('zh-CN') },
+      axisLine: { show: false }, axisTick: { show: false } },
+    series: [{ name: '分时', type: 'line', data: px, showSymbol: false,
+      lineStyle: { width: 1.6, color: lineCol }, itemStyle: { color: lineCol },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
+        [{ offset: 0, color: `rgba(${rgb},.20)` }, { offset: 1, color: `rgba(${rgb},0)` }]) },
+      markLine: pc ? { silent: true, symbol: 'none', animation: false,
+        lineStyle: { color: COL.text3, type: 'dashed', width: 1, opacity: .8 },
+        label: { show: true, position: 'insideStartTop', color: COL.text3, fontSize: 10,
+          formatter: '昨收 ' + pc.toLocaleString('zh-CN') },
+        data: [{ yAxis: pc }] } : undefined }]
+  }, { notMerge: true });
+  const hi = Math.max(...px), lo = Math.min(...px);
+  $('trendStats').innerHTML =
+    `<span class="chip">最新 <b>${last.toLocaleString('zh-CN')}</b></span>` +
+    `<span class="chip">日内 <b>${pctHtml(chg)}</b></span>` +
+    `<span class="chip">高 <b>${hi.toLocaleString('zh-CN')}</b></span>` +
+    `<span class="chip">低 <b>${lo.toLocaleString('zh-CN')}</b></span>` +
+    `<span class="chip">${esc(x.country)} · ${esc(x.city)} · <span style="color:${COL.text3}">${esc(fmtCn(im.date))} 分时</span></span>`;
+  $('trendTitle').textContent = x.name + ' 日内（' + fmtCn(im.date) + ' · 1分钟）';
+  setRangeNote(times[0] + ' ~ ' + times[times.length - 1] + ' · ' + px.length + ' 根');
+}
+/* 自选区间/快捷窗口共用一个过滤：此前 K 线与折线各写一份 slice/filter，
+   kline 与 hist 长度不一致时同一「近N日」的起点日期会漂移，切换形态看到的区间对不上 */
+function rangeFilter(arr, dateOf) {
+  if (trendRange.custom) {
+    const s = trendRange.start || '0000-00-00', e = trendRange.end || '9999-99-99';
+    return arr.filter(x => { const d = dateOf(x); return d >= s && d <= e; });
+  }
+  return trendRange.days > 0 ? arr.slice(-trendRange.days) : arr;
+}
+function trendKl(x) { return rangeFilter(x.kline || [], r => r[0]); }
+function maArr(closes, n) {
+  return closes.map((_, i) => i < n - 1 ? null
+    : +(closes.slice(i - n + 1, i + 1).reduce((a, b) => a + b, 0) / n).toFixed(2));
+}
+function trendHist(x) { return rangeFilter(x.hist || [], h => h[0]); }
+function trendRangeLabel() {
+  if (trendRange.custom) {
+    if (!trendRange.start && !trendRange.end) return '近250日';
+    return (trendRange.start ? fmtCn(trendRange.start) : '最早') + ' ~ ' + (trendRange.end ? fmtCn(trendRange.end) : '最新');
+  }
+  return trendRange.days > 0 ? '近' + trendRange.days + '日' : '近250日';
+}
+function syncTrendRangeUI(x) {
+  const hs = x.hist || [];
+  const minD = hs.length ? hs[0][0] : '', maxD = hs.length ? hs[hs.length - 1][0] : '';
+  const sEl = $('trStart'), eEl = $('trEnd');
+  sEl.min = eEl.min = minD; sEl.max = eEl.max = maxD;
+  if (!trendRange.custom) {
+    const shown = trendRange.days > 0 && hs.length ? hs[Math.max(0, hs.length - trendRange.days)][0] : '';
+    sEl.value = shown; eEl.value = trendRange.days > 0 && hs.length ? maxD : '';
+  }
+  document.querySelectorAll('#trQuick button').forEach(b => b.classList.toggle('on', !trendRange.custom && +b.dataset.d === trendRange.days));
+  refreshTrBtns();
+}
+function refreshTrBtns() {
+  [['trStartBtn', 'trStart'], ['trEndBtn', 'trEnd']].forEach(([btn, inp]) => {
+    const v = $(inp).value, b = $(btn);
+    b.textContent = v ? fmtCn(v) : '不限';
+    b.className = 'tr-btn' + (v ? '' : ' empty');
+  });
+}
+function pickDate(inpId) {
+  const el = $(inpId);
+  try { el.showPicker(); } catch (e) { el.focus(); try { el.showPicker(); } catch (e2) { el.click(); } }
+}
+function setRangeNote(msg, warn) {
+  const n = $('trNote'); n.textContent = msg || ''; n.className = warn ? 'warn' : '';
+}
+function renderTrend() {
+  if (!trendChart || !selIdx) return;
+  const x = idxById[selIdx];
+  if (trendKind === 'min') { renderTrendMin(x); return; }
+  setRgDim(false);
+  const cmpId = $('trendCompare').value;
+  const y = cmpId ? idxById[cmpId] : null;
+  const hx = trendHist(x), hy = y ? trendHist(y) : null;
+  syncTrendRangeUI(x);
+  if (hx.length < 2) {
+    trendChart.clear();
+    setRangeNote('该区间无数据（' + hx.length + ' 点）', true);
+    $('trendTitle').textContent = x.name + ' 走势（' + trendRangeLabel() + '）';
+    return;   // 必须到此为止：继续往下走对比分支会对空序列取 hist[0][1] 抛 TypeError（旧 bug：只 clear 不 return）
+  }
+  else setRangeNote((trendRange.custom ? fmtCn(hx[0][0]) + ' ~ ' + fmtCn(hx[hx.length - 1][0]) + ' · ' : '') + hx.length + ' 点'
+    + (trendKind === 'k' && y ? ' · K线不适用于对比，当前折线' : ''));
+  const useK = !y && trendKind === 'k' && (x.kline || []).length;
+  let series, legend = [], klDates = null;
+  if (useK) {
+    const kl = trendKl(x);
+    const closes = kl.map(r => r[2]);
+    klDates = kl.map(r => r[0]);
+    series = [
+      { name: '日线', type: 'candlestick', data: kl.map(r => [r[1], r[2], r[3], r[4]]),
+        itemStyle: { color: COL.up, color0: COL.down, borderColor: COL.up, borderColor0: COL.down, borderWidth: 1 } },
+      { name: 'MA5', type: 'line', data: maArr(closes, 5), showSymbol: false, connectNulls: false,
+        lineStyle: { width: 1.1, color: COL.gold }, itemStyle: { color: COL.gold }, z: 5 },
+      { name: 'MA20', type: 'line', data: maArr(closes, 20), showSymbol: false, connectNulls: false,
+        lineStyle: { width: 1.1, color: COL.blue, type: 'dashed' }, itemStyle: { color: COL.blue }, z: 5 }];
+  } else if (!y) {
+    series = [{ name: x.name, type: 'line', data: hx.map(h => h[1]),
+      showSymbol: false, lineStyle: { width: 1.8, color: COL.blue },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
+        [{ offset: 0, color: 'rgba(61,90,128,.22)' }, { offset: 1, color: 'rgba(61,90,128,0)' }]) },
+      itemStyle: { color: COL.blue } }];
+  } else {
+    const dates = mergeDates(hx, hy);
+    legend = [x.name, y.name];
+    series = [[x, hx], [y, hy]].map(([z, zh], i) => {
+      const col = i === 0 ? COL.blue : COL.gold;
+      return { name: z.name, type: 'line', data: ff(normSeries(zh), dates), showSymbol: false,
+        connectNulls: true, lineStyle: { width: 1.6, color: col }, itemStyle: { color: col } };
+    });
+  }
+  trendChart.setOption({
+    backgroundColor: 'transparent',
+    animation: false,
+    grid: { left: 8, right: 14, top: (y || useK) ? 30 : 16, bottom: 26, containLabel: true },
+    legend: y ? { data: legend, textStyle: { color: COL.text2, fontSize: 11 }, top: 2, right: 4 }
+      : useK ? { data: ['MA5', 'MA20'], textStyle: { color: COL.text3, fontSize: 10.5 }, top: 2, right: 4, itemWidth: 14, itemHeight: 8 }
+      : { show: false },
+    tooltip: { trigger: 'axis', backgroundColor: COL.bg2, borderColor: COL.line,
+      textStyle: { color: COL.text1, fontSize: 12 },
+      formatter: ps => {
+        if (!ps || !ps.length) return '';
+        const parts = [`<b>${esc(fmtCn(String(ps[0].axisValue)))}</b>`];
+        ps.forEach(p => {
+          const v = p.value;
+          if (Array.isArray(v) && v.length >= 4) {      // 蜡烛：[开,收,低,高]（兼容带前置索引的 5 列形式）
+            const a = v.length >= 5 ? v.slice(1) : v;
+            const chg = a[0] ? (a[1] / a[0] - 1) * 100 : null;
+            parts.push(`<br/>开 ${a[0]}　高 ${a[3]}　低 ${a[2]}　收 <span style="color:${pctColor(chg)}"><b>${a[1]}${chg == null ? '' : ' ' + shortPct(chg)}</b></span>`);
+          } else if (v != null) {
+            parts.push(`<br/>${p.marker || ''}${esc(p.seriesName)} <b> ${( +v).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</b>`);
+          }
+        });
+        return parts.join('');
+      } },
+    xAxis: { type: 'category', data: useK ? klDates : (y ? mergeDates(hx, hy) : hx.map(h => h[0])),
+      axisLine: { lineStyle: { color: COL.line } },
+      axisLabel: { color: COL.text3, fontSize: 10, hideOverlap: true, margin: 10,
+        formatter: v => fmtCn(v) },
+      axisTick: { show: false } },
+    yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: COL.line, type: 'dashed', opacity: .6 } },
+      axisLabel: { color: COL.text3, fontSize: 10, margin: 8,
+        formatter: v => Math.abs(v) >= 1e4 ? (v / 1e4).toFixed(v % 1e4 ? 1 : 0) + '万' : v.toLocaleString('zh-CN') },
+      axisLine: { show: false }, axisTick: { show: false } },
+    dataZoom: [{ type: 'inside' }],
+    series
+  }, { notMerge: true });
+  const chips = [['最新', x.close, null], ['日', x.pct, 1], ['5日', x.chg5, 1], ['20日', x.chg20, 1]];
+  $('trendStats').innerHTML = chips.map(([lab, v, isPct]) =>
+    `<span class="chip">${lab} <b>${isPct ? pctHtml(v) : (v == null ? '-' : v)}</b></span>`).join('') +
+    `<span class="chip">${esc(x.country)} · ${esc(x.city)} · <span style="color:${COL.text3}">${esc(fmtCn(x.last_date))} 收盘</span></span>`;
+  $('trendTitle').textContent = x.name + ' 走势（' + trendRangeLabel() + '）' + (y ? ' vs ' + y.name : '');
+}
+function selectIndex(id) {
+  if (!idxById[id]) return;
+  selIdx = id;
+  renderMap(); renderTrend();   // renderMap 默认增量更新，不重置用户漫游的地图视角
+}
+
+/* ================= 3. 轮动雷达（RS × MOM 象限散点 + 轨迹） ================= */
+function radarMarketBlocks() {
+  const R = G.radar || {}, blocks = [];
+  if ((radarMkt === 'all' || radarMkt === 'us') && R.us && (R.us.themes || []).length)
+    blocks.push(['美股', 'diamond', R.us]);
+  if ((radarMkt === 'all' || radarMkt === 'cn') && R.cn && (R.cn.themes || []).length)
+    blocks.push(['A股', 'rect', R.cn]);
+  return blocks;
+}
+function renderRadar() {
+  if (!radarChart) return;
+  const blocks = radarMarketBlocks();
+  if (!blocks.length) { radarChart.clear(); renderRadarList(blocks); return; }
+  const pts = [], series = [], scat = [];
+  blocks.forEach(([mlabel, sym, blk]) => {
+    blk.themes.forEach(t => {
+      (t.trail || []).forEach(p => { if (p.rs != null) pts.push([p.rs, p.mom]); });
+      const col = (t.today || 0) > 0 ? COL.up : (t.today || 0) < 0 ? COL.down : COL.text3;
+      const trailPts = (t.trail || []).filter(p => p.rs != null).map(p => [p.rs, p.mom]);
+      if (trailPts.length > 1) {
+        series.push({ name: t.name + ' trail', type: 'line', data: trailPts, silent: true,
+          showSymbol: false, symbol: sym, lineStyle: { width: 1, color: col, opacity: .45 },
+          z: 2, tooltip: { show: false } });
+      }
+      if (t.rs != null) scat.push({ t, mlabel, sym, col, bench: blk.benchmark.name });
+    });
+  });
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const xMin = Math.min(0, ...xs) - 1.8, xMax = Math.max(0, ...xs) + 1.8;
+  const yMin = Math.min(0, ...ys) - 2.2, yMax = Math.max(0, ...ys) + 2.6;
+  // 标签贪心避让：按邻域密度降序放置，每个点从 8 方向候选槽位里挑不压已放标签/其他点/象限角标的方向；
+  // 全被占满时取碰撞最少的方向兜底，labelLayout 仅作最后防线
+  const axMin = +xMin.toFixed(1), axMax = +xMax.toFixed(1), ayMin = +yMin.toFixed(1), ayMax = +yMax.toFixed(1);
+  const gx0 = 44, gx1 = radarChart.getWidth() - 18, gy0 = 26, gy1 = radarChart.getHeight() - 30;
+  const pxOf = v => gx0 + (v - axMin) / (axMax - axMin) * (gx1 - gx0);
+  const pyOf = v => gy1 - (v - ayMin) / (ayMax - ayMin) * (gy1 - gy0);
+  const FS = 10.5, GAP = 3, DOT = 9, LH = FS + 2;
+  const lineW = t => { let w = 4; for (const ch of t) w += ch.charCodeAt(0) > 255 ? FS : FS * .58; return w; };
+  const txtSize = t => { const ls = t.split('\n');
+    return { w: Math.max(...ls.map(lineW)), h: ls.length * LH + 2 }; };
+  const hitR = (a, b) => a[0] < b[0] + b[2] + 1 && a[0] + a[2] + 1 > b[0] &&
+    a[1] < b[1] + b[3] + 1 && a[1] + a[3] + 1 > b[1];
+  const dots = scat.map(s => [pxOf(s.t.rs) - DOT, pyOf(s.t.mom) - DOT, DOT * 2, DOT * 2]);
+  const dens = i => dots.reduce((n, r, j) => n + (j !== i && hitR(dots[i], r) ? 1 : 0), 0);
+  const corners = [[gx0 + 2, gy0 + 2, 34, 16], [gx1 - 36, gy0 + 2, 34, 16],
+    [gx0 + 2, gy1 - 18, 34, 16], [gx1 - 36, gy1 - 18, 34, 16]];  // 改善/领先/落后/转弱角标
+  const DIRS = [[0, -1, 'top'], [0, 1, 'bottom'], [-1, 0, 'left'], [1, 0, 'right'],
+    [-1, -1, 'topLeft'], [1, -1, 'topRight'], [-1, 1, 'bottomLeft'], [1, 1, 'bottomRight']];
+  scat.map((_, i) => i).sort((a, b) => dens(b) - dens(a) || scat[a].t.rs - scat[b].t.rs).forEach(i => {
+    const s = scat[i], cx = pxOf(s.t.rs), cy = pyOf(s.t.mom);
+    s.txt = (radarMkt === 'all' ? s.mlabel + '\n' : '') + s.t.name;  // 全部视图两行标签更省宽
+    s.txt2 = (radarMkt === 'all' ? s.mlabel + '·' : '') + s.t.name;
+    const { w: lw, h: lh } = txtSize(s.txt);
+    let bestR = null, bestScore = Infinity, bestPos = 'top';
+    for (const [dx, dy, pos] of DIRS) {
+      const r = [dx === 0 ? cx - lw / 2 : dx < 0 ? cx - GAP - lw : cx + GAP,
+        dy === 0 ? cy - lh / 2 : dy < 0 ? cy - GAP - lh : cy + GAP, lw, lh];
+      if (r[0] < gx0 - 6 || r[1] < gy0 - 16 || r[0] + lw > gx1 + 6 || r[1] + lh > gy1 + 8) continue;
+      let score = corners.some(c => hitR(r, c)) ? 1 : 0;
+      dots.forEach((o, j) => { if (j !== i && hitR(r, o)) score += 2; });
+      scat.forEach(o => { if (o !== s && o.rect && hitR(r, o.rect)) score += 2; });
+      if (score < bestScore) { bestScore = score; bestR = r; bestPos = pos; if (!score) break; }
+    }
+    if (bestScore === 0) { s.pos = bestPos; s.rect = bestR; }
+    else s.stk = true;  // 挤不下的改走侧边堆叠 + 引导线
+  });
+  const invX = p => axMin + (p - gx0) / (gx1 - gx0) * (axMax - axMin);
+  const invY = p => ayMin + (gy1 - p) / (gy1 - gy0) * (ayMax - ayMin);
+  ['left', 'right'].forEach(side => {
+    const col = scat.filter(s => s.stk && ((side === 'right') === (pxOf(s.t.rs) >= (gx0 + gx1) / 2)));
+    if (!col.length) return;
+    const lwMax = Math.max(...col.map(s => txtSize(s.txt2).w));
+    const colX = side === 'right' ? gx1 - lwMax - 4 : gx0 + 4;
+    col.sort((a, b) => pyOf(a.t.mom) - pyOf(b.t.mom));
+    const yTop = gy0 + 22, yBot = gy1 - 22 - FS - 4;  // 列带让开「改善/落后」角标
+    col.forEach((s, i) => {  // 先按锚点就近排
+      const yy = Math.max(i ? col[i - 1].rect[1] + FS + 6 : yTop, pyOf(s.t.mom) - (FS + 4) / 2);
+      s.rect = [colX, yy, txtSize(s.txt2).w, FS + 4]; s.side = side;
+    });
+    if (col[col.length - 1].rect[1] > yBot) {  // 超出底界：整列在带内均匀重排
+      // 单标签也能进这支（锚点在带外下方）：除数取 0 会得 Infinity，0*Infinity=NaN 坐标画丢
+      const pitch = (yBot - yTop - FS - 4) / Math.max(col.length - 1, 1);
+      col.forEach((s, i) => { s.rect[1] = yTop + i * pitch; });
+    }
+    col.forEach(s => {
+      s.anch = [side === 'right' ? colX - 3 : colX + lwMax + 3, s.rect[1] + (FS + 4) / 2];
+    });
+  });
+  const stacked = scat.filter(s => s.stk);
+  if (stacked.length) {
+    const lead = s => {
+      const p0 = [pxOf(s.t.rs), pyOf(s.t.mom)], p1 = s.anch;
+      const d = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+      const k = [p0[0] + (p1[0] - p0[0]) / d * 8, p0[1] + (p1[1] - p0[1]) / d * 8];
+      return { coords: [[invX(k[0]), invY(k[1])], [invX(p1[0]), invY(p1[1])]] };
+    };
+    series.push({ name: 'lbl-leads', type: 'lines', coordinateSystem: 'cartesian2d', silent: true,
+      symbol: ['none', 'none'], lineStyle: { color: COL.line2, width: 1, opacity: .8, curveness: 0 },
+      data: stacked.map(lead), z: 3, tooltip: { show: false } });
+    stacked.forEach(s => series.push({ name: s.t.name + ' lbl', type: 'scatter', silent: true,
+      data: [{ value: [invX(s.anch[0]), invY(s.anch[1])] }], symbolSize: 0,
+      label: { show: true, position: s.side === 'right' ? 'right' : 'left', distance: 4,
+        fontSize: FS, color: COL.text1, textBorderColor: COL.bg2, textBorderWidth: 2,
+        fontWeight: 600, formatter: s.txt2 },
+      z: 7, tooltip: { show: false } }));
+  }
+  scat.forEach(s => {
+    series.push({ name: s.t.name, type: 'scatter', data: [{ value: [s.t.rs, s.t.mom],
+        meta: { ...s.t, market: s.mlabel, bench: s.bench } }],
+      symbol: s.sym, symbolSize: 12, itemStyle: { color: s.col, borderColor: COL.bg2, borderWidth: 1.5 },
+      label: { show: !s.stk, position: s.pos || 'top', distance: GAP, fontSize: FS, lineHeight: LH,
+        color: COL.text1, textBorderColor: COL.bg2, textBorderWidth: 2, fontWeight: 600,
+        formatter: s.txt },
+      labelLayout: { moveOverlap: 'shiftY', hideOverlap: true },
+      emphasis: { scale: 1.35 }, z: 6 });
+  });
+  const quad = (x1, y1, x2, y2, color, label, lp) => [
+    { coord: [x1, y1], itemStyle: { color },
+      label: { show: true, position: lp, color: COL.text3, fontSize: 11, letterSpacing: 2, formatter: label } },
+    { coord: [x2, y2] }];
+  series.unshift({ name: 'quad', type: 'scatter', data: [], silent: true, tooltip: { show: false },
+    markLine: { silent: true, symbol: 'none', animation: false,
+      lineStyle: { color: COL.line2, type: 'dashed', width: 1 }, label: { show: false },
+      data: [{ xAxis: 0 }, { yAxis: 0 }] },
+    markArea: { silent: true, data: [
+      quad(0, 0, xMax, yMax, hexA(COL.up, .06), '领先', 'insideTopRight'),
+      quad(0, yMin, xMax, 0, hexA(COL.up, .03), '转弱', 'insideBottomRight'),
+      quad(xMin, 0, 0, yMax, hexA(COL.down, .05), '改善', 'insideTopLeft'),
+      quad(xMin, yMin, 0, 0, hexA(COL.down, .025), '落后', 'insideBottomLeft')] } });
+  radarChart.setOption({
+    backgroundColor: 'transparent', animation: false,
+    grid: { left: 44, right: 18, top: 26, bottom: 30 },
+    tooltip: { trigger: 'item', backgroundColor: COL.bg2, borderColor: COL.line,
+      textStyle: { color: COL.text1, fontSize: 12 },
+      formatter: p => {
+        const m = p.data && p.data.meta; if (!m) return '';
+        const tr = m.trail || [];
+        return `<b>${esc(m.name)}</b>　${esc(m.market)}｜基准 ${esc(m.bench)}<br/>` +
+          `当日 <span style="color:${pctColor(m.today)}">${shortPct(m.today)}</span>　` +
+          `20日动量 <span style="color:${pctColor(m.mom)}">${shortPct(m.mom)}</span><br/>` +
+          `相对强度 RS <span style="color:${pctColor(m.rs)}">${shortPct(m.rs)}</span>` +
+          (tr.length > 1 ? `<br/><span style="color:${COL.text3}">轨迹 ${esc(fmtCn(tr[0].d))} → ${esc(fmtCn(tr[tr.length - 1].d))}（${tr.length}个周点）</span>` : '') +
+          `<br/><span style="color:${COL.text3};font-size:11px">成员：${esc((m.members || []).slice(0, 8).join('、'))}${(m.members || []).length > 8 ? '…' : ''}</span>`;
+      } },
+    xAxis: { type: 'value', min: axMin, max: axMax,
+      name: 'RS(%)', nameTextStyle: { color: COL.text3, fontSize: 10 },
+      axisLabel: { color: COL.text3, fontSize: 10 }, axisLine: { show: false },
+      splitLine: { show: false }, axisTick: { show: false } },
+    yAxis: { type: 'value', min: ayMin, max: ayMax,
+      name: 'MOM(%)', nameTextStyle: { color: COL.text3, fontSize: 10 },
+      axisLabel: { color: COL.text3, fontSize: 10 }, axisLine: { show: false },
+      splitLine: { show: false }, axisTick: { show: false } },
+    series
+  }, { notMerge: true });
+  if (!radarChart.__jumpBound) {
+    radarChart.__jumpBound = true;
+    radarChart.on('click', p => {
+      const m = p.data && p.data.meta;
+      if (m) heatJump(m.market === '美股' ? 'us' : 'cn', m.name);
+    });
+  }
+  renderRadarList(blocks);
+}
+function renderRadarList(blocks) {
+  let html = '';
+  blocks.forEach(([mlabel, sym, blk]) => {
+    const ts = [...blk.themes].sort((a, b) => (b.today ?? -99) - (a.today ?? -99));
+    const mx = Math.max(0.6, ...ts.map(t => Math.abs(t.today || 0)));
+    html += `<div class="tl-h">当日涨跌 · ${mlabel} · 基准 ${esc(blk.benchmark.name)} · ${ts.length}</div>`;
+    ts.forEach(t => {
+      const c = (t.today || 0) > 0 ? COL.up : (t.today || 0) < 0 ? COL.down : COL.text3;
+      html += `<div class="tl-row" data-mkt="${mlabel === '美股' ? 'us' : 'cn'}" data-theme="${esc(t.name)}" title="${esc((t.members || []).join('、'))}｜点击在热力图查看">` +
+        `<span class="nm">${esc(t.name)}</span>` +
+        `<span class="bar"><i style="width:${(Math.abs(t.today || 0) / mx * 100).toFixed(0)}%;background:${c}"></i></span>` +
+        `<span class="pc" style="color:${c}">${shortPct(t.today)}</span></div>`;
+    });
+  });
+  $('radarList').innerHTML = html || '<div class="tl-h">暂无数据，点右上角重抓</div>';
+}
+$('radarMkt').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  radarMkt = b.dataset.m;
+  document.querySelectorAll('#radarMkt button').forEach(x => x.classList.toggle('on', x === b));
+  renderRadar();
+});
+$('radarList').addEventListener('click', e => {
+  const r = e.target.closest('.tl-row'); if (!r || !r.dataset.theme) return;
+  heatJump(r.dataset.mkt, r.dataset.theme);
+});
+
+/* ================= 4. 热力图 ================= */
+let heatPath = [];  // 钻取路径（从根往下的节点名，不含根）；空 = 全部视图
+let heatViewRoot = null;  // 当前视图渲染的树根节点（个股块点击时回查所属板块）
+function heatSubtree(tree) {
+  let n = tree;
+  for (const nm of heatPath) {
+    const c = (n.children || []).find(x => x.name === nm);
+    if (!c) { heatPath = []; return tree; }
+    n = c;
+  }
+  return n;
+}
+function renderHeatCrumbs(rootName) {
+  const el = $('heatCrumbs');
+  const themeOn = heatTheme && heatTheme.mkt === heatMode;
+  if (!heatPath.length && !themeOn) { el.className = ''; el.innerHTML = ''; return; }
+  const chips = [{ label: '⟲ 回到全部', to: -1 },
+    { label: themeOn ? '主题·' + heatTheme.theme : rootName, to: 0 }];
+  heatPath.forEach((nm, i) => chips.push({ label: nm, to: i + 1 }));
+  el.innerHTML = chips.map((c, i) => {
+    const cur = i === chips.length - 1;
+    return (i ? '<span class="hc-sep">›</span>' : '') +
+      `<span class="hc-chip${cur ? ' cur' : ''}" data-to="${c.to}">${esc(c.label)}</span>`;
+  }).join('');
+  el.className = 'show';
+}
+$('heatCrumbs').addEventListener('click', e => {
+  const c = e.target.closest('.hc-chip'); if (!c || c.classList.contains('cur')) return;
+  const to = +c.dataset.to;
+  if (to < 0) { heatPath = []; heatTheme = null; } else heatPath = heatPath.slice(0, to);
+  renderHeat();
+});
+function heatTreeUs() {
+  const hm = G.heatmap_us, clamp = HEAT_CLAMP.us;
+  return { name: '美股', children: hm.sectors.map(s => {
+    const sp = heatPct(s);
+    return { name: s.name, pct: sp, raw: s,
+      itemStyle: { color: heatColor(sp, clamp) },
+      label: { color: heatTextColor(sp, clamp) },
+      children: s.stocks.map(x => { const p = heatPct(x); return {
+        name: x.name + ' ' + x.code, value: x.cap, pct: p, raw: x,
+        lab: p == null ? x.name
+          : x.cap >= 1e12 ? `${x.name}\n${shortPct(p)}`
+          : x.cap >= 4e11 ? `${x.name} ${shortPct(p)}` : x.name,
+        itemStyle: { color: heatColor(p, clamp) },
+        label: { color: heatTextColor(p, clamp) } }; }) };
+  }) };
+}
+function heatTreeCn() {
+  const hm = G.heatmap_cn, clamp = HEAT_CLAMP.cn;
+  return { name: 'A股', children: hm.sectors.map(s => {
+    const sp = heatPct(s);
+    return { name: s.name, pct: sp, value: s.amount, raw: s,
+      itemStyle: { color: heatColor(sp, clamp) },
+      label: { color: heatTextColor(sp, clamp) },
+      children: s.stocks.map(x => { const p = heatPct(x); return {
+        name: x.name, value: x.amount, pct: p, raw: x,
+        lab: p == null ? x.name
+          : x.amount >= 40 ? `${x.name}\n${shortPct(p)}`
+          : x.amount >= 15 ? `${x.name} ${shortPct(p)}` : x.name,
+        itemStyle: { color: heatColor(p, clamp) },
+        label: { color: heatTextColor(p, clamp) } }; }) };
+  }) };
+}
+function heatBaseTree() {
+  const tree = heatMode === 'us' ? heatTreeUs() : heatTreeCn();
+  if (heatTheme && heatTheme.mkt === heatMode && heatTheme.boards && heatTheme.boards.length) {
+    const keep = tree.children.filter(c => heatTheme.boards.includes(c.name));
+    if (keep.length) { tree.children = keep; return tree; }
+    heatTheme = null;
+  }
+  return tree;
+}
+/* 雷达 → 热力图联动：美股主题名=板块名直接钻取；A股主题按成员行业筛选根层 */
+function heatJump(mkt, theme) {
+  heatPath = []; heatTheme = null;
+  if (mkt === 'us') {
+    heatMode = 'us'; heatPath = [theme];
+  } else {
+    heatMode = 'cn';
+    const themes = (((G.radar || {}).cn) || {}).themes || [];
+    const t = themes.find(x => x.name === theme);
+    heatTheme = { mkt: 'cn', theme, boards: (t && t.members) || [] };
+  }
+  document.querySelectorAll('#heatSeg button').forEach(x => x.classList.toggle('on', x.dataset.m === heatMode));
+  renderHeat();
+  $('heatPanel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function renderHeat() {
+  if (!heatChart) return;
+  const has = heatMode === 'us' ? G.heatmap_us : G.heatmap_cn;
+  // 上游部分降级会产出 {} 无 sectors：与「整块缺失」同样诚实置空，不能让 sectors.map 抛 TypeError
+  if (!has || !(has.sectors || []).length) {
+    heatChart.clear();
+    $('heatAsOf').textContent = has ? '本块暂无板块数据' : '本块数据缺失';
+    const crumbs = $('heatCrumbs');
+    crumbs.className = ''; crumbs.innerHTML = '';
+    return;
+  }
+  $('heatAsOf').textContent = '截至 ' + fmtCn(has.asof) + ' · ' + WIN_LABEL[heatWin];
+  $('heatWinNote').textContent = WIN_LABEL[heatWin];
+  renderHeatBar();
+  const tree = heatBaseTree();
+  renderHeatCrumbs(tree.name);
+  heatViewRoot = heatSubtree(tree);
+  heatChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { backgroundColor: COL.bg2, borderColor: COL.line, textStyle: { color: COL.text1, fontSize: 12 },
+      formatter: p => {
+        const d = p.data, wl = WIN_LABEL[heatWin];
+        if (!d.raw) return esc(d.name);
+        const size = heatMode === 'cn' && d.value != null ? `<br/>规模 ${d.value} 亿`
+          : heatMode === 'us' && d.value != null ? `<br/>市值 ${(d.value / 1e12).toFixed(2)} 万亿美元` : '';
+        if (d.pct == null) {
+          const dp = d.raw.pct;
+          return `<b>${esc(d.name)}</b><br/><span style="color:${COL.text3}">${wl}数据缺失${dp != null ? '（当日 ' + shortPct(dp) + '）' : ''}</span>` + size;
+        }
+        return `<b>${esc(d.name)}</b><br/>${wl} <span style="color:${pctColor(d.pct)}">${shortPct(d.pct)}</span>` +
+          (heatWin && d.raw.pct != null ? `　<span style="color:${COL.text3};font-size:11px">当日 ${shortPct(d.raw.pct)}</span>` : '') + size;
+      } },
+    series: [{ type: 'treemap', left: 4, right: 4, top: 4, bottom: 4,
+      roam: false, nodeClick: false, bubbleTooltip: true,
+      breadcrumb: { show: false },
+      label: { show: true, formatter: p => (p.data && p.data.lab) || ((p.data && p.data.name) || p.name || '').split(' ')[0],
+        fontSize: 11, lineHeight: 14, width: '95%', overflow: 'truncate' },
+      upperLabel: { show: true, height: 20, fontSize: 11,
+        formatter: p => p.treePathInfo.length > 1 ? p.name : '' },
+      itemStyle: { borderColor: COL.bg2, borderWidth: 1.5, gapWidth: 1.5 },
+      levels: [
+        { itemStyle: { borderWidth: 0, gapWidth: 3 } },
+        { itemStyle: { borderColor: COL.bg2, borderWidth: 2, gapWidth: 2 } },
+        { itemStyle: { gapWidth: 1 } }],
+      data: [heatViewRoot] }]
+  }, { notMerge: true });
+  if (!heatChart.__drillBound) {
+    heatChart.__drillBound = true;
+    heatChart.on('click', p => {
+      const d = p && p.data;
+      if (!d || !d.raw) return;
+      // 板块块（含标题条）：直接放大该板块
+      if (d.children && d.children.length) { heatPath.push(d.name); renderHeat(); return; }
+      // 个股块：放大其所属板块（setOption 会深克隆 data，p.data 非原对象，按名称回查）
+      const sec = ((heatViewRoot && heatViewRoot.children) || []).find(s => (s.children || []).some(c => c.name === d.name));
+      if (sec) { heatPath.push(sec.name); renderHeat(); }
+    });
+  }
+}
+$('heatSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  heatMode = b.dataset.m;
+  heatPath = [];
+  heatTheme = null;
+  document.querySelectorAll('#heatSeg button').forEach(x => x.classList.toggle('on', x === b));
+  renderHeat();
+});
+$('heatWinSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  heatWin = +b.dataset.w;
+  document.querySelectorAll('#heatWinSeg button').forEach(x => x.classList.toggle('on', x === b));
+  renderHeat();
+});
+
+/* ================= 新鲜度 / 重抓 ================= */
+function setPill(cls, txt) {
+  const p = $('gpPill'); p.className = 'fresh-pill ' + cls;
+  p.innerHTML = `<span class="dot"></span>${esc(txt)}`;
+}
+async function checkFresh() {
+  try {
+    const h = await (await fetch('/api/health')).json();
+    const g = h.global || {};
+    if (g.fetching) { setPill('warn', '全球数据抓取中…'); return true; }
+    if (!g.last_date) { setPill('bad', '全球数据缺失'); return false; }
+    const age = g.age_hours;
+    const bad = age == null || age > (new Date().getDay() % 6 === 0 ? 120 : 60);
+    setPill(bad ? 'bad' : (g.errors && g.errors.length ? 'warn' : 'ok'),
+      `${fmtCn(g.last_date)} · ${age == null ? '-' : age + 'h'}前` + (g.errors && g.errors.length ? ` · ${g.errors.length}项降级` : ''));
+    return false;
+  } catch (e) { setPill('bad', '服务不可达'); return false; }
+}
+let fetchTimer = null;
+$('btnFetch').onclick = async function () {
+  if (this.disabled) return;
+  // 抓取要跑 4-5 分钟而按钮在 POST 返回后即解禁：重复点击会让 setInterval 覆盖旧引用，
+  // 旧轮询永不清理 → 双份 15s 轮询并行、完成时 loadData/showMsg 各执行两遍
+  if (fetchTimer) { showMsg('已有重抓轮询在进行，等它完成即可'); return; }
+  this.disabled = true;
+  try {
+    const r = await fetch('/api/fetch-global', { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (j.status === 'running') showMsg('已有抓取任务在运行，等待完成…');
+    setPill('warn', '全球数据抓取中…');
+    fetchTimer = setInterval(async () => {
+      const busy = await checkFresh();
+      if (!busy) { clearInterval(fetchTimer); fetchTimer = null;
+        await loadData(); showMsg('全球数据已更新', true); }
+    }, 15000);
+  } catch (e) { showMsg('重抓请求失败：' + e); }
+  this.disabled = false;
+};
+function showMsg(txt, ok) {
+  const m = $('msgBar');
+  m.style.display = 'block';
+  m.style.borderColor = ok ? 'rgba(35,113,74,.4)' : 'rgba(180,55,44,.4)';
+  m.style.background = ok ? 'var(--down-soft)' : 'var(--up-soft)';
+  m.style.color = ok ? COL.down : COL.up;
+  m.textContent = txt;
+  clearTimeout(showMsg._t);
+  showMsg._t = setTimeout(() => { m.style.display = 'none'; }, 6000);
+}
+$('btnRefresh').onclick = () => location.reload();
+/* 顶栏导航：公共组件渲染（五页单一来源；顺序见 appbar.js PAGES，竞价在轮动之前） */
+try { AKBAR.renderNavgroup({ slot: 'navgroupSlot', active: '/global' }); } catch(e){}
+/* 主题切换（晨报⇄夜台）：四张 ECharts 全部按当前数据重画（COL getter 自动取新色） */
+window.addEventListener('akthemechange', () => {
+  if (!mapChart) return;   // 数据未装载过时无需重画，loadData 首绘即新主题
+  renderMap(true);
+  if (selIdx) renderTrend();
+  if (radarChart) renderRadar();
+  if (heatChart) renderHeat();
+});
+
+/* ================= 数据装载 ================= */
+async function loadData() {
+  const r = await fetch('/api/global');
+  if (r.status === 404) {
+    setPill('bad', '全球数据缺失');
+    showMsg('尚无全球数据：点击右上角「重新抓取」生成（约 4-5 分钟）');
+    return;
+  }
+  G = await r.json();
+  idxById = {}; (G.indices || []).forEach(x => idxById[x.id] = x);
+  /* 时钟行内指数 */
+  CITIES.forEach((c, i) => {
+    const mine = (G.indices || []).filter(x => x.tz === c.tz);
+    $('x' + i).innerHTML = mine.map(x => `${esc(x.name)} <span style="color:${pctColor(x.pct)}">${shortPct(x.pct)}</span>`).join('　') || '—';
+  });
+  $('mapAsOf').textContent = '截至 ' + fmtCn((((G.indices) || [])[0] || {}).last_date);
+  /* 趋势对比下拉 */
+  const sel = $('trendCompare');
+  sel.innerHTML = '<option value="">不对比</option>' +
+    (G.indices || []).map(x => `<option value="${x.id}">vs ${esc(x.name)}</option>`).join('');
+  sel.onchange = renderTrend;
+  /* 自选日期区间控件（一次性绑定：loadData 重抓后会再次执行，避免监听器重复注册） */
+  if (!loadData._bound) {
+    loadData._bound = true;
+    $('trQuick').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      trendRange = { days: +b.dataset.d, custom: false, start: '', end: '' };
+      renderTrend();
+    });
+    const onCustom = () => {
+      trendRange.custom = true;
+      trendRange.start = $('trStart').value;
+      trendRange.end = $('trEnd').value;
+      renderTrend();
+    };
+    $('trStart').onchange = onCustom;
+    $('trEnd').onchange = onCustom;
+    $('trStartBtn').onclick = () => pickDate('trStart');
+    $('trEndBtn').onclick = () => pickDate('trEnd');
+    $('trKind').addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      trendKind = b.dataset.k;
+      document.querySelectorAll('#trKind button').forEach(x => x.classList.toggle('on', x === b));
+      renderTrend();
+    });
+  }
+  /* 地图 */
+  if (!mapChart) {
+    const geo = await (await fetch('/lib/map/world.json')).json();
+    echarts.registerMap('world', geo);
+    mapChart = echarts.init($('mapChart'));
+    // echarts.init 不清容器子节点：HTML 里的「加载中…」是 absolute 覆盖层，不删会一直透在海洋区上
+    const ld = document.querySelector('#mapChart .loading');
+    if (ld) ld.remove();
+    mapChart.on('click', p => {
+      if (p.seriesType === 'scatter' && p.data.meta) selectIndex(p.data.meta.id);
+      else if (p.seriesType === 'map') {
+        const hit = (G.indices || []).find(x => x.geo === p.name);
+        if (hit) selectIndex(hit.id);
+      }
+    });
+  }
+  if (!trendChart) trendChart = echarts.init($('trendChart'));
+  if (!radarChart) radarChart = echarts.init($('radarChart'));
+  if (!heatChart) heatChart = echarts.init($('heatChart'));
+  // 「全部」视图榜单 18 行会把面板行撑得比初始画布高（单市场 9 行则缩回）：
+  // 容器尺寸一变就补 resize + 重排雷达标签，空白不留在图下方
+  if (!radarRO && 'ResizeObserver' in window) {
+    radarRO = new ResizeObserver(() => {
+      if (!radarChart) return;
+      radarChart.resize();
+      if (G && G.radar) renderRadar();  // 标签按新像素尺寸重排（内容不变时不会触发循环）
+    });
+    radarRO.observe($('radarBody'));
+    heatRO = new ResizeObserver(() => heatChart && heatChart.resize());
+    heatRO.observe($('heatChart'));
+  }
+  renderMap(true);   // 数据整体刷新才全量重建（会重置漫游视角）；选中态变化走 renderMap() 增量
+  if (!selIdx) selectIndex((G.indices || []).find(x => x.id === 'SPX') ? 'SPX' : (G.indices || [])[0]?.id);
+  /* 雷达 / 热力 */
+  if (G.radar) { renderRadar(); }
+  else { $('radarList').innerHTML = '<div class="tl-h">雷达数据缺失（点重抓）</div>'; }
+  renderHeat();
+  const errs = Object.keys(G.errors || {});
+  $('footErr').textContent = errs.length ? `部分数据降级：${errs.join('、')}` : '';
+  checkFresh();
+}
+let _rszT = null;
+window.addEventListener('resize', () => {   // 拖拽窗口时 4 个图表连续 resize 很重，防抖 150ms
+  clearTimeout(_rszT);
+  _rszT = setTimeout(() => [mapChart, trendChart, radarChart, heatChart].forEach(c => c && c.resize()), 150);
+});
+loadData().catch(e => showMsg('数据加载失败：点「刷新」重试；若持续报错再点「重新抓取」（' + e + '）'));
+</script>
+</body>
+</html>

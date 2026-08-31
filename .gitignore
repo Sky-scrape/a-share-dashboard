@@ -1,0 +1,46 @@
+# ---- 运行数据与产物（首次运行自动生成，不入库；锚定仓库根，避免误伤任意层级同名源码目录）----
+/data/
+/generated-images/
+/.status/
+/.context/
+/.opensquilla/
+
+# ---- 第三方参考资料（本地副本，不入库）----
+docs/reference/
+
+# ---- 量化引擎运行产物 ----
+quant/data/
+quant/results/
+quant/strategies_store/
+quant/notebooks/
+
+# ---- 策略自迭代：原始数据与大数据文件（本地生成，不入库）----
+strategy-iter/data/
+strategy-iter/raw/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# ---- 本地环境与密钥 ----
+.env
+*.lock
+
+# ---- 缓存 / 开发日志（本地生成，不入库）----
+backend/recap/.ht_cache/
+docs/PROGRESS.md
+*.log
+*.bak
+docs/legacy/1.jpg
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+*.lnk
+Thumbs.db
+.vscode/
+.idea/

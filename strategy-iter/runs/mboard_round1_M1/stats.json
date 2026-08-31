@@ -1,0 +1,403 @@
+{
+ "version": "M1",
+ "days": 162,
+ "total_picks": 566,
+ "missing": 0,
+ "overall": {
+  "n": 566,
+  "win_rate": 52.47,
+  "avg_close": 1.359,
+  "median_close": 0.395,
+  "avg_high": 4.473,
+  "avg_low": -2.237,
+  "avg_open": 0.872,
+  "pl_ratio": 1.745,
+  "buy_trigger_rate": 33.04,
+  "risk_hit_rate": 26.15,
+  "logic_realized_rate": 51.24,
+  "strong_sector_rate": 52.83,
+  "total_ret": 768.93,
+  "avg_result_score": 59.6,
+  "avg_logic_score": 52.7,
+  "avg_composite": 60.7,
+  "rating_dist": {
+   "A": 247,
+   "B": 46,
+   "C": 50,
+   "D": 223
+  }
+ },
+ "lu": {
+  "n": 242,
+  "win_rate": 64.46,
+  "avg_close": 3.081,
+  "median_close": 2.407,
+  "avg_high": 6.367,
+  "avg_low": -1.051,
+  "avg_open": 2.782,
+  "pl_ratio": 1.953,
+  "buy_trigger_rate": 23.14,
+  "risk_hit_rate": 19.83,
+  "logic_realized_rate": 62.81,
+  "strong_sector_rate": 66.53,
+  "total_ret": 745.57,
+  "avg_result_score": 69.3,
+  "avg_logic_score": 65.8,
+  "avg_composite": 66.5,
+  "rating_dist": {
+   "A": 140,
+   "B": 16,
+   "C": 18,
+   "D": 68
+  }
+ },
+ "nlu": {
+  "n": 324,
+  "win_rate": 43.52,
+  "avg_close": 0.072,
+  "median_close": -0.49,
+  "avg_high": 3.059,
+  "avg_low": -3.123,
+  "avg_open": -0.555,
+  "pl_ratio": 1.354,
+  "buy_trigger_rate": 40.43,
+  "risk_hit_rate": 30.86,
+  "logic_realized_rate": 42.59,
+  "strong_sector_rate": 42.59,
+  "total_ret": 23.36,
+  "avg_result_score": 52.4,
+  "avg_logic_score": 42.9,
+  "avg_composite": 56.3,
+  "rating_dist": {
+   "A": 107,
+   "B": 30,
+   "C": 32,
+   "D": 155
+  }
+ },
+ "by_regime": {
+  "aggressive": {
+   "n": 160,
+   "win_rate": 48.12,
+   "avg_close": 0.903,
+   "median_close": -0.114,
+   "avg_high": 4.381,
+   "avg_low": -2.206,
+   "avg_open": 1.074,
+   "pl_ratio": 1.639,
+   "buy_trigger_rate": 28.75,
+   "risk_hit_rate": 25.62,
+   "logic_realized_rate": 46.88,
+   "strong_sector_rate": 47.5,
+   "total_ret": 144.49,
+   "avg_result_score": 57.3,
+   "avg_logic_score": 48.9,
+   "avg_composite": 58.1,
+   "rating_dist": {
+    "A": 65,
+    "B": 11,
+    "C": 16,
+    "D": 68
+   }
+  },
+  "defensive": {
+   "n": 232,
+   "win_rate": 49.14,
+   "avg_close": 0.965,
+   "median_close": -0.008,
+   "avg_high": 4.226,
+   "avg_low": -2.834,
+   "avg_open": 0.591,
+   "pl_ratio": 1.642,
+   "buy_trigger_rate": 32.76,
+   "risk_hit_rate": 31.9,
+   "logic_realized_rate": 49.14,
+   "strong_sector_rate": 49.57,
+   "total_ret": 223.94,
+   "avg_result_score": 57.0,
+   "avg_logic_score": 49.8,
+   "avg_composite": 59.0,
+   "rating_dist": {
+    "A": 93,
+    "B": 21,
+    "C": 17,
+    "D": 101
+   }
+  },
+  "normal": {
+   "n": 174,
+   "win_rate": 60.92,
+   "avg_close": 2.302,
+   "median_close": 1.321,
+   "avg_high": 4.888,
+   "avg_low": -1.47,
+   "avg_open": 1.06,
+   "pl_ratio": 2.153,
+   "buy_trigger_rate": 37.36,
+   "risk_hit_rate": 18.97,
+   "logic_realized_rate": 58.05,
+   "strong_sector_rate": 62.07,
+   "total_ret": 400.5,
+   "avg_result_score": 65.2,
+   "avg_logic_score": 60.0,
+   "avg_composite": 65.3,
+   "rating_dist": {
+    "A": 89,
+    "B": 14,
+    "C": 17,
+    "D": 54
+   }
+  }
+ },
+ "by_month": {
+  "2026-01": {
+   "n": 71,
+   "win_rate": 52.11,
+   "avg_close": 1.782,
+   "median_close": 0.459,
+   "avg_high": 5.129,
+   "avg_low": -1.633,
+   "avg_open": 1.855,
+   "pl_ratio": 2.011,
+   "buy_trigger_rate": 25.35,
+   "risk_hit_rate": 22.54,
+   "logic_realized_rate": 50.7,
+   "strong_sector_rate": 53.52,
+   "total_ret": 126.53,
+   "avg_result_score": 62.8,
+   "avg_logic_score": 53.4,
+   "avg_composite": 60.6,
+   "rating_dist": {
+    "A": 30,
+    "B": 6,
+    "C": 9,
+    "D": 26
+   }
+  },
+  "2026-02": {
+   "n": 50,
+   "win_rate": 64.0,
+   "avg_close": 1.724,
+   "median_close": 1.087,
+   "avg_high": 4.284,
+   "avg_low": -2.098,
+   "avg_open": 0.631,
+   "pl_ratio": 1.732,
+   "buy_trigger_rate": 44.0,
+   "risk_hit_rate": 12.0,
+   "logic_realized_rate": 58.0,
+   "strong_sector_rate": 54.0,
+   "total_ret": 86.2,
+   "avg_result_score": 63.3,
+   "avg_logic_score": 58.6,
+   "avg_composite": 65.4,
+   "rating_dist": {
+    "A": 27,
+    "B": 2,
+    "C": 5,
+    "D": 16
+   }
+  },
+  "2026-03": {
+   "n": 74,
+   "win_rate": 47.3,
+   "avg_close": 0.964,
+   "median_close": -0.193,
+   "avg_high": 4.434,
+   "avg_low": -2.475,
+   "avg_open": 0.877,
+   "pl_ratio": 1.724,
+   "buy_trigger_rate": 31.08,
+   "risk_hit_rate": 31.08,
+   "logic_realized_rate": 47.3,
+   "strong_sector_rate": 52.7,
+   "total_ret": 71.31,
+   "avg_result_score": 57.0,
+   "avg_logic_score": 50.0,
+   "avg_composite": 58.9,
+   "rating_dist": {
+    "A": 30,
+    "B": 6,
+    "C": 4,
+    "D": 34
+   }
+  },
+  "2026-04": {
+   "n": 74,
+   "win_rate": 54.05,
+   "avg_close": 1.283,
+   "median_close": 0.413,
+   "avg_high": 3.753,
+   "avg_low": -2.195,
+   "avg_open": 0.157,
+   "pl_ratio": 1.676,
+   "buy_trigger_rate": 43.24,
+   "risk_hit_rate": 21.62,
+   "logic_realized_rate": 54.05,
+   "strong_sector_rate": 55.41,
+   "total_ret": 94.95,
+   "avg_result_score": 58.5,
+   "avg_logic_score": 53.7,
+   "avg_composite": 61.2,
+   "rating_dist": {
+    "A": 35,
+    "B": 5,
+    "C": 5,
+    "D": 29
+   }
+  },
+  "2026-05": {
+   "n": 63,
+   "win_rate": 41.27,
+   "avg_close": 0.821,
+   "median_close": -0.743,
+   "avg_high": 4.383,
+   "avg_low": -2.741,
+   "avg_open": 1.639,
+   "pl_ratio": 2.049,
+   "buy_trigger_rate": 25.4,
+   "risk_hit_rate": 34.92,
+   "logic_realized_rate": 41.27,
+   "strong_sector_rate": 42.86,
+   "total_ret": 51.69,
+   "avg_result_score": 54.7,
+   "avg_logic_score": 44.1,
+   "avg_composite": 56.4,
+   "rating_dist": {
+    "A": 23,
+    "B": 3,
+    "C": 5,
+    "D": 32
+   }
+  },
+  "2026-06": {
+   "n": 70,
+   "win_rate": 64.29,
+   "avg_close": 2.392,
+   "median_close": 2.046,
+   "avg_high": 5.654,
+   "avg_low": -2.574,
+   "avg_open": 0.682,
+   "pl_ratio": 1.598,
+   "buy_trigger_rate": 38.57,
+   "risk_hit_rate": 30.0,
+   "logic_realized_rate": 62.86,
+   "strong_sector_rate": 64.29,
+   "total_ret": 167.45,
+   "avg_result_score": 66.8,
+   "avg_logic_score": 64.8,
+   "avg_composite": 67.9,
+   "rating_dist": {
+    "A": 39,
+    "B": 5,
+    "C": 8,
+    "D": 18
+   }
+  },
+  "2026-07": {
+   "n": 78,
+   "win_rate": 53.85,
+   "avg_close": 1.017,
+   "median_close": 0.502,
+   "avg_high": 4.259,
+   "avg_low": -2.583,
+   "avg_open": 0.314,
+   "pl_ratio": 1.382,
+   "buy_trigger_rate": 35.9,
+   "risk_hit_rate": 29.49,
+   "logic_realized_rate": 52.56,
+   "strong_sector_rate": 51.28,
+   "total_ret": 79.31,
+   "avg_result_score": 57.4,
+   "avg_logic_score": 52.2,
+   "avg_composite": 59.9,
+   "rating_dist": {
+    "A": 31,
+    "B": 10,
+    "C": 7,
+    "D": 30
+   }
+  },
+  "2026-08": {
+   "n": 79,
+   "win_rate": 50.63,
+   "avg_close": 1.494,
+   "median_close": 0.114,
+   "avg_high": 4.101,
+   "avg_low": -1.381,
+   "avg_open": 1.009,
+   "pl_ratio": 2.244,
+   "buy_trigger_rate": 26.58,
+   "risk_hit_rate": 22.78,
+   "logic_realized_rate": 49.37,
+   "strong_sector_rate": 50.63,
+   "total_ret": 118.04,
+   "avg_result_score": 60.0,
+   "avg_logic_score": 49.7,
+   "avg_composite": 58.4,
+   "rating_dist": {
+    "A": 32,
+    "B": 8,
+    "C": 5,
+    "D": 34
+   }
+  },
+  "2026-09": {
+   "n": 7,
+   "win_rate": 0.0,
+   "avg_close": -3.793,
+   "median_close": -2.841,
+   "avg_high": 2.822,
+   "avg_low": -5.187,
+   "avg_open": -0.235,
+   "pl_ratio": null,
+   "buy_trigger_rate": 0.0,
+   "risk_hit_rate": 42.86,
+   "logic_realized_rate": 0.0,
+   "strong_sector_rate": 28.57,
+   "total_ret": -26.55,
+   "avg_result_score": 32.9,
+   "avg_logic_score": 15.0,
+   "avg_composite": 38.7,
+   "rating_dist": {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "D": 4
+   }
+  }
+ },
+ "attribution": {
+  "lu": {
+   "正常兑现": 122,
+   "买点未触发": 49,
+   "资金承接不足": 21,
+   "市场系统性风险": 17,
+   "板块持续性不足": 14,
+   "随机波动": 9,
+   "情绪兑现/高开回落": 8,
+   "个股辨识度不够/其他": 2
+  },
+  "nlu": {
+   "买点未触发": 93,
+   "正常兑现": 88,
+   "板块持续性不足": 51,
+   "市场系统性风险": 37,
+   "资金承接不足": 28,
+   "随机波动": 23,
+   "个股辨识度不够/其他": 4
+  }
+ },
+ "regime_days": {
+  "defensive": 78,
+  "normal": 44,
+  "aggressive": 40
+ },
+ "scope": {
+  "pick_exchanges": {
+   "SZ": 313,
+   "SH": 253
+  },
+  "bj_picks": 0
+ }
+}

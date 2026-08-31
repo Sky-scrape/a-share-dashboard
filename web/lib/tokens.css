@@ -1,0 +1,194 @@
+/* A股看板 · 共享设计 token（两页统一引用的单一色彩/字体来源）
+   页面特有变量留在各自 <style> 的 :root 里追加。 */
+:root {
+  --bg-0: #EFEAE0;
+  --bg-1: #F6F3EC;
+  --bg-2: #FDFBF6;
+  --bg-3: #F1ECE1;
+  --line: #DDD5C6;
+  --line-2: #C4BBA6;
+  --line-strong: #2A2620;      /* 3px double 分隔线（appbar/分组头） */
+  --text-1: #21201C;
+  --text-2: #57534A;
+  --text-3: #8A8478;
+  --text-4: #B0AAA0;           /* 更淡一级：图表副标题 / 基准线 / 0 轴线 */
+  --up: #B4372C;
+  --up-soft: rgba(180, 55, 44, .08);
+  --up-bar: rgba(180, 55, 44, .32);   /* SVG 柱填充（概念周期图） */
+  --up-strong: rgba(180, 55, 44, .9); /* 图例色块等需要更实的红 */
+  --down: #23714A;
+  --down-soft: rgba(35, 113, 74, .09);
+  --flat: #8A6D2E;
+  --accent: #8C6D1F;
+  --blue: #3D5A80;
+  --gold: #8C6D1F;
+  --red2: #CE7A6B;
+  --green2: #5F9B79;
+  --warn: #B4530A;             /* 逼近阈值警示（琥珀） */
+  --hover-row: #F6F0E2;        /* 表格行悬停 */
+  --row-alt: rgba(140, 120, 80, .035); /* 表格偶数行 */
+  --split: #E7E0D2;            /* 图表网格线（比 --line 更浅） */
+  --scroll-hover: #A79D87;     /* 滚动条拇指悬停 */
+  --ramp-1: #23714A;           /* 热力色阶 7 档：深绿→纸色→深红（红涨绿跌） */
+  --ramp-2: #5F9B79;
+  --ramp-3: #B3D4BF;
+  --ramp-4: #F1ECE1;
+  --ramp-5: #D98E7E;
+  --ramp-6: #C05F52;
+  --ramp-7: #B4372C;
+  --r-sm: 3px;
+  --r-md: 5px;
+  --r-lg: 8px;
+  --shadow-card: 0 1px 2px rgba(72, 60, 38, .05), 0 6px 18px -12px rgba(72, 60, 38, .18);
+  --serif: "Noto Serif SC", "Source Han Serif SC", "STZhongsong", "SimSun", serif;
+  --mono: Consolas, "Cascadia Mono", "Bahnschrift", monospace;
+  --sans: "Microsoft YaHei", "PingFang SC", "Segoe UI", -apple-system, sans-serif;
+  /* 兼容别名（旧页面代码直接使用） */
+  --bg: var(--bg-0);
+  --panel: var(--bg-2);
+  --panel2: var(--bg-3);
+  --text: var(--text-1);
+  --muted: var(--text-2);
+  --dim: var(--text-2);
+}
+
+/* ============ 夜台主题（2026-09-05，与晨报纸色同一套变量名整体覆盖） ============
+   色彩单一来源仍是本文件：canvas 图表不认 var()，运行时取值走 lib/theme.js 的
+   AKTHEME.C()（读这里定义的变量）；两主题下各页重绘由 akthemechange 事件驱动。
+   红涨绿跌语义不变，仅换霓虹色相；标题字族改等宽（终端感）。 */
+html[data-theme="cyber"] {
+  --bg-0: #070B14;
+  --bg-1: #0B1220;
+  --bg-2: #0F1830;
+  --bg-3: #14203C;
+  --line: #1D2B4A;
+  --line-2: #2B3D66;
+  --line-strong: rgba(53, 224, 255, .38);
+  --text-1: #D7E3FF;
+  --text-2: #92A5CD;
+  --text-3: #5D7099;
+  --text-4: #47587D;
+  --up: #FF4D6D;
+  --up-soft: rgba(255, 77, 109, .14);
+  --up-bar: rgba(255, 77, 109, .35);
+  --up-strong: rgba(255, 77, 109, .9);
+  --down: #2BE39B;
+  --down-soft: rgba(43, 227, 155, .12);
+  --flat: #E8C170;
+  --accent: #35E0FF;
+  --blue: #6C9EFF;
+  --gold: #F0C674;
+  --red2: #FF7A9E;
+  --green2: #4FDDB0;
+  --warn: #FFB35C;
+  --hover-row: #14213D;
+  --row-alt: rgba(108, 158, 255, .045);
+  --split: #1D2B4A;
+  --scroll-hover: #38527F;
+  --ramp-1: #0C6B4A;
+  --ramp-2: #159C6C;
+  --ramp-3: #2BD99B;
+  --ramp-4: #16223D;
+  --ramp-5: #E85A7B;
+  --ramp-6: #F2355F;
+  --ramp-7: #FF2E63;
+  --shadow-card: 0 0 0 1px rgba(53, 224, 255, .05), 0 12px 28px -16px rgba(0, 0, 0, .75);
+  --serif: "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
+  color-scheme: dark;
+}
+/* 顶栏在夜台下的霓虹化（结构样式仍走上方共用规则，只覆盖颜色与光效） */
+html[data-theme="cyber"] header.appbar {
+  border-bottom: 1px solid var(--line-strong);
+  box-shadow: 0 1px 0 rgba(53, 224, 255, .10), 0 10px 30px -18px rgba(53, 224, 255, .35);
+}
+html[data-theme="cyber"] header.appbar h1 { text-shadow: 0 0 12px rgba(53, 224, 255, .45); }
+html[data-theme="cyber"] header.appbar button.navtab:hover { color: var(--text-1); background: rgba(53, 224, 255, .07); }
+html[data-theme="cyber"] header.appbar button.navtab.active {
+  color: var(--accent);
+  border-color: var(--line-2);
+  border-bottom-color: var(--accent);
+  background: rgba(53, 224, 255, .06);
+  text-shadow: 0 0 8px rgba(53, 224, 255, .5);
+}
+/* 主题切换按钮（appbar.js 渲染，两主题共用：等宽字 + 半圆图标） */
+header.appbar button.navtheme {
+  font-family: var(--mono); letter-spacing: .5px;
+  border: 1px solid var(--line-2); background: var(--bg-2);
+  color: var(--accent);
+}
+html[data-theme="cyber"] header.appbar button.navtheme { box-shadow: 0 0 10px -2px rgba(53, 224, 255, .5); }
+
+/* ============ 统一顶栏 appbar（竞价 / 轮动 / 复盘 / 全球 / 量化 五页共用，2026-08-31） ============
+   结构约定：[h1 ●页名] [sub 副题] [页面控件：日期/刷新/重抓/导出] [spacer] [状态/胶囊] [navgroup] */
+header.appbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
+  min-height: 44px; padding: 10px 18px 6px;
+  background: var(--bg-0); color: var(--text-1);
+  border-bottom: 3px double #2A2620;
+  position: relative; z-index: 20;
+  font-family: var(--sans); font-variant-numeric: tabular-nums;
+}
+header.appbar h1 { flex: none; white-space: nowrap; font-family: var(--serif); font-size: 18px; font-weight: 900; letter-spacing: 1px; }
+header.appbar h1 .dot { color: var(--up); }
+header.appbar .sub { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+header.appbar .spacer { flex: 1 1 auto; }
+header.appbar .brand { font-family: var(--serif); font-size: 15px; font-weight: 900; letter-spacing: 1px; margin-right: 4px; color: var(--text-2); white-space: nowrap; flex: none; }
+header.appbar .brand .dot { color: var(--accent); }
+header.appbar .navgroup { display: flex; align-items: center; gap: 10px; flex: none; white-space: nowrap; }
+header.appbar button.navtab {
+  background: none; border: 1px solid transparent; border-bottom: 2px solid transparent;
+  padding: 4px 9px; font-size: 12px; color: var(--text-3); border-radius: 6px;
+  white-space: nowrap; flex: none; cursor: pointer;
+}
+header.appbar button.navtab:hover { color: var(--text-1); background: var(--bg-2); }
+header.appbar button.navtab.active { color: var(--up); border: 1px solid var(--line); border-bottom: 2px solid var(--up); background: var(--bg-2); }
+header.appbar .navsep { width: 1px; height: 20px; background: var(--line-2); margin: 0 2px; flex: none; }
+header.appbar .b-full { display: inline; }
+header.appbar .b-mini { display: none; }
+/* 两行变体（轮动页：标题行 + 回放控制行） */
+header.appbar.appbar-stack { flex-direction: column; align-items: stretch; gap: 7px; }
+header.appbar.appbar-stack .appbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; white-space: nowrap; min-height: 32px; }
+@media (max-width: 760px) {
+  header.appbar { padding: 8px 12px 5px; gap: 8px; }
+  header.appbar h1 { font-size: 15px; letter-spacing: .5px; }
+  header.appbar .sub { display: none; }
+  header.appbar .brand { display: none; }
+  header.appbar .b-full { display: none; }
+  header.appbar .b-mini { display: inline; }
+  header.appbar button.navtab { padding: 3px 6px; font-size: 11px; }
+  header.appbar .navsep { margin: 0 1px; }
+  /* 手机端（2026-09-03）：标题行+控件+导航一行装不下时允许换行，
+     导航组落到第二行右对齐，避免整页横向滚动（旧 bug：390px 下 navgroup 被挤出 100-170px） */
+  header.appbar { flex-wrap: wrap; row-gap: 4px; }
+  header.appbar .navgroup { margin-left: auto; }
+  /* 面板头部：标题不被挤成竖排（旧 bug：热力图标题被压成单字列），长注释/控件换行 */
+  .panel .head, .panel .ph, .panel > .ph { flex-wrap: wrap; row-gap: 4px; }
+  .panel .head b, .panel .ph h2, .panel > .ph h2 { white-space: nowrap; flex: none; }
+}
+
+/* ============ 数据新鲜度胶囊（freshness.js 使用） ============ */
+.fresh-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid var(--line); color: var(--text-2);
+  background: var(--bg-2); cursor: pointer; white-space: nowrap;
+  transition: border-color .18s ease;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis;
+}
+.fresh-pill:hover { border-color: var(--line-2); }
+.fresh-pill .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.fresh-pill.ok .dot { background: var(--down); }
+.fresh-pill.warn { border-color: rgba(140,109,31,.5); }
+.fresh-pill.warn .dot { background: var(--gold); }
+.fresh-pill.bad { border-color: rgba(180,55,44,.5); color: var(--up); }
+.fresh-pill.bad .dot { background: var(--up); }
+.fresh-pop {
+  position: absolute; z-index: 200; right: 12px; top: 46px;
+  width: min(400px, calc(100vw - 24px));
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-lg);
+  box-shadow: 0 10px 30px -8px rgba(40, 34, 20, .35);
+  padding: 12px 14px; font-size: 12px; color: var(--text-1); line-height: 1.7;
+}
+.fresh-pop h5 { font-size: 12px; margin: 8px 0 2px; color: var(--text-3); font-weight: 700; letter-spacing: .06em; }
+.fresh-pop .err { color: var(--up); word-break: break-all; }
+.fresh-pop button { margin-top: 8px; }
