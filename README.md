@@ -45,7 +45,7 @@
 ```bash
 # 首次安装依赖（Python 包 + hithink-finance CLI 两个主力数据源）：
 pip install -r requirements.txt
-npm install -g hithink-finance
+npm install -g hithink-finance   # ⚠️ 此 CLI 为作者个人工具，未在 npm 公开发布，克隆者无法安装
 # Windows 双击 打开看板.bat，或在项目根目录运行：
 python start.py          # 工作日 09:10–09:30 自动先打开竞价页，其余时间先打开轮动页
 # 浏览器：http://127.0.0.1:8000/auction    实时竞价（09:15–09:25 集合竞价，页内可随时补抓）
@@ -54,6 +54,8 @@ python start.py          # 工作日 09:10–09:30 自动先打开竞价页，�
 #         http://127.0.0.1:8000/global    全球总览
 #         http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/信号/研究全部原生页内完成）
 ```
+
+> **关于 hithink-finance**：主力数据源 CLI 为作者私有工具，未公开发布。没有它时，量化引擎（quant/）、策略自迭代与全部测试可完整运行；复盘/竞价/轮动/全球四条采集链路会在抓取期报错（start.py 启动预检会提示）。欢迎参考本仓库的架构与工程做法，数据抓取层请替换为你自己的数据源。
 
 ## 目录结构（五板块）
 
