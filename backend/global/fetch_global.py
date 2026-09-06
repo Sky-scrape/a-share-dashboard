@@ -441,7 +441,9 @@ def _latest_industry_map():
     import industry_common
     shared = industry_common.load_shared_ticker_map()
     if shared:
-        return shared, "shared"
+        # 第二返回值是「映射 vintage」日期（8 位口径），供 heatmap asof 标注；
+        # 不能用 "shared" 这类来源标签冒充日期（会原样漏到前端「截至 shared」）。
+        return shared, industry_common.shared_map_date8()
     if not os.path.isdir(HT_CACHE):
         return None, None
     files = sorted(f for f in os.listdir(HT_CACHE)

@@ -8,6 +8,12 @@
 """
 import pytest
 
+if __package__ in (None, ""):
+    # 直接 `python tests/test_units.py` 时没有 pytest 的 conftest 引导，
+    # 手动导入一次（其副作用就是把项目根与 backend 各目录放进 sys.path），
+    # 避免首行扁平 import 就 ModuleNotFoundError；pytest 路径下此导入无副作用。
+    import conftest  # noqa: F401
+
 
 # ---------------- thscodes：6 位代码 → thscode（单一来源） ----------------
 
@@ -560,3 +566,8 @@ def test_rot_next_tick_aligns_to_minute():
     assert (tick - _dtm(2026, 9, 5, 10, 0, 30, 500000)).total_seconds() >= 5
     tick2 = tc._next_tick(_dtm(2026, 9, 5, 10, 1, 1), 60)   # 压线 :01：退一个节拍
     assert (tick2.hour, tick2.minute, tick2.second) == (10, 2, 2)
+
+
+if __name__ == "__main__":
+    # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
+    raise SystemExit(pytest.main([__file__, "-q"]))

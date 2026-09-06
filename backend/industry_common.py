@@ -20,12 +20,19 @@ SHARED_PATH = os.path.join(PROJECT_ROOT, "data", "auction", "industry_map.json")
 MAX_AGE_DAYS = 5
 
 
-def load_shared_ticker_map():
-    """{裸 6 位代码: 一级行业名}；文件缺失/过旧/结构异常返回 {}（调用方自备兜底）。"""
+def _load_shared_doc():
+    """读共享映射原始文档；文件缺失/结构异常返回 None。"""
     try:
         with open(SHARED_PATH, encoding="utf-8") as f:
-            d = json.load(f)
+            return json.load(f)
     except Exception:  # noqa: BLE001
+        return None
+
+
+def load_shared_ticker_map():
+    """{裸 6 位代码: 一级行业名}；文件缺失/过旧/结构异常返回 {}（调用方自备兜底）。"""
+    d = _load_shared_doc()
+    if not isinstance(d, dict):
         return {}
     m = d.get("map")
     if not isinstance(m, dict) or not m:
@@ -39,3 +46,15 @@ def load_shared_ticker_map():
     if not ts or (time.time() - ts) / 86400.0 > MAX_AGE_DAYS:
         return {}
     return {str(k).split(".")[0]: v for k, v in m.items() if v}
+
+
+def shared_map_date8():
+    """共享映射的数据日期（8 位口径单一来源）；缺失/异常返回 ""。
+
+    fetch_global 等需要给数据标 vintage 的消费方用这个，
+    不要拿「映射来自共享源」这一来源标签当日期写进产出。"""
+    d = _load_shared_doc()
+    if not isinstance(d, dict):
+        return ""
+    d8 = str(d.get("date8") or "")
+    return d8 if len(d8) == 8 and d8.isdigit() else ""
