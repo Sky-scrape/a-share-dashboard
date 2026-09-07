@@ -6,6 +6,39 @@
 - 全站行业/板块口径统一为**同花顺一级行业指数（881xxx，90 个）**，跨页精确联动；概念板块保持同花顺概念目录
 - Windows 计划任务全自动采集（竞价/轮动/复盘/全球四条定时链路），支持手机 Tailscale 私有访问与全站双主题
 
+## 首次使用（五步走）
+
+1. **装 Python 依赖**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **装数据源 CLI 并配 key**（不装也能跑：量化引擎、策略自迭代与全部测试离线可用，只是四条采集链路无数据）
+
+   ```bash
+   npm install -g @hithink-tech/hithink-finance-cli   # 公开发布于 npm（MIT；源码 github.com/HiThink-Tech/Financial-API）
+   hithink-finance auth login                          # 到 https://fuyao.aicubes.cn 申请 API key 后配置
+   ```
+
+3. **启动**：Windows 双击 `打开看板.bat`，或项目根目录运行 `python start.py`（工作日 09:10–09:30 自动先开竞价页，其余时间先开轮动页）
+
+4. **首次抓数据**：各页面点「重新抓取」拉当日数据；量化平台页签内直接回测/选股/信号（行情走 hithink 本地缓存，首次任务自动拉取）
+
+5. **全自动采集（可选）**：按下方[「自动任务」](#自动任务windows-计划任务)一节建 Windows 计划任务，五个时段无人值守
+
+浏览器直接访问（默认 8000 端口）：
+
+```
+http://127.0.0.1:8000/auction   实时竞价（09:15–09:25 集合竞价，页内可随时补抓）
+http://127.0.0.1:8000/          板块日内轮动（根路径入口）
+http://127.0.0.1:8000/recap     盘后复盘
+http://127.0.0.1:8000/global    全球总览
+http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/信号/研究全部原生页内完成）
+```
+
+> **关于 hithink-finance**：主力数据源 CLI 已在 npm 公开发布（`@hithink-tech/hithink-finance-cli`，MIT），克隆者可直接安装；使用前按 https://fuyao.aicubes.cn 流程申请 API key，然后 `hithink-finance auth login` 配置。没有它时，量化引擎（quant/）、策略自迭代与全部测试可完整运行；复盘/竞价/轮动/全球四条采集链路会在抓取期报错（start.py 启动预检会提示）。
+
 ## 更新日志（v1.0 · 2026-09-06 首版）
 
 > 首版发布。2026-08-28 以来的全部改动按主题归组如下，逐日开发明细见 git 提交历史。
@@ -39,23 +72,6 @@
 - **自愈运维**：监护式启动器（服务崩溃自动重启、指数退避），补跑/补抓不冒充时点、数据边界诚实标注
 - **移动端**：Tailscale 私有通道（防火墙仅 Private 配置放行）、390px 视口适配、gzip 省流量
 - **全站双主题**：晨报（暖纸色）/夜台（深色霓虹）一键切换，canvas 图表经 `web/lib/theme.js` 单一来源取值重绘，多标签页/iframe 自动跟随，选择持久化
-
-## 一键使用
-
-```bash
-# 首次安装依赖（Python 包 + hithink-finance CLI 两个主力数据源）：
-pip install -r requirements.txt
-npm install -g @hithink-tech/hithink-finance-cli   # 公开发布于 npm（MIT；源码 github.com/HiThink-Tech/Financial-API）
-# Windows 双击 打开看板.bat，或在项目根目录运行：
-python start.py          # 工作日 09:10–09:30 自动先打开竞价页，其余时间先打开轮动页
-# 浏览器：http://127.0.0.1:8000/auction    实时竞价（09:15–09:25 集合竞价，页内可随时补抓）
-#         http://127.0.0.1:8000/          板块日内轮动（根路径入口）
-#         http://127.0.0.1:8000/recap     盘后复盘
-#         http://127.0.0.1:8000/global    全球总览
-#         http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/信号/研究全部原生页内完成）
-```
-
-> **关于 hithink-finance**：主力数据源 CLI 已在 npm 公开发布（`@hithink-tech/hithink-finance-cli`，MIT），克隆者可直接安装；使用前按 https://fuyao.aicubes.cn 流程申请 API key，然后 `hithink-finance auth login` 配置。没有它时，量化引擎（quant/）、策略自迭代与全部测试可完整运行；复盘/竞价/轮动/全球四条采集链路会在抓取期报错（start.py 启动预检会提示）。
 
 ## 目录结构（五板块）
 
