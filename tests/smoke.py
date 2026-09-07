@@ -32,6 +32,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
@@ -60,6 +61,14 @@ def get(base, path, retries=3):
         try:
             with urllib.request.urlopen(base + path, timeout=30) as r:
                 return r.status, json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            # 4xx/5xx 是服务端的确定性回答：原样返回结构化结果（无数据环境下
+            # /api/boards 等返回 404，断言 detail 会急切取值，不能把 body 吞成字符串）
+            body = e.read().decode("utf-8", "replace")
+            try:
+                return e.code, json.loads(body)
+            except ValueError:
+                return e.code, body
         except Exception as e:
             if i == retries - 1:
                 return None, str(e)
@@ -79,6 +88,9 @@ def main():
     if "--port" in sys.argv:
         port = int(sys.argv[sys.argv.index("--port") + 1])
     base = f"http://127.0.0.1:{port}"
+    if not os.path.isdir(os.path.join(ROOT, "data", "rotation", "daily")):
+        print("[note] 未检测到采集数据（data/ 不入库，克隆后属正常）：页面与 API 契约可测，"
+              "数据依赖型断言会 FAIL——先完成一次各板块抓取即可全绿。")
     print(f"== smoke: server on {base} ==")
     srv = subprocess.Popen(
         [sys.executable, os.path.join(ROOT, "server.py"), "--port", str(port), "--no-open"],
@@ -560,10 +572,11 @@ def main():
               "index.html"), encoding="utf-8").read() and 'row["store"]' in open(os.path.join(ROOT, "backend",
               "quant", "quant_api.py"), encoding="utf-8").read())
         if pf.get("exists"):
-            check("quant 回测流水行字段齐", all(k in qn["backtests"][-1] for k in
+            # 空流水（克隆后未跑过回测）时跳过行字段检查：[-1] 会 IndexError
+            check("quant 回测流水行字段齐", (not qn["backtests"]) or all(k in qn["backtests"][-1] for k in
                   ("time", "title", "strategy", "symbols", "window", "cum_ret", "sharpe", "trades")),
                   str(qn["backtests"][-1:])[:120])
-            check("quant 报告行含指标", all(k in qn["reports"][-1] for k in
+            check("quant 报告行含指标", (not qn["reports"]) or all(k in qn["reports"][-1] for k in
                   ("name", "window", "cum_ret", "max_dd", "benchmark", "html")), str(qn["reports"][-1:])[:120])
         qp = open(os.path.join(ROOT, "web", "quant", "index.html"), encoding="utf-8").read()
         qids = re.findall(r'\bid="([^"]+)"', qp)
