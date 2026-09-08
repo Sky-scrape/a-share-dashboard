@@ -9,7 +9,6 @@
   与本项目「抓取后台化」的惯例一致。
 - 一切落盘只发生在 quant/ 与 data/quant/ 内，不写外部路径。
 """
-import itertools
 import json
 import math
 import os

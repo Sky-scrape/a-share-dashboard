@@ -191,9 +191,9 @@ def _run(args, date):
     cutoff = datetime.datetime.now() - datetime.timedelta(days=keep_days)
     for fn in os.listdir(data_dir):
         if fn.endswith(".json"):
-            stem, ext = fn[:-5], fn[-5:]
+            stem = fn[:-5]
         elif fn.endswith(".json.gz"):
-            stem, ext = fn[:-8], ".json.gz"
+            stem = fn[:-8]
         else:
             continue
         if not (len(stem) == 8 and stem.isdigit()):

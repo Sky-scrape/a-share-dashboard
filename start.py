@@ -127,7 +127,7 @@ def main():
         peer = peer_is_our_service(PORT)
         if peer is False:
             print(f"!! 端口 {PORT} 已被其他程序占用（不是本看板），退出。")
-            print(f"!!   可用别的端口：  set AK_PORT=8010 && python start.py")
+            print("!!   可用别的端口：  set AK_PORT=8010 && python start.py")
             sys.exit(1)
         print(f"[看板] 端口 {PORT} 已有服务在跑（身份校验{'通过' if peer else '未确认，若页面异常请检查端口占用'}），直接打开浏览器。")
         print("[看板] 提示：若页面功能异常（如接口 404），说明旧进程代码过老，")

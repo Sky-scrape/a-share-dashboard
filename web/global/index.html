@@ -41,8 +41,8 @@ button:active { transform: translateY(1px); }
 .clock-card .time { font-family: var(--mono); font-size: 21px; letter-spacing: .5px; margin-top: 2px; }
 .clock-card .date { font-size: 11px; color: var(--text-3); margin-top: 1px; }
 .clock-card .mkt { position: absolute; right: 10px; top: 9px; font-size: 10px; padding: 2px 7px; border-radius: 9px; border: 1px solid var(--line); color: var(--text-3); }
-.clock-card .mkt.open { color: var(--up); border-color: rgba(180,55,44,.45); background: var(--up-soft); }
-.clock-card .mkt.lunch { color: var(--flat); border-color: rgba(138,109,46,.4); background: rgba(140,109,31,.07); }
+.clock-card .mkt.open { color: var(--up); border-color: var(--up-line); background: var(--up-soft); }
+.clock-card .mkt.lunch { color: var(--flat); border-color: var(--flat-line); background: var(--accent-soft); }
 .clock-card .idx { font-size: 11px; color: var(--text-2); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* ------- 主网格 ------- */
 main { flex: 1; display: grid; gap: 10px; padding: 10px;
@@ -107,10 +107,10 @@ main { flex: 1; display: grid; gap: 10px; padding: 10px;
 #heatBar .hb-pos b { color: var(--up); margin-right: 3px; }
 #heatBar .hb-neg, #heatBar .hb-pos { display: inline-flex; align-items: center; }
 #heatBar .hb-bar { flex: 0 0 220px; height: 10px; border-radius: 5px; border: 1px solid var(--line); position: relative;
-  background: linear-gradient(to right, rgb(35,113,74), rgb(253,251,246) 50%, rgb(180,55,44)); }
-#heatBar .hb-bar::before { content: ''; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: rgba(74,63,47,.55); }
-#heatBar .hb-bar::after { content: ''; position: absolute; left: 25%; top: 1px; bottom: 1px; width: 1px; background: rgba(74,63,47,.28);
-  box-shadow: 110px 0 0 rgba(74,63,47,.28); }
+  background: linear-gradient(to right, var(--down), var(--bg-2) 50%, var(--up)); }
+#heatBar .hb-bar::before { content: ''; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--bar-tick); }
+#heatBar .hb-bar::after { content: ''; position: absolute; left: 25%; top: 1px; bottom: 1px; width: 1px; background: var(--bar-tick-2);
+  box-shadow: 110px 0 0 var(--bar-tick-2); }
 .tl-row[data-theme] { cursor: pointer; border-radius: 4px; }
 .tl-row[data-theme]:hover { background: var(--bg-2); }
 #radarBody .chartwrap { position: relative; min-width: 0; }
@@ -125,7 +125,7 @@ main { flex: 1; display: grid; gap: 10px; padding: 10px;
   #radarBody { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 1fr) auto; }
   #radarList { border-left: none; border-top: 1px solid var(--line); max-height: 190px; }
 }
-#msgBar { display: none; margin: 0 10px; padding: 8px 12px; border: 1px solid rgba(180,55,44,.4);
+#msgBar { display: none; margin: 0 10px; padding: 8px 12px; border: 1px solid var(--up-line);
   background: var(--up-soft); color: var(--up); border-radius: var(--r-md); font-size: 12px; }
 .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 12px; }
 footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display: flex; gap: 12px; flex-wrap: wrap; }
@@ -238,6 +238,8 @@ const COL = {
 };
 const hexA = (hex, a) => { const n = parseInt(hex.slice(1), 16);
   return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
+/* 全站图表统一字族（canvas 不认 CSS 变量，option 里显式声明） */
+const CHART_FONT = '"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
 const $ = id => document.getElementById(id);
 /* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
 const pctHtml = v => v == null ? '-' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}%</span>`;
@@ -352,6 +354,7 @@ function mapOption(geoReady) {
   idx.forEach(x => { if (x.geo && countryPct[x.geo] == null) countryPct[x.geo] = x.pct; }); // 同国取第一个(优先序见后端)
   return {
     backgroundColor: 'transparent',
+    textStyle: { fontFamily: CHART_FONT },
     tooltip: { trigger: 'item', backgroundColor: COL.bg2, borderColor: COL.line,
       textStyle: { color: COL.text1, fontSize: 12 },
       formatter: p => {
@@ -458,6 +461,7 @@ function renderTrendMin(x) {
   const rgb = (chg ?? 0) >= 0 ? AKTHEME.rgbOf('--up', [180,55,44]).join(',') : AKTHEME.rgbOf('--down', [35,113,74]).join(',');
   trendChart.setOption({
     backgroundColor: 'transparent', animation: false,
+    textStyle: { fontFamily: CHART_FONT },
     grid: { left: 8, right: 14, top: 16, bottom: 26, containLabel: true },
     legend: { show: false },
     tooltip: { trigger: 'axis', backgroundColor: COL.bg2, borderColor: COL.line,
@@ -580,7 +584,7 @@ function renderTrend() {
     series = [{ name: x.name, type: 'line', data: hx.map(h => h[1]),
       showSymbol: false, lineStyle: { width: 1.8, color: COL.blue },
       areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
-        [{ offset: 0, color: 'rgba(61,90,128,.22)' }, { offset: 1, color: 'rgba(61,90,128,0)' }]) },
+        [{ offset: 0, color: hexA(COL.blue, .22) }, { offset: 1, color: hexA(COL.blue, 0) }]) },
       itemStyle: { color: COL.blue } }];
   } else {
     const dates = mergeDates(hx, hy);
@@ -594,6 +598,7 @@ function renderTrend() {
   trendChart.setOption({
     backgroundColor: 'transparent',
     animation: false,
+    textStyle: { fontFamily: CHART_FONT },
     grid: { left: 8, right: 14, top: (y || useK) ? 30 : 16, bottom: 26, containLabel: true },
     legend: y ? { data: legend, textStyle: { color: COL.text2, fontSize: 11 }, top: 2, right: 4 }
       : useK ? { data: ['MA5', 'MA20'], textStyle: { color: COL.text3, fontSize: 10.5 }, top: 2, right: 4, itemWidth: 14, itemHeight: 8 }
@@ -770,6 +775,7 @@ function renderRadar() {
       quad(xMin, yMin, 0, 0, hexA(COL.down, .025), '落后', 'insideBottomLeft')] } });
   radarChart.setOption({
     backgroundColor: 'transparent', animation: false,
+    textStyle: { fontFamily: CHART_FONT },
     grid: { left: 44, right: 18, top: 26, bottom: 30 },
     tooltip: { trigger: 'item', backgroundColor: COL.bg2, borderColor: COL.line,
       textStyle: { color: COL.text1, fontSize: 12 },
@@ -936,6 +942,7 @@ function renderHeat() {
   heatViewRoot = heatSubtree(tree);
   heatChart.setOption({
     backgroundColor: 'transparent',
+    textStyle: { fontFamily: CHART_FONT },
     tooltip: { backgroundColor: COL.bg2, borderColor: COL.line, textStyle: { color: COL.text1, fontSize: 12 },
       formatter: p => {
         const d = p.data, wl = WIN_LABEL[heatWin];
@@ -1032,7 +1039,7 @@ $('btnFetch').onclick = async function () {
 function showMsg(txt, ok) {
   const m = $('msgBar');
   m.style.display = 'block';
-  m.style.borderColor = ok ? 'rgba(35,113,74,.4)' : 'rgba(180,55,44,.4)';
+  m.style.borderColor = ok ? 'var(--down-line)' : 'var(--up-line)';
   m.style.background = ok ? 'var(--down-soft)' : 'var(--up-soft)';
   m.style.color = ok ? COL.down : COL.up;
   m.textContent = txt;

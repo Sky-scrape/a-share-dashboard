@@ -720,6 +720,9 @@ class Handler(SimpleHTTPRequestHandler):
             m = pat.fullmatch(path)
             if m:
                 return getattr(self, fn)(**m.groupdict())
+        if path.startswith("/api/") or path.startswith(("/data/", "/quant-results/")):
+            # API 族未知路径统一结构化 404（与 POST 路由同口径），前端 fetch 拿到可解析的错误体
+            return self._json({"error": "not found"}, 404)
         # 其余静态文件从主 web/ 提供
         return super().do_GET()
 

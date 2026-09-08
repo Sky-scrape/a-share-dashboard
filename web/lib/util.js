@@ -44,5 +44,19 @@ var AK = {
       var m = String(c).replace(/^\D*(\d{6}).*$/, "$1");
       return /^\d{6}$/.test(m) ? m : null;
     }).filter(Boolean)));
+  },
+  /* 统一轻提示（2026-09-08 收敛）：此前 auction 硬编码纸色、recap/quant 各自内联实现、
+     index/global 抓取失败无反馈。样式见 tokens.css #akToast；type 可选 "ok"/"err"。 */
+  toast: function (msg, type, ms) {
+    var el = document.getElementById("akToast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "akToast";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg == null ? "" : String(msg);
+    el.className = type ? "show " + type : "show";
+    clearTimeout(AK._toastTimer);
+    AK._toastTimer = setTimeout(function () { el.className = ""; }, ms || 2600);
   }
 };

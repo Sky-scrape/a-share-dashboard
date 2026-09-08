@@ -40,6 +40,25 @@
   --r-md: 5px;
   --r-lg: 8px;
   --shadow-card: 0 1px 2px rgba(72, 60, 38, .05), 0 6px 18px -12px rgba(72, 60, 38, .18);
+  /* 语义淡色（2026-09-08 收敛）：淡底/描边/遮罩类，替代散落各页的 rgba 字面量，
+     两主题各自给值，CSS 侧引用后主题切换自动跟随（canvas 侧仍走 AKTHEME.C()）。 */
+  --accent-soft: rgba(140, 109, 31, .09);        /* accent 淡底：选中行/徽章底/悬停 */
+  --accent-line: rgba(140, 109, 31, .40);        /* accent 描边（常规） */
+  --accent-line-strong: rgba(140, 109, 31, .52); /* accent 描边（强调：主按钮/构建表单框） */
+  --accent-ring: rgba(140, 109, 31, .18);        /* focus 环 */
+  --accent-fade: rgba(140, 109, 31, .16);        /* 表头横向渐隐遮罩末端 */
+  --up-line: rgba(180, 55, 44, .38);             /* 涨/红 描边（badge、错误框、sev 行） */
+  --down-line: rgba(35, 113, 74, .42);           /* 跌/绿 描边 */
+  --flat-line: rgba(138, 109, 46, .40);          /* 平盘 描边 */
+  --warn-soft: rgba(180, 83, 10, .08);           /* 琥珀警示淡底（near 徽章/行） */
+  --warn-line: rgba(180, 83, 10, .55);
+  --blue-soft: rgba(61, 90, 128, .09);           /* 蓝 淡底（冷市/规则标签/展开悬停） */
+  --blue-line: rgba(61, 90, 128, .38);
+  --neutral-soft: rgba(138, 132, 120, .09);      /* 中性灰淡底（平 mood/北交所徽章） */
+  --scrim: rgba(30, 26, 18, .45);                /* 弹层全屏遮罩 */
+  --shadow-pop: 0 18px 50px -12px rgba(30, 26, 18, .5); /* 弹层/抽屉投影 */
+  --bar-tick: rgba(74, 63, 47, .55);             /* 热力条刻度线（两档深浅） */
+  --bar-tick-2: rgba(74, 63, 47, .28);
   --serif: "Noto Serif SC", "Source Han Serif SC", "STZhongsong", "SimSun", serif;
   --mono: Consolas, "Cascadia Mono", "Bahnschrift", monospace;
   --sans: "Microsoft YaHei", "PingFang SC", "Segoe UI", -apple-system, sans-serif;
@@ -93,6 +112,24 @@ html[data-theme="cyber"] {
   --ramp-6: #F2355F;
   --ramp-7: #FF2E63;
   --shadow-card: 0 0 0 1px rgba(53, 224, 255, .05), 0 12px 28px -16px rgba(0, 0, 0, .75);
+  /* 语义淡色 · 夜台版（与晨报同名覆盖，色相跟随霓虹） */
+  --accent-soft: rgba(53, 224, 255, .09);
+  --accent-line: rgba(53, 224, 255, .38);
+  --accent-line-strong: rgba(53, 224, 255, .50);
+  --accent-ring: rgba(53, 224, 255, .22);
+  --accent-fade: rgba(53, 224, 255, .18);
+  --up-line: rgba(255, 77, 109, .45);
+  --down-line: rgba(43, 227, 155, .45);
+  --flat-line: rgba(232, 193, 112, .45);
+  --warn-soft: rgba(255, 179, 92, .10);
+  --warn-line: rgba(255, 179, 92, .55);
+  --blue-soft: rgba(108, 158, 255, .12);
+  --blue-line: rgba(108, 158, 255, .45);
+  --neutral-soft: rgba(146, 165, 205, .10);
+  --scrim: rgba(2, 5, 12, .62);
+  --shadow-pop: 0 18px 50px -12px rgba(0, 0, 0, .8), 0 0 0 1px rgba(53, 224, 255, .06);
+  --bar-tick: rgba(215, 227, 255, .45);
+  --bar-tick-2: rgba(215, 227, 255, .22);
   --serif: "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
   color-scheme: dark;
 }
@@ -192,3 +229,28 @@ header.appbar.appbar-stack .appbar-row { display: flex; align-items: center; gap
 .fresh-pop h5 { font-size: 12px; margin: 8px 0 2px; color: var(--text-3); font-weight: 700; letter-spacing: .06em; }
 .fresh-pop .err { color: var(--up); word-break: break-all; }
 .fresh-pop button { margin-top: 8px; }
+
+/* ============ 统一轻提示 AK.toast（util.js 渲染，五页共用，2026-09-08） ============
+   语义沿用 freshness 胶囊：ok=绿点系（--down）、err=红点系（--up）。 */
+#akToast {
+  position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%) translateY(6px);
+  max-width: min(640px, 92vw);
+  background: var(--text-1); color: var(--bg-0);
+  padding: 9px 16px; border-radius: var(--r-md); font-size: 12px; line-height: 1.6;
+  z-index: 990; box-shadow: var(--shadow-pop);
+  white-space: pre-line; opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+  font-family: var(--sans);
+}
+#akToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#akToast.ok { box-shadow: var(--shadow-pop), inset 0 -2px 0 var(--down); }
+#akToast.err { box-shadow: var(--shadow-pop), inset 0 -2px 0 var(--up); }
+
+/* ============ 键盘可达性 / 控件过渡基线（2026-09-08） ============
+   focus 环只在键盘聚焦时出现（:focus-visible），鼠标点击不画环；
+   按钮类控件补 ≤150ms 的克制过渡（主题切换/悬停不生硬，盯盘页不加闪动动画）。 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:focus:not(:focus-visible) { outline: none; }
+header.appbar button, main button, .chip, .fresh-pill {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}

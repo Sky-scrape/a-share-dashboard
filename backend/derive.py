@@ -426,7 +426,6 @@ def _matrix_day_feat(dstr):
         tail_start = max(0, len(times) - 30)
         # 回填日（daily_only）时间标签是 开盘/收盘：归一到 09:30/15:00 才能进形态桶；
         # 且回填日只有两点，「启动时刻」仅当开盘已 ≥1% 才可知（否则盘中启动点不可知，置 None 不冒充）
-        times_norm = [{"开盘": "09:30", "收盘": "15:00"}.get(t, t) for t in (times or [])]
         for b in day.get("boards") or []:
             code = b.get("code")
             s = (day.get("series") or {}).get(code)

@@ -12,6 +12,9 @@
 <script src="/lib/appbar.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* 页面自有变量（策略表单主入口的金色辉光）：夜台换青调 */
+:root { --glow-accent: 0 2px 16px rgba(140,109,31,.10); }
+html[data-theme="cyber"] { --glow-accent: 0 2px 16px rgba(53,224,255,.10); }
 html { scrollbar-gutter: stable; }
 body {
   background: var(--bg-0); color: var(--text-1);
@@ -32,9 +35,9 @@ button { cursor: pointer; white-space: nowrap; transition: border-color .18s eas
 button:hover { border-color: var(--line-2); }
 button:active { transform: translateY(1px); }
 button:disabled { color: var(--text-3); cursor: not-allowed; }
-button.primary { border-color: rgba(140,109,31,.55); color: var(--accent); font-weight: 700; }
-button.primary:hover { background: rgba(140,109,31,.07); }
-button.danger:hover { color: var(--up); border-color: rgba(180,55,44,.45); }
+button.primary { border-color: var(--accent-line-strong); color: var(--accent); font-weight: 700; }
+button.primary:hover { background: var(--accent-soft); }
+button.danger:hover { color: var(--up); border-color: var(--up-line); }
 textarea { width: 100%; resize: vertical; line-height: 1.6; }
 label { color: var(--text-2); font-size: 11px; }
 input[type=checkbox] { accent-color: var(--accent); width: auto; }
@@ -100,14 +103,16 @@ table.qt th { text-align: right; font-weight: 700; color: var(--text-3); font-si
   padding: 5px 8px; border-bottom: 1px solid var(--line-2); position: sticky; top: 0; background: var(--bg-2); z-index: 2; }
 table.qt td { padding: 4px 8px; border-bottom: 1px dashed var(--line); text-align: right; white-space: nowrap; }
 table.qt th:first-child, table.qt td:first-child, table.qt th.tl, table.qt td.tl { text-align: left; }
-table.qt tr:hover td { background: var(--bg-1); }
+table.qt tr:hover td { background: var(--hover-row); }
+/* 斑马纹（对齐全站表格规范，2026-09-08）；悬停改 td 级才能盖过斑马纹 */
+table.qt tbody tr:nth-child(even) td { background: var(--row-alt); }
 table.qt .mono { font-family: var(--mono); }
 table.qt .up { color: var(--up); } table.qt .down { color: var(--down); } table.qt .dim { color: var(--text-3); }
-table.qt tr.best td { background: rgba(140,109,31,.08); }
+table.qt tr.best td { background: var(--accent-soft); }
 .tag { display: inline-block; font-size: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 0 7px; color: var(--text-2); background: var(--bg-1); }
-.tag.rule { color: var(--blue); border-color: rgba(61,90,128,.4); }
-.tag.code { color: var(--up); border-color: rgba(180,55,44,.4); }
-.tag.builtin { color: var(--accent); border-color: rgba(140,109,31,.45); }
+.tag.rule { color: var(--blue); border-color: var(--blue-line); }
+.tag.code { color: var(--up); border-color: var(--up-line); }
+.tag.builtin { color: var(--accent); border-color: var(--accent-line); }
 .slist { padding: 6px 12px 10px; overflow: auto; position: absolute; inset: 0; }
 .slist h4 { font-size: 11px; color: var(--text-3); letter-spacing: .1em; margin: 10px 0 4px; font-weight: 700; }
 .sitem { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--line); font-size: 12px; min-width: 0; }
@@ -129,18 +134,18 @@ table.qt tr.best td { background: rgba(140,109,31,.08); }
 #buildMain { flex: 1; display: grid; gap: 10px; padding: 10px;
   grid-template-columns: 432px minmax(0, 1fr); align-items: start; }
 @media (max-width: 1050px) { #buildMain { grid-template-columns: 1fr; } }
-/* 策略表单：主入口强调 */
-#buildForm { border: 1px solid rgba(140,109,31,.5); border-left: 3px solid var(--accent); counter-reset: fsec;
-  box-shadow: 0 2px 16px rgba(140,109,31,.10), var(--shadow-card); }
-#buildForm > .ph { background: var(--bg-3); border-bottom: 1px solid rgba(140,109,31,.35); padding: 9px 12px; }
+/* 策略表单：主入口强调（金色辉光 --glow-accent 页面自有变量，夜台换青调覆盖见下方） */
+#buildForm { border: 1px solid var(--accent-line-strong); border-left: 3px solid var(--accent); counter-reset: fsec;
+  box-shadow: var(--glow-accent), var(--shadow-card); }
+#buildForm > .ph { background: var(--bg-3); border-bottom: 1px solid var(--accent-line); padding: 9px 12px; }
 #buildForm > .ph h2 { font-size: 15px; color: var(--accent); display: flex; align-items: center; gap: 6px; }
 #buildForm > .ph h2::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(140,109,31,.15); flex: none; }
+  box-shadow: 0 0 0 3px var(--accent-ring); flex: none; }
 #buildForm .fsec { border-bottom: 1px solid var(--line); padding: 10px 12px; counter-increment: fsec; }
 #buildForm .fsec:last-child { border-bottom: none; background: var(--bg-3); border-top: 1px solid var(--line); }
 #buildForm .fsec > .fh { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); letter-spacing: .12em; font-weight: 700; margin-bottom: 8px; }
 #buildForm .fsec > .fh::before { content: "0" counter(fsec); font-family: var(--mono); font-size: 10px; color: var(--accent);
-  background: rgba(140,109,31,.10); border: 1px solid rgba(140,109,31,.25); border-radius: 4px; padding: 0 4px; letter-spacing: 0; flex: none; }
+  background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 4px; padding: 0 4px; letter-spacing: 0; flex: none; }
 #btnRun { font-size: 13px; letter-spacing: 3px; }
 .frow { display: flex; align-items: center; gap: 6px; margin: 5px 0; flex-wrap: wrap; }
 .frow label { flex: 0 0 auto; }
@@ -158,7 +163,7 @@ table.qt tr.best td { background: rgba(140,109,31,.08); }
 .cond select, .cond input { padding: 2px 4px; font-size: 11px; }
 .cond .del { border: none; background: none; color: var(--text-3); padding: 0 4px; font-size: 14px; }
 .cond .del:hover { color: var(--up); }
-#errBox { display: none; margin: 0 10px 10px; padding: 8px 12px; border: 1px solid rgba(180,55,44,.4);
+#errBox { display: none; margin: 0 10px 10px; padding: 8px 12px; border: 1px solid var(--up-line);
   background: var(--up-soft); color: var(--up); border-radius: var(--r-md); font-size: 12px; white-space: pre-wrap; }
 #buildRight { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 #kpiRow { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
@@ -514,6 +519,8 @@ var COL = (function () {
   });
   return o;
 })();
+/* 全站图表统一字族（canvas 不认 CSS 变量，option 里显式声明） */
+var CHART_FONT = '"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
 var META = null, BOARD = null, STRATS = [];
 var CMP = [], CUR_REQ = null, lastGridR = null, JOBS = [], FOCS = "";
 var CMPRES = null;   // 最近一次对比回测结果（主题切换重绘用）
@@ -533,19 +540,9 @@ function errBox(msg) {
   b.textContent = msg || "";
   if (msg) qtoast(msg);   // errBox 在「造策略」页签里：其他页签提交的任务失败也必须看得见原因
 }
-/* 跨页签可见的错误浮层（errBox 的伴随提示，6 秒自动消失） */
-var _qtEl = null, _qtT = null;
-function qtoast(msg) {
-  if (!_qtEl) {
-    _qtEl = document.createElement("div");
-    _qtEl.style.cssText = "position:fixed;left:50%;bottom:44px;transform:translateX(-50%);max-width:min(640px,92vw);background:var(--text-1,#3F3B33);color:var(--bg-0,#EFEAE0);padding:9px 16px;border-radius:8px;font-size:12px;z-index:900;box-shadow:0 6px 18px rgba(0,0,0,.3);white-space:pre-line";
-    document.body.appendChild(_qtEl);
-  }
-  _qtEl.textContent = msg;
-  _qtEl.style.opacity = 1;
-  clearTimeout(_qtT);
-  _qtT = setTimeout(function () { _qtEl.style.opacity = 0; }, 6000);
-}
+/* 跨页签可见的错误浮层：已收敛 AK.toast（lib/util.js，样式见 tokens.css #akToast）；
+   errBox 的伴随提示仍走这里（6 秒自动消失），跨页签也能看到失败原因 */
+function qtoast(msg, type, ms) { AK.toast(msg, type, ms || 6000); }
 function postJson(url, body, timeoutMs) {
   // timeoutMs：同步长请求的看门狗（auto 取数首次远端回填可能数分钟，但服务 hang 死时按钮不能永远「回测中…」）
   var ctrl = (typeof AbortController !== "undefined" && timeoutMs) ? new AbortController() : null;
@@ -680,7 +677,8 @@ function renderScatter(rows) {
     .map(function (r) { return { value: [+(r.cum_ret * 100).toFixed(2), +r.sharpe.toFixed(3), r.trades || 1], name: r.title, time: r.time, strategy: r.strategy }; });
   var maxAbs = Math.max.apply(null, [1].concat(pts.map(function (p) { return Math.abs(p.value[0]); })));
   charts.sc.setOption({
-    backgroundColor: "transparent", grid: { left: 44, right: 18, top: 26, bottom: 30 },
+    backgroundColor: "transparent", textStyle: { fontFamily: CHART_FONT },
+    grid: { left: 44, right: 18, top: 26, bottom: 30 },
     tooltip: { trigger: "item", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 },
       formatter: function (a) { var d = a.data; return "<b>" + esc(d.name) + "</b><br>" + esc(d.strategy || "") + "<br>累计 " + d.value[0] + "% ｜ 夏普 " + d.value[1] + " ｜ " + d.value[2] + " 笔<br><span style='color:" + COL.txt3 + "'>" + esc(d.time) + "</span>"; } },
     xAxis: { type: "value", name: "累计 %", nameTextStyle: { color: COL.txt3 }, min: -maxAbs * 1.2, max: maxAbs * 1.2, axisLabel: { color: COL.txt3 }, splitLine: { lineStyle: { color: COL.line } } },
@@ -1034,6 +1032,7 @@ function renderEqChart(d) {
   }
   charts.eq.setOption({
     backgroundColor: "transparent",
+    textStyle: { fontFamily: CHART_FONT },
     color: [COL.up, COL.accent, COL.blue, AKTHEME.alpha(COL.accent, .25), AKTHEME.alpha(COL.blue, .25), AKTHEME.alpha(COL.green2, .25), AKTHEME.alpha(COL.red2, .25), AKTHEME.alpha(COL.up, .2)],
     // 默认 tooltip formatter 不转义 HTML，series 名含用户自由输入（仓位·代码 / 标题），必须自定义转义
     tooltip: { trigger: "axis", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 },
@@ -1127,6 +1126,7 @@ function renderCompare(d) {
     data: d.benchmark.dates.map(function (dt, j) { return [dt, d.benchmark.norm[j] == null ? null : +(d.benchmark.norm[j] * 100).toFixed(2)]; }) });
   charts.cmp.setOption({
     backgroundColor: "transparent",
+    textStyle: { fontFamily: CHART_FONT },
     // 对比 series 名 = 用户自由输入的「标题(入流水)」（截 22 字）：默认 formatter 不转义，自定义转义版
     tooltip: { trigger: "axis", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 },
       formatter: function (ps) {
@@ -1510,6 +1510,7 @@ function renderHeat() {
   if (!charts.heat) charts.heat = echarts.init($("gHeat"));
   charts.heat.setOption({
     backgroundColor: "transparent",
+    textStyle: { fontFamily: CHART_FONT },
     tooltip: { position: "top", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 },
       formatter: function (o) { return esc(String(ky)) + "=" + esc(String(ys[o.data[1]])) + " × " + esc(String(kx)) + "=" + esc(String(xs[o.data[0]])) + "<br>" + esc(metric) + "：<b>" + o.data[2] + "</b>"; } },
     grid: { left: 64, right: 60, top: 28, bottom: 34 },
@@ -1566,6 +1567,7 @@ function renderWfResult(r) {
     var e0 = oc.equity[0] || 1;
     charts.wf.setOption({
       backgroundColor: "transparent",
+      textStyle: { fontFamily: CHART_FONT },
       tooltip: { trigger: "axis", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 } },
       grid: { left: 50, right: 16, top: 26, bottom: 30 },
       xAxis: { type: "category", data: oc.dates, axisLabel: { color: COL.txt3, fontSize: 10 } },

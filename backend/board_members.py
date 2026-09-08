@@ -8,7 +8,6 @@
 - 池内个股按 industry_map.json（代码→一级行业，与竞价页同一份单一来源）归属；
   映射缺失的新股退回快照自带「所属行业」名称包含（宁缺勿错，match 不变）。
 """
-import json
 import os
 import sys
 import threading

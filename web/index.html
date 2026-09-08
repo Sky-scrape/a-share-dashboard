@@ -71,8 +71,8 @@ button:active { transform: translateY(1px); }
   font-size: 11px; padding: 3px 9px; border-radius: 11px;
   border: 1px solid var(--line); color: var(--text-3);
 }
-.badge.ok { color: var(--down); border-color: rgba(31,191,143,.4); background: rgba(31,191,143,.08); }
-.badge.demo { color: var(--accent); border-color: rgba(140,109,31,.4); background: rgba(140,109,31,.08); }
+.badge.ok { color: var(--down); border-color: var(--down-line); background: var(--down-soft); }
+.badge.demo { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 main {
   flex: 1; min-height: 0; display: grid; overflow: auto;
   grid-template-columns: minmax(300px, 34%) 1fr;
@@ -177,7 +177,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 }
 .up { color: var(--red2); }
 .down { color: var(--green2); }
-.rankrow.active { background: rgba(140,109,31,.1); outline: 1px solid rgba(140,109,31,.4); }
+.rankrow.active { background: var(--accent-soft); outline: 1px solid var(--accent-line); }
 .tabs { display: flex; gap: 6px; margin-left: auto; }
 .tabs button.active { border-color: var(--accent); color: var(--accent); }
 .legend { font-size: 11px; color: var(--text-3); display: flex; gap: 10px; align-items: center; }
@@ -214,6 +214,9 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
   }
   #drillPanel table { font-size: 11px !important; }
 }
+/* 钻取面板表格：斑马纹 + 可点行悬停（对齐全站表格规范，2026-09-08） */
+#drillBody tr:nth-child(even) td { background: var(--row-alt); }
+#drillBody tr[data-code]:hover td { background: var(--hover-row); }
 #viewRecap {
   flex: 1 1 auto; display: none; min-height: 0;
   background: var(--bg-0);
@@ -254,7 +257,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
       <button id="btnReset">⟲ 回到开盘</button>
       <button id="btnLive" style="display:none">⏩ 回到实时</button>
       <button id="btnNotify" title="板块放量异动时系统通知（需授权）">🔔 告警关</button>
-      <span id="notifyHint" style="display:none;font-size:11px;color:var(--text-2);background:var(--up-soft);border:1px solid rgba(180,55,44,.35);border-radius:5px;padding:2px 8px">首次使用？点这里可开启盘中告警：放量异动 / 尾盘拉升 / 排名突变会弹系统通知</span>
+      <span id="notifyHint" style="display:none;font-size:11px;color:var(--text-2);background:var(--up-soft);border:1px solid var(--up-line);border-radius:5px;padding:2px 8px">首次使用？点这里可开启盘中告警：放量异动 / 尾盘拉升 / 排名突变会弹系统通知</span>
       <span class="stat" id="speedStat">帧间隔 700ms</span>
       <select id="playSpeedCtrl" title="播放速度（每帧停留时长）" style="font-size:11px;padding:3px 6px">
         <option value="1000">慢 · 1秒/分钟</option>
@@ -368,8 +371,8 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
   </div>
 </main>
 
-<div id="drillMask" style="display:none;position:fixed;inset:0;background:rgba(33,32,28,.45);z-index:300" title="点击空白处关闭"></div>
-<div id="drillPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(680px,92vw);max-height:82vh;overflow-y:auto;background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-lg);box-shadow:0 18px 50px -12px rgba(40,34,20,.45);z-index:301;padding:16px 18px">
+<div id="drillMask" style="display:none;position:fixed;inset:0;background:var(--scrim);z-index:300" title="点击空白处关闭"></div>
+<div id="drillPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(680px,92vw);max-height:82vh;overflow-y:auto;background:var(--bg-2);border:1px solid var(--line-2);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);z-index:301;padding:16px 18px">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
     <b style="font-size:15px" id="drillTitle"></b>
     <span class="sub" id="drillSub"></span>
@@ -526,12 +529,15 @@ function genDemo(){
 
 /* ============ 图表 ============ */
 let heatChart, curveChart;
+/* 全站图表统一字族（canvas 不认 CSS 变量，option 里显式声明；四档字号：标题13/轴11/系列10/tooltip12） */
+const CHART_FONT = '"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
 /* 曲线图基础设施（axes/grid）抽成函数：buildCharts 与空态恢复共用。
    ECharts 5.5 实测：chartNote 的 clear() 之后，merge 模式的 setOption 会静默丢弃
    series/axes（只有 notMerge 重建才生效）——恢复路径必须先 notMerge 重下基础配置。 */
 function curveBaseOption(){
   return {
     backgroundColor:'transparent',
+    textStyle:{fontFamily:CHART_FONT},
     grid:{left:50, right:20, top:20, bottom:28},
     legend:{show:false},
     xAxis:{type:'category', data:DATA.times, boundaryGap:false,
@@ -553,6 +559,7 @@ function curveBaseOption(){
 function heatOption(){
   return {
     backgroundColor:'transparent',
+    textStyle:{fontFamily:CHART_FONT},
     tooltip:{
       backgroundColor:P().panel, borderColor:P().line2, textStyle:{color:P().text1},
       formatter: p=>{
@@ -566,7 +573,7 @@ function heatOption(){
       type:'treemap', roam:false, nodeClick:false, breadcrumb:{show:false}, sort:'desc',   // 始终按面积值降序布局：面积=涨跌幅时按涨跌幅排，面积=成交额时按成交额排
       width:'100%', height:'100%',
       animationDurationUpdate:400, animationDuration:200,
-      label:{show:true, formatter:p=>p.name, fontSize:(window.innerWidth <= 720 ? 9 : 11), color:P().panel, textShadowBlur:2},
+      label:{show:true, formatter:p=>p.name, fontSize:(window.innerWidth <= 720 ? 9 : 11), color:P().panel, textShadowBlur:2, fontFamily:CHART_FONT},
       upperLabel:{show:false},
       itemStyle:{borderColor:P().panel, borderWidth:1, gapWidth:1},   // 面板色分隔线（随主题）
       emphasis:{itemStyle:{borderColor:P().hiGold, borderWidth:2}},
@@ -686,6 +693,7 @@ function drawMatrix(){
     });
     matrixChart.setOption({
       backgroundColor:'transparent',
+      textStyle:{fontFamily:CHART_FONT},
       tooltip:{ backgroundColor:P().panel, borderColor:P().line2, textStyle:{color:P().text1},
         formatter: p=>{
         const d = p.data||{}, c = d.cell||{};
@@ -725,7 +733,8 @@ function drawMatrix(){
     $('mxSub').textContent = (p.strong_day_rule||'') + (rl ? ' · 尾盘拉升 TOP：' + rl : '');
     matrixChart.setOption({
       backgroundColor:'transparent',
-      tooltip:{trigger:'axis'},
+      textStyle:{fontFamily:CHART_FONT},
+      tooltip:{trigger:'axis', backgroundColor:P().panel, borderColor:P().line2, textStyle:{color:P().text1}},
       legend:{data:['启动时刻','见顶时刻'],textStyle:{color:P().text2,fontSize:11},top:0},
       grid:{left:40,right:20,top:30,bottom:42},
       xAxis:{type:'category', data:buckets, axisLabel:{color:P().text3,fontSize:10,rotate:28}, axisLine:{lineStyle:{color:P().line}}},
@@ -820,6 +829,7 @@ function drawRace(dayIdx){
   if (!raceBuilt) {
     matrixChart.setOption({
       backgroundColor:'transparent',
+      textStyle:{fontFamily:CHART_FONT},
       tooltip:{ trigger:'item', backgroundColor:P().panel, borderColor:P().line2, textStyle:{color:P().text1},
         formatter: p => `<b>${esc(p.name)}</b><br>收盘 ${fmtPct(p.value)}` },
       grid:{left:14,right:14,top:8,bottom:24},
@@ -927,6 +937,7 @@ window.addEventListener('akthemechange', () => {
   PALETTE = P().cat.slice();
   buildCharts();
   if (DATA) { updateHeat(); updateCurves(); }
+  if (vpOn) renderVp();   // 量价热力条基色随主题（AKTHEME.alpha 取 accent）
   if (MX && mxMode) {
     if (mxMode === 'race') { raceBuilt = false; if (RACE && RACE.length) drawRace(Math.min(raceLastIdx, RACE.length - 1)); }
     else drawMatrix();
@@ -936,6 +947,7 @@ window.addEventListener('akthemechange', () => {
 function chartNote(chart, main, sub){
   chart.clear();
   chart.setOption({backgroundColor:'transparent',
+    textStyle:{fontFamily:CHART_FONT},
     title:{text:main, subtext:sub||'', left:'center', top:'center', textAlign:'center',
       textStyle:{color:P().text3, fontSize:13, fontWeight:400},
       subtextStyle:{color:P().text4, fontSize:11, lineHeight:17}}}, true);
@@ -1103,6 +1115,7 @@ function renderVp(){
   });
   const top = grid.slice().sort((a,b)=>b.total-a.total).slice(0, 15);
   const maxS = Math.max(...top.flatMap(r=>r.sums), 1e-9);
+  const AC = AKTHEME.C().accent;   // 热力条基色随主题（夜台=霓虹青，晨报=金）
   // 放量拉升：某时段成交额占全天 ≥ 30% 且该板块收盘涨幅 ≥ 1.5%
   const surge = top.filter(r => {
     const si = r.sums.indexOf(Math.max(...r.sums));
@@ -1119,7 +1132,7 @@ function renderVp(){
     const cells = r.sums.map((v,si) => {
       const w = v / maxS;
       const alpha = (0.08 + 0.85 * w).toFixed(2);
-      return '<td title="' + slots[si] + ': ' + (v/1e8).toFixed(1) + ' 亿" style="height:10px;width:' + (100/r.sums.length) + '%;padding:0"><div style="height:10px;border-radius:2px;background:rgba(140,109,31,' + alpha + ')"></div></td>';
+      return '<td title="' + slots[si] + ': ' + (v/1e8).toFixed(1) + ' 亿" style="height:10px;width:' + (100/r.sums.length) + '%;padding:0"><div style="height:10px;border-radius:2px;background:' + AKTHEME.alpha(AC, +alpha) + '"></div></td>';
     }).join('');
     return '<div style="display:flex;align-items:center;gap:6px;margin:3px 0">'
       + '<span class="nm" style="width:74px;flex:none;font-size:11px">' + esc(r.name) + '</span>'
@@ -1764,7 +1777,7 @@ async function renderOvernight(){
       : avg > -0.3 ? '平开附近，关注竞价资金方向'
       : avg > -1 ? '小幅低开概率大，留意防守型板块'
       : '低开风险较高，谨慎追高';
-    bar.innerHTML = '<b>🛏 隔夜外围：</b>' + stale + esc(names)
+    bar.innerHTML = '<b style="flex:none;white-space:nowrap">🛏 隔夜外围：</b>' + stale + esc(names)
       + '<span style="margin:0 10px;color:' + (pos ? 'var(--up)' : 'var(--down)') + ';font-weight:700">' + fmtPct(avg) + '</span>'
       + '<span>' + esc(tone) + '</span>'
       + '<span style="margin-left:auto;color:var(--text-3)">' + esc((us[0].last_date || g.date || '').slice(5)) + ' 收盘</span>';
@@ -1882,7 +1895,7 @@ $('cfgSave').onclick = () => {
   if (lp) alertCfg.last_pct = Math.max(0, Number(lp.value) || 2);
   saveAlertCfg();
   $('alertPanel').style.display = 'none';
-  flashStat('提醒配置已保存');
+  AK.toast('提醒配置已保存', 'ok');
 };
 $('cfgClose').onclick = () => { $('alertPanel').style.display = 'none'; };
 function switchTab(rot){
@@ -1947,10 +1960,10 @@ $('btnFetch').onclick = async function(){
       }, 15000);
       btnFetch._watch = t;
     } else {
-      flashStat('抓取失败：' + (d.error || d.status));
+      AK.toast('抓取失败：' + (d.error || d.status), 'err', 4000);
     }
   } catch (e) {
-    flashStat('抓取请求失败');
+    AK.toast('抓取请求失败', 'err');
   } finally {
     delete this.dataset.busy;
   }

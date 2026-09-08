@@ -79,7 +79,6 @@ def _verify_trade_day(date_str):
 
 def fetch_trend(code):
     """拉取单个板块当日分时。返回 dict 或 None。"""
-    url = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
     params = {
         "secid": f"90.{code}",
         "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",

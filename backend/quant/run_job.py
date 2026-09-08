@@ -21,7 +21,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import quant_api   # noqa: E402
-from quant_config import QUANT_ROOT   # noqa: E402
 
 
 def _now():

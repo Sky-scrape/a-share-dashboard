@@ -12,7 +12,6 @@
 """
 import os
 import threading
-import time
 
 import auc_config  # backend/auction 同目录
 

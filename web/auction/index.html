@@ -93,14 +93,17 @@ table.tbl tr { cursor: pointer; transition: background .12s; }
 @media (max-width: 760px) {
   .rankScroll {
     overflow-x: auto;
-    background: linear-gradient(to right, transparent 0, transparent calc(100% - 16px), rgba(140,109,31,.16) 100%);
+    background: linear-gradient(to right, transparent 0, transparent calc(100% - 16px), var(--accent-fade) 100%);
   }
 }
 .rankScroll table.tbl th {
   position: sticky; top: 0; z-index: 2;
   background: var(--bg-2); border-bottom: none; box-shadow: inset 0 -1px 0 var(--line);
 }
-table.tbl tbody tr:hover { background: var(--bg-3); }
+table.tbl tbody tr:hover td { background: var(--hover-row); }
+/* 斑马纹（对齐全站表格规范，2026-09-08）；悬停行级 → td 级才能盖过斑马纹底色 */
+table.tbl tbody tr:nth-child(even) td { background: var(--row-alt); }
+table.tbl th .sort-ind { color: var(--accent); font-size: 9px; }
 table.tbl tr.self td:first-child::after { content: " ★"; color: var(--gold); font-size: 10px; }
 .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
 .mono { font-family: var(--mono); }
@@ -122,7 +125,7 @@ table.tbl tr.self td:first-child::after { content: " ★"; color: var(--gold); f
 #alertList { list-style: none; max-height: 240px; overflow-y: auto; }
 #alertList li { padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 12px; line-height: 1.5; }
 #alertList li .t { color: var(--text-3); font-family: var(--mono); font-size: 11px; margin-right: 6px; }
-.tag-noise { display: inline-block; font-size: 10px; color: var(--gold); border: 1px solid rgba(140,109,31,.4); border-radius: 3px; padding: 0 4px; margin-left: 4px; }
+.tag-noise { display: inline-block; font-size: 10px; color: var(--gold); border: 1px solid var(--accent-line); border-radius: 3px; padding: 0 4px; margin-left: 4px; }
 
 /* ---- 定盘统计 ---- */
 .finalGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -147,9 +150,9 @@ table.tbl tr.self td:first-child::after { content: " ★"; color: var(--gold); f
 table.tbl.one-left th:nth-child(2), table.tbl.one-left td:nth-child(2) { text-align: right; }
 table.tbl td .sub-ind { color: var(--text-3); font-size: 10px; margin-left: 4px; }
 /* 「接」徽标：昨日涨停股今日竞价（原涨停接力 TOP 榜并入强势候选后的行级标记） */
-table.tbl td .relay-badge { display: inline-block; margin-left: 4px; padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 4px; color: var(--up); background: var(--up-soft, rgba(180,55,44,.10)); border: 1px solid rgba(180,55,44,.30); vertical-align: 1px; }
+table.tbl td .relay-badge { display: inline-block; margin-left: 4px; padding: 0 4px; font-size: 10px; line-height: 14px; border-radius: 4px; color: var(--up); background: var(--up-soft); border: 1px solid var(--up-line); vertical-align: 1px; }
 /* 「一」徽标：涨停价开盘（排板形态）——琥珀色，提醒别按普通可买高开理解 */
-table.tbl td .relay-badge.lim { color: var(--gold); background: rgba(140,109,31,.10); border-color: rgba(140,109,31,.35); }
+table.tbl td .relay-badge.lim { color: var(--gold); background: var(--accent-soft); border-color: var(--accent-line); }
 
 /* ---- 基准 ---- */
 #benchList { list-style: none; }
@@ -166,13 +169,13 @@ table.tbl td .relay-badge.lim { color: var(--gold); background: rgba(140,109,31,
 
 /* ---- 弹窗（个股曲线 / 观察池编辑）---- */
 .mask {
-  position: fixed; inset: 0; background: rgba(30,26,18,.45); z-index: 100;
+  position: fixed; inset: 0; background: var(--scrim); z-index: 100;
   display: none; align-items: center; justify-content: center;
 }
 .mask.show { display: flex; }
 .dlg {
   background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-lg);
-  box-shadow: 0 18px 50px -12px rgba(30,26,18,.5); width: min(720px, 94vw); max-height: 88vh;
+  box-shadow: var(--shadow-pop); width: min(720px, 94vw); max-height: 88vh;
   display: flex; flex-direction: column; overflow: hidden;
 }
 .dlg .dh { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
@@ -187,12 +190,7 @@ table.tbl td .relay-badge.lim { color: var(--gold); background: rgba(140,109,31,
 /* ---- 页脚 ---- */
 footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-height: 1.8; border-top: 1px solid var(--line); }
 
-/* ---- toast ---- */
-#toast {
-  position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%);
-  background: rgba(33,32,28,.92); color: #F5F1E6; padding: 8px 16px; border-radius: 6px;
-  font-size: 12px; z-index: 300; opacity: 0; transition: opacity .25s; pointer-events: none;
-}
+/* ---- toast：已收敛到 lib（AK.toast，样式见 tokens.css #akToast，双主题自适应） ---- */
 /* 窄屏（≤620px）顶栏 nowrap 不缩，否则整块会被挤到横向溢出、最后一个 tab 被切掉：
    隐藏新鲜度胶囊（它的时刻/数据日已经在下方阶段状态条的「更新」里），
    保住倒计时胶囊（唯一来源）与五页导航可点。 */
@@ -415,7 +413,7 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
   </div>
 </div>
 
-<div id="toast"></div>
+<div id="toast" hidden></div>
 
 <script>
 "use strict";
@@ -428,11 +426,11 @@ var state = { payload: null, series: null, prevItems: null, alerts: [], histAler
 function $(id) { return document.getElementById(id); }
 /* 主题色板（lib/theme.js）：晨报纸色/夜台霓虹；canvas 图表不认 var()，setOption 时取值 */
 var P = AKTHEME.C;
+/* 全站图表统一字族（canvas 不认 CSS 变量，option 里显式声明） */
+var CHART_FONT = '"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
 /* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
-function toast(msg) {
-  var el = $("toast"); el.textContent = msg; el.style.opacity = 1;
-  clearTimeout(el._t); el._t = setTimeout(function () { el.style.opacity = 0; }, 2400);
-}
+/* toast 已收敛 AK.toast（lib/util.js）：保留同名包装，页面调用点不用动 */
+function toast(msg, type, ms) { AK.toast(msg, type, ms); }
 function fmtPct(v) {
   if (v == null || isNaN(v)) return "-";
   var s = (v > 0 ? "+" : "") + Number(v).toFixed(2) + "%";
@@ -724,6 +722,12 @@ function renderRank() {
       '<td class="mono">' + (vrMult(r) != null ? vrMult(r).toFixed(2) : "-") + "</td></tr>";
   });
   $("rankBody").innerHTML = html || '<tr><td colspan="8" class="dim" style="text-align:center">空</td></tr>';
+  /* 表头排序方向指示（全站表格规范）：当前排序列 ▼/▲，其余清空 */
+  $("rankTable").querySelectorAll("th[data-sort]").forEach(function (th) {
+    var ind = th.querySelector(".sort-ind");
+    if (!ind) { ind = document.createElement("span"); ind.className = "sort-ind"; th.appendChild(ind); }
+    ind.textContent = state.rankSort === th.dataset.sort ? (state.rankDir === -1 ? "▼" : "▲") : "";
+  });
   var src = (d.live && d.live.round) || (d.final && d.final.round) || {};
   $("rankNote").textContent = "口径: " + (src.stage || "-") + (src.phase ? "/" + src.phase : "") +
     " · 共 " + items.length + " 只 · 滚动查看 · 点行看曲线";
@@ -756,6 +760,7 @@ function renderDist() {
   $("distNote").textContent = "高开 " + hi + " · 低开 " + lo;
   $("distFlat").textContent = "平开 " + flat + "（" + (items.length ? (flat / items.length * 100).toFixed(1) : 0) + "%）";
   distChart.setOption({
+    textStyle: { fontFamily: CHART_FONT },
     // 标签完全保持原形式（-10%~-7% 旋转 30°、interval 用默认），只调边框：
     // 旋转标签竖向要 ~39px，原 grid.bottom:26 会把尾巴裁到面板外 → 给 44，容器 180→210px。
     // 桌面宽度下槽位 ≥79px、旋转标签只占 ~38px，默认 interval 已是 11 档全显；
@@ -832,6 +837,7 @@ function renderSector() {
   $("sectorNote").textContent = srcNote;
   var top = rows;
   sectorChart.setOption({
+    textStyle: { fontFamily: CHART_FONT },
     grid: { left: 90, right: 60, top: 8, bottom: 22 },
     tooltip: { backgroundColor: P().panel, borderColor: P().line2, textStyle: { color: P().text1 },
       formatter: function (p) {
@@ -974,9 +980,9 @@ $("btnFinal2Quant").addEventListener("click", function () {
 /* ============ 送入量化（代码清洗口径单一来源在 lib/util.js AK.cleanCodes） ============ */
 function goQuant(codes) {
   var clean = AK.cleanCodes(codes);
-  if (!clean.length) { toast("无可送入的代码"); return; }
+  if (!clean.length) { toast("无可送入的代码", "err"); return; }
   try { localStorage.setItem("A_QUANT_POOL", clean.join(" ")); } catch (e) {}
-  toast("已送入量化标的池（" + clean.length + " 只）");
+  toast("已送入量化标的池（" + clean.length + " 只）", "ok");
   setTimeout(function () { location.href = "/quant"; }, 500);
 }
 
@@ -1529,6 +1535,7 @@ function renderCurve() {
   if (!liveAuc) note += " 现价为抓取时点盘中价，不是竞价口径。";
   $("curveNote").textContent = note;
   curveChart.setOption({
+    textStyle: { fontFamily: CHART_FONT },
     tooltip: { trigger: "axis", backgroundColor: P().panel, borderColor: P().line2, textStyle: { color: P().text1 } },
     legend: { data: ["竞价涨幅%", "匹配量(手)"], textStyle: { fontSize: 11, color: P().text3 }, top: 0 },
     grid: { left: 48, right: 48, top: 30, bottom: 24 },
@@ -1600,7 +1607,7 @@ function watchAuctionFetch() {
       clearInterval(state.fetchTimer); state.fetchTimer = null;
       $("btnFetch").disabled = false;
       state.etag = null; poll();
-      toast("补抓结束，已刷新数据");
+      toast("补抓结束，已刷新数据", "ok");
     }).catch(function () { /* 单次失败等下一轮 */ });
     if (tries > 120) {   // 10 分钟兜底：服务异常时不要把按钮锁死
       clearInterval(state.fetchTimer); state.fetchTimer = null;
@@ -1614,7 +1621,7 @@ $("btnFetch").addEventListener("click", function () {
   fetch("/api/fetch-auction", { method: "POST" }).then(function (r) { return r.json(); }).then(function (d) {
     if (d.status === "started") { toast("已启动后台补抓（日志 .status/logs/fetch-auction.log）"); watchAuctionFetch(); }
     else { toast(d.status === "running" ? "已有采集在运行" : JSON.stringify(d)); watchAuctionFetch(); }
-  }).catch(function (e) { toast("补抓失败: " + e); setTimeout(function () { btn.disabled = false; }, 3000); });
+  }).catch(function (e) { toast("补抓失败: " + e, "err"); setTimeout(function () { btn.disabled = false; }, 3000); });
 });
 
 /* ============ 启动 ============ */

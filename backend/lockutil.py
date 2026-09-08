@@ -23,12 +23,6 @@ def acquire(lock_path, stale_min=DEFAULT_STALE_MIN):
     except FileExistsError:
         try:
             age_min = (time.time() - os.path.getmtime(lock_path)) / 60
-            held = ""
-            try:
-                with open(lock_path, encoding="utf-8") as f:
-                    held = f.read()[:120]
-            except Exception:
-                pass
             if age_min > stale_min:
                 # 过期锁：接管（写进程崩溃/被杀后残留）
                 with open(lock_path, "w") as f:
