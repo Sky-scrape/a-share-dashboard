@@ -31,6 +31,20 @@ def _tier(value, tiers):
     return 0.0
 
 
+def _us_tier(usp, cfg):
+    """隔夜美股因子分档（C4+）：驱动概念的美股代理组隔夜涨幅 usp（%）。
+
+    >=2% ->1.0 / >=1% ->0.8 / >=0 ->0.6 / >=-1% ->0.35 / <-1% ->0.15；
+    无映射或数据缺失 -> us_missing（0.5 中性档，不奖励不惩罚到位）。"""
+    if usp is None or (isinstance(usp, float) and np.isnan(usp)):
+        return cfg.get("us_missing", 0.5)
+    for thr, v in cfg.get("us_link_tiers",
+                          [(2.0, 1.0), (1.0, 0.8), (0.0, 0.6), (-1.0, 0.35)]):
+        if usp >= thr:
+            return v
+    return 0.15
+
+
 def score_lu_row(r, cfg, n_ind_today) -> tuple[float, dict]:
     w = cfg["weights"]
     f = {}
@@ -89,6 +103,9 @@ def score_lu_row(r, cfg, n_ind_today) -> tuple[float, dict]:
     if cc >= 4 and r["theme_cnt"] <= 2:
         s *= 0.5   # high-position acceleration without sector echo
     f["struct"] = s
+    # overnight US factor (C4+): weight absent in legacy versions -> not scored
+    if "us" in w:
+        f["us"] = _us_tier(r.get("us_pct"), cfg)
     total = sum(f[k] * w[k] for k in w)
     return total, f
 
@@ -179,6 +196,18 @@ def _make_lu_pick(rr, f, total, store, pre=None) -> dict:
 def select_non_lu(pre, store, si_day, ms_row, date, quota, cfg) -> list[dict]:
     if quota <= 0 or si_day.empty:
         return []
+    # C7 市场量能闸门：T 日全市场成交额低于 20 日均值的 0.9 倍不低吸
+    # （C6 轮末分桶：缩量日 NLU -0.24% n=47 / 放量日 +2.13% n=41，梯度单调；
+    #   amt_ratio 缺失时闸门不启用——诚实降级）
+    amt_min = cfg.get("market_amt_ratio_min")
+    if amt_min is not None:
+        v = None
+        try:
+            v = ms_row["amt_ratio"]
+        except (KeyError, TypeError, ValueError):
+            pass
+        if v is None or pd.isna(v) or v < amt_min:
+            return []
     ind = pre["ind"]
     ind_day = ind[ind["date"] == date] if not ind.empty else pd.DataFrame()
     ind_stats = {}
@@ -341,6 +370,10 @@ def select_non_lu(pre, store, si_day, ms_row, date, quota, cfg) -> list[dict]:
                 elif cb_pct is not None and not pd.isna(cb_pct) and cb_pct > 0:
                     rec = max(rec, 0.6)
         f["recog"] = rec
+        # overnight US factor (C4+): weight absent in legacy versions -> not scored
+        if "us" in w:
+            usp = pre["us_proxy_at"](date, cb[0]) if (cb and pre.get("us_proxy_at")) else None
+            f["us"] = _us_tier(usp, cfg)
         total = sum(f[k] * w[k] for k in w)
         scored.append((total, f, r, tc, ic, ist, cb))
 

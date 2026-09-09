@@ -9,6 +9,9 @@ for %%A in (.status\logs\fetch-recap.log) do if %%~zA GEQ 1048576 (
   ren .status\logs\fetch-recap.log fetch-recap.log.1
 )
 echo [%date% %time%] ==== fetch start ==== >> .status\logs\fetch-recap.log
+rem C6 时序改造（2026-09-09）：17:05 只做 A 股数据落盘；备选池/快照校验/派生面板
+rem 移到次日美股收盘后 1 小时内的 us_close_task.bat（arecap-usclose-fetch，04:05
+rem 触发），使 T 日备选池生成时已包含隔夜美股场次与 C6 环境闸门。
 python backend\recap\fetch_daily.py >> .status\logs\fetch-recap.log 2>&1
 set RC_FETCH=%ERRORLEVEL%
 rem hithink local DuckDB incremental sync (research db, daily) - auxiliary; failure must NOT fail the recap chain
@@ -16,21 +19,11 @@ rem Default DuckDB memory cap is 1GiB which breaks sync commit on this box; give
 set HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT=4GiB
 call hithink-finance data sync --format json >> .status\logs\fetch-recap.log 2>&1
 if errorlevel 1 echo [warn] hithink data sync failed (non-blocking) >> .status\logs\fetch-recap.log
-for /f %%i in ('powershell -Command "Get-Date -Format yyyyMMdd"') do set TODAY=%%i
-rem speculation deviation radar needs today's daily bars which only exist AFTER the sync above;
-rem fetch_daily ran before sync, so recompute the speculation module here (non-blocking)
-python backend\recap\speculate.py --date %TODAY% >> .status\logs\fetch-recap.log 2>&1
-if errorlevel 1 echo [warn] speculation retrofill failed (non-blocking) >> .status\logs\fetch-recap.log
 rem concept membership map refresh: no-op unless older than 7 days (rebuild takes minutes, weekly)
 python backend\recap\concept_map.py >> .status\logs\fetch-recap.log 2>&1
 if errorlevel 1 echo [warn] concept_map refresh failed (non-blocking) >> .status\logs\fetch-recap.log
-python backend\recap\check_snapshot.py data\recap\%TODAY%.json >> .status\logs\fetch-recap.log 2>&1
-set RC_CHECK=%ERRORLEVEL%
-rem derived panels (sentiment / rotation stats / strength matrix)
-python backend\derive.py >> .status\logs\fetch-recap.log 2>&1
 rem gzip archive snapshots older than 14 days
 python backend\recap\archive.py --older-than 14 >> .status\logs\fetch-recap.log 2>&1
-echo [%date% %time%] ==== fetch end (fetch=%RC_FETCH% check=%RC_CHECK%) ==== >> .status\logs\fetch-recap.log
+echo [%date% %time%] ==== fetch end (fetch=%RC_FETCH%) ==== >> .status\logs\fetch-recap.log
 if not "%RC_FETCH%"=="0" exit /b %RC_FETCH%
-if not "%RC_CHECK%"=="0" exit /b %RC_CHECK%
 exit /b 0

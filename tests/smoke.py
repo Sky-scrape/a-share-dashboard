@@ -48,12 +48,17 @@ def uopen(url, **kwargs):
 
     URL 一律由 `base = http://127.0.0.1:{port}` 拼接而来，校验 schema/host
     防拼接偏航（安全扫描口径），行为与直连 urlopen 完全一致。"""
+    return urllib.request.urlopen(_loopback_url(url), **kwargs)
+
+
+def _loopback_url(url):
+    """校验并返回回环 URL：schema 固定 http、host 仅限本机（白名单）。"""
     from urllib.parse import urlsplit
     u = url.full_url if isinstance(url, urllib.request.Request) else url
     parts = urlsplit(u)
     if parts.scheme != "http" or parts.hostname not in _ALLOWED_HOSTS:
         raise ValueError(f"smoke 仅允许访问本机回环地址: {u!r}")
-    return urllib.request.urlopen(url, **kwargs)
+    return u
 
 
 def check(name, cond, detail=""):
@@ -102,6 +107,8 @@ def main():
     port = free_port()
     if "--port" in sys.argv:
         port = int(sys.argv[sys.argv.index("--port") + 1])
+    if not isinstance(port, int) or not (1024 <= port <= 65535):
+        raise SystemExit(f"非法端口: {port!r}")
     base = f"http://127.0.0.1:{port}"
     if not os.path.isdir(os.path.join(ROOT, "data", "rotation", "daily")):
         print("[note] 未检测到采集数据（data/ 不入库，克隆后属正常）：页面与 API 契约可测，"
@@ -115,7 +122,7 @@ def main():
         # 等待就绪
         for _ in range(30):
             try:
-                uopen(base + "/api/health", timeout=2)
+                uopen(_loopback_url(base + "/api/health"), timeout=2)
                 break
             except Exception:
                 time.sleep(0.5)
@@ -355,7 +362,7 @@ def main():
             get(base, "/api/recap/note?date=../../etc")
         except Exception:
             pass  # 400 也接受（urllib 对 4xx 抛异常）
-        req = urllib.request.Request(base + "/api/recap/note?date=..%2F..")
+        req = urllib.request.Request(_loopback_url(base + "/api/recap/note?date=..%2F.."))
         try:
             uopen(req, timeout=10)
             st = 200
@@ -619,7 +626,7 @@ def main():
               "_maybe_auto_sector_backfill" in _sp and "is_trade_today" in _sp
               and "respond=False" in _sp and "09:26" in _sp)
         try:
-            code = uopen(base + "/quant", timeout=5).status
+            code = uopen(_loopback_url(base + "/quant"), timeout=5).status
         except Exception as e:
             code = str(e)
         check("/quant 路由 200", code == 200, str(code))

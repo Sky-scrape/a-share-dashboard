@@ -155,9 +155,10 @@ A/
 
 | 任务 | 时间 | 命令 |
 | --- | --- | --- |
+| arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
 | areauction-live-fetch | 交易日 09:14 | backend/auction/auction_task.bat（09:15–09:24:30 每 30s live 轮询 + 09:25:10 终态 + 基准，日志 .status/logs/fetch-auction.log）；已设为**不看电池、错过可补跑、上限 PT30M** |
 | rotation-intraday-fetch | 交易日 09:25 | backend/rotation/fetch_day_task.bat → ths_collect.py 盘中逐分钟轮询循环（数据只到 15:00，收盘定格后自退）；不看电池、错过可补跑、上限 PT8H |
-| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（抓取+校验+derive 重算+gzip 归档+hithink data sync（附属，失败仅记 [warn]），日志 .status/logs/fetch-recap.log） |
+| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档，日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成） |
 | rotation-daily-fetch | 每日 17:10 | backend/rotation/fetch_day_task.bat（盘中断档时的收盘定格兑底 + derive 重算；盘外定格不覆盖已有盘中数据） |
 | aglobal-daily-fetch | 工作日 08:40 | backend/global/fetch_task.bat → fetch_global.py（全球指数/雷达/热力/分时 → data/global/global.json）；08:40 = 美股凌晨收盘后、A股盘前窗口 |
 

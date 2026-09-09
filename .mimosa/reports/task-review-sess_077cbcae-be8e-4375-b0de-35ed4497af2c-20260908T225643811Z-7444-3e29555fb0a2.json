@@ -1,0 +1,252 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20260908T225643811Z-7444-3e29555fb0a2",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "baseline-read",
+      "target": "strategy-iter/scripts/exp_c6_variants.py",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    },
+    {
+      "stage": "baseline-read",
+      "target": "strategy-iter/scripts/exp_hold_sizing.py",
+      "reason": "baseline_snapshot_unreadable: file is missing from task baseline"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 218,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 3
+    },
+    "change_tracking": {
+      "touched_observed": 1,
+      "touched_retained": 1,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 5,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 5,
+      "selected_files": 5,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 5,
+      "scanned_files": 5,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "baseline_snapshot_unreadable": 2,
+      "project_check_failed": 2
+    },
+    "reasons": [
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "strategy-iter/scripts/exp_c6_variants.py",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "baseline_snapshot_unreadable",
+        "stage": "baseline-read",
+        "target": "strategy-iter/scripts/exp_hold_sizing.py",
+        "detail": "file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "strategy-iter/scripts/exp_c6_variants.py",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "baseline-read",
+        "target": "strategy-iter/scripts/exp_hold_sizing.py",
+        "detail": "baseline_snapshot_unreadable: file is missing from task baseline",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-09-08T22:56:43.811Z",
+  "session_id": "sess_077cbcae-be8e-4375-b0de-35ed4497af2c",
+  "target": ".",
+  "revision": "1ef090ce2f761b8a0691af244b237e06d0a47efc",
+  "rules_version": "unavailable",
+  "diff_hash": "f3e24119aa2eb8dcb362c89d42c5ab9f6a556fa6c4ee9a3b867253ab4b80a03e",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 5,
+    "changed_files": [
+      {
+        "file": "backend/recap/speculate.py",
+        "ranges": [
+          {
+            "start": 26,
+            "end": 30
+          },
+          {
+            "start": 84,
+            "end": 84
+          },
+          {
+            "start": 807,
+            "end": 829
+          },
+          {
+            "start": 1087,
+            "end": 1093
+          },
+          {
+            "start": 1099,
+            "end": 1100
+          },
+          {
+            "start": 1104,
+            "end": 1105
+          },
+          {
+            "start": 1360,
+            "end": 1364
+          },
+          {
+            "start": 1448,
+            "end": 1448
+          },
+          {
+            "start": 1453,
+            "end": 1455
+          },
+          {
+            "start": 1459,
+            "end": 1460
+          },
+          {
+            "start": 1485,
+            "end": 1487
+          }
+        ],
+        "before_hash": "62d94681b0236022495a4a69126855df9e37127ee54afd035088cc253e298828",
+        "after_hash": "377a6e8c8e86661770e38c5c2d66da6792a48a88a33cf636b543765bdfc22992"
+      },
+      {
+        "file": "strategy-iter/engine/rules.py",
+        "ranges": [
+          {
+            "start": 580,
+            "end": 608
+          }
+        ],
+        "before_hash": "00c689c16a18180c97c036148a627c3ca326e557f3c41d2e52146a94cb5e5a40",
+        "after_hash": "e22efed2aafe9327e058ddc376d8a47bc77103c537606757e6bead111cf49d04"
+      },
+      {
+        "file": "strategy-iter/engine/select.py",
+        "ranges": [
+          {
+            "start": 199,
+            "end": 210
+          }
+        ],
+        "before_hash": "1d885739fd4407aa3de0f0a77fe71b31c2bacc60307c5dfa43c8c3ecd811edc3",
+        "after_hash": "7e1922f91a43bb6e4f97d2451262b0c809fb05a58937c415a35068f7dbb5ccb1"
+      },
+      {
+        "file": "strategy-iter/scripts/exp_c6_variants.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 106
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "e5f37fb90adabdf669f6c1896a6ef3ce581c5c8b0927a6dcebe1698109862eaf"
+      },
+      {
+        "file": "strategy-iter/scripts/exp_hold_sizing.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 179
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "f472c648edc80b37d8f1b4241430ca1d9c15de2c56fe986fba38cc2036d404af"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-09-08T22:56:42.354Z",
+    "completed_at": "2026-09-08T22:56:43.811Z",
+    "duration_ms": 1457,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 1457,
+    "peakMemoryBytes": 146108416,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 5,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_077cbcae-be8e-4375-b0de-35ed4497af2c-20260908T225643811Z-7444-3e29555fb0a2.json",
+    "latest_report": ".mimosa/reports/task-review-sess_077cbcae-be8e-4375-b0de-35ed4497af2c.json",
+    "history_summary": ".mimosa/history/run-20260908T225643811Z-7444-3e29555fb0a2.json"
+  }
+}
