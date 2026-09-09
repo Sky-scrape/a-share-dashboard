@@ -12,5 +12,6 @@ for %%A in (.status\logs\usclose.log) do if %%~zA GEQ 1048576 (
   if exist .status\logs\usclose.log.1 ren .status\logs\usclose.log usclose.log.2
   ren .status\logs\usclose.log usclose.log.1
 )
+echo [%date% %time%] ==== bat invoked (task fired) ==== >> .status\logs\usclose.log
 python backend\recap\us_close_task.py >> .status\logs\usclose.log 2>&1
 exit /b %ERRORLEVEL%

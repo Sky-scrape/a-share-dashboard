@@ -7,9 +7,9 @@
 共用同一份 factors.json，概念→美股代理映射也从本模块 import（单一来源）。
 
 时序口径（防未来函数）：
-  A 股交易日 T 的「隔夜美股」= 最近一个在 T 日 09:15（北京时间）前收盘的
-  美股交易日 U 的完整场次。U 常规收盘于北京时间 U+1 日 04:00（美夏令时）/
-  05:00（美冬令时），故 U 通常是日历上的 T-1（周一 A 股对上周五美股）。
+  A 股交易日 T 的「隔夜美股」= 最近一个在 T+1 日 09:15（北京时间）前收盘的
+  美股交易日 U = 最大的「≤T」美股交易日（C7 新时序：复盘在 T+1 凌晨美股收盘
+  后完成，U=T 场次已于 T+1 04:00/05:00 收盘，严格先于 T+1 开盘）。
   factors.json 的键永远是 A 股交易日 T，行内 us_date 记录实际对齐的美股日期。
   未收盘的美股 bar（美国东部 16:15 前）一律不写入历史、不参与因子。
 
@@ -384,7 +384,11 @@ def _round(v, nd=2):
 def build_factors() -> dict:
     """从本地 hist_all 重建 factors.json（纯本地计算，不发请求）。
 
-    对齐规则：A 股 T → U = 最大的「< T」的美股交易日（以 IXIC 日历为准）。
+    对齐规则：C7 新时序（复盘在 T+1 凌晨美股收盘后完成）下，A 股 T 日快照的
+    备选池实际生成于 T+1 04:30——此刻美股交易日 U=T 的场次已收盘（北京时间
+    T+1 04:00/05:00），故 U = 最大的「≤ T」的美股交易日（以 IXIC 日历为准）。
+    引擎/线上在 T+1 09:15 前消费，无未来函数；T 日 17:05 的过渡池拿到的是
+    U=T-1（美股 T 尚未收盘，诚实降级），T+1 凌晨链会用完整场次覆盖。
     """
     symbols = load_hist_all()
     us_dates, _ = _close_series(symbols.get("usIXIC"))
@@ -403,7 +407,7 @@ def build_factors() -> dict:
     ashare = [d for d in load_ashare_dates() if FACTOR_START <= d <= today]
     rows = {}
     for t in ashare:
-        u = next((d for d in reversed(us_dates) if d < t), None)
+        u = next((d for d in reversed(us_dates) if d <= t), None)
         if u is None:
             continue
         bench = {}
@@ -421,7 +425,7 @@ def build_factors() -> dict:
     payload = {
         "version": 1,
         "updated": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "align": "A股T → 最近一个在T日09:15(北京)前收盘的美股交易日U（us_date）",
+        "align": "A股T → 最近一个在T+1日09:15(北京)前收盘的美股交易日U=最大≤T（us_date）",
         "rows": rows,
     }
     _write_json(FACTOR_FILE, payload)

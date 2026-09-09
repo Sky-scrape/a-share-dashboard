@@ -47,3 +47,7 @@ Thumbs.db
 
 # 量化引擎在后端目录下的运行时数据缓存（cn_a 本地行情库，运行生成不入库）
 /backend/quant/data/
+
+# Mimosa 安全扫描缓存（本地审计产物不入库）
+.mimosa/
+strategy-iter/.mimosa/
