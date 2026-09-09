@@ -23,8 +23,12 @@
   anomalies 异动/监管事件：special anomaly-list（today-only，历史日期诚实置空）
   rules     静态口径速查：监管阶梯（抓捕＞封账户＞停牌＞限制买入＞公告）、
             异动阈值、核心交易要点（摘自用户文案）
-  pool      明日交易备选池（C_Final 主板概念口径）：四档环境配额 + 涨停组/低吸组打分
-            + 负面清单 + 昨日一字排除；每日验证自我优化闭环——
+  pool      明日交易备选池（C7 主板概念口径）：四档环境配额 + 涨停组/低吸组打分
+            + 负面清单 + 昨日一字排除；C6 起环境分档含隔夜美股闸门（纳指/标普
+            隔夜 ≤-2.0% 强制 defensive），C7 起入选门槛 70 + 市场量能闸门
+            （缩量不低吸；expB/expC 单变量实验采纳，expA 否决；T+2 持有证伪）；
+            资金管理层 S1（防守/冰点档半仓）为建议层；
+            每日验证自我优化闭环——
             validate_prev_pool 用 T 日真实走势验证 T-1 的 picks（买点/风险位/归因，
             冻结执行层 _MF_BUY），record_validation 按日留痕 pool_track.json，
             update_optimizer 从 45 日滚动窗口统计有界调整（因子分桶惩罚 +
@@ -56,6 +60,7 @@ import ht          # noqa: E402
 import snapio      # noqa: E402
 import thscodes    # noqa: E402  代码转换单一来源（backend/thscodes.py）
 import concept_map  # noqa: E402  个股→概念归属（备选池概念维度单一来源）
+import us_market   # noqa: E402  隔夜美股因子单一来源（backend/us_market.py）
 from modules import cget  # noqa: E402
 import industry_common  # noqa: E402  # backend/ 个股→一级行业共享映射读取器
 
@@ -76,7 +81,7 @@ POOL_OPT = os.path.join(os.path.dirname(os.path.dirname(HERE)),
 import execution_layer  # noqa: E402
 _MF_BUY = execution_layer.MF_BUY
 # 优化器有界旋钮：门槛上下限与惩罚上限（结构规则永不自动改动）
-_OPT_MIN_SCORE = {"lu": (55.0, 65.0), "nlu": (55.0, 65.0)}
+_OPT_MIN_SCORE = {"lu": (60.0, 75.0), "nlu": (60.0, 75.0)}
 _OPT_WINDOW_DAYS = 45      # 滚动统计窗口（自然日）
 _OPT_BUCKET_MIN_N = 8      # 分桶惩罚最少样本
 _OPT_MINSCORE_MIN_N = 20   # 门槛调整最少样本
@@ -193,8 +198,9 @@ def index_series(market, need_date8):
             for r in (d.get("item") or []) if r.get("close_price")]
     if not rows:
         raise RuntimeError(f"index.history {code} 为空")
-    with open(fp, "w", encoding="utf-8") as f:
-        json.dump({"ts": time.time(), "code": code, "rows": rows}, f)
+    Path(fp).write_text(
+        json.dumps({"ts": time.time(), "code": code, "rows": rows}),
+        encoding="utf-8")
     return rows
 
 
@@ -283,9 +289,10 @@ def industry_series(ind_code, need_date8):
     for dd, cc in new:
         merged[dd] = cc
     rows = [[k, v] for k, v in sorted(merged.items())]
-    with open(fp, "w", encoding="utf-8") as f:
-        json.dump({"ts": time.time(), "code": code, "rows": rows,
-                   "checked_through": need}, f)
+    Path(fp).write_text(
+        json.dumps({"ts": time.time(), "code": code, "rows": rows,
+                    "checked_through": need}),
+        encoding="utf-8")
     return rows
 
 
@@ -673,7 +680,7 @@ def build_cycle(date8, sent_rows):
                 "series": rows[-30:], "indicators": {}}
     cur = rows[-1]
     caveat = None if cur["date"] == iso else f"注：{iso} 无情绪数据，以 {cur['date']} 为最新"
-    r3, p3 = rows[-3:], rows[-6:-3]
+    p3 = rows[-6:-3]
 
     zt_now, zt_p3 = cur["zt"], _avg("zt", p3)
     lb_now, lb_p3 = cur["max_lb"], _avg("max_lb", p3)
@@ -756,6 +763,19 @@ def build_anomalies(historical):
 
 _MF_QUOTA = {"aggressive": (2, 0), "normal": (2, 2), "defensive": (2, 1), "freeze": (0, 1)}
 _MF_ENV_CN = {"aggressive": "进攻", "normal": "正常", "defensive": "防守", "freeze": "冰点"}
+# C6 隔夜美股闸门（strategy-iter us_round1_C4→us_round3_C6 三轮完整迭代收敛）：
+# 纳指综合/标普500(SPY) 隔夜跌幅 ≤-2.0% 强制 defensive。与 engine rules.C6 同口径。
+_MF_US_GATE = (-2.0, -2.0)
+
+
+def _us_row(date8):
+    """T 日隔夜美股因子行（factors.json；us_date=最近一个在 T 09:15 前收盘的美股
+    交易日）。数据缺失返回 None——闸门不启用（诚实降级，与 engine 断言口径互补）。"""
+    try:
+        rows = us_market.load_factors().get("rows") or {}
+        return rows.get(_date_iso(date8))
+    except Exception:  # noqa: BLE001
+        return None
 
 _MAIN_PREFIX = ("600", "601", "603", "605", "000", "001", "002", "003")
 
@@ -785,6 +805,29 @@ def _prev_yizi_codes(date8, sent_rows):
 
 _ROT_DAILY = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                           "data", "rotation", "daily")
+
+# C7 非涨停组市场量能闸门（expC 实验：缩量日 NLU -0.24% n=47 / 放量日 +2.13% n=41）
+_NLU_AMT_RATIO_MIN = 0.9
+
+
+def _market_amt_ratio(date8):
+    """T 日全市场成交额 / 前 19 个交易日均值（DuckDB 单查询）。
+
+    与 engine ms.amt_ratio 同口径（T 日收盘可得，无未来函数）；数据缺失返回
+    None——闸门不启用（诚实降级）。"""
+    iso = _date_iso(date8)
+    try:
+        rows = _db_export(
+            "SELECT date, SUM(amount) AS amt FROM v_daily_qfq "
+            f"WHERE date <= DATE '{iso}' GROUP BY date ORDER BY date DESC LIMIT 20",
+            f"amtratio_{date8}")
+    except Exception:  # noqa: BLE001
+        return None
+    amts = [r.get("amt") for r in rows if r.get("amt")]
+    if len(amts) < 20 or not amts[0]:
+        return None
+    base = sum(amts[1:]) / 19.0
+    return amts[0] / base if base else None
 
 
 def _rotation_strength(date8, zt_codes):
@@ -995,13 +1038,14 @@ def scan_trend(date8):
     return _db_export(sql, f"trendscan_{date8}")
 
 
-def _mf_env(sent_rows, date8):
-    """四档环境分档（M_Final 起冻结，阈值同 strategy-iter engine V1/M3），返回 (env, cur, prev_lb)。
+def _mf_env(sent_rows, date8, us_row=None):
+    """四档环境分档（M_Final 冻结 + C6 隔夜美股闸门），返回 (env, cur, prev_lb)。
 
     aggressive：涨停 ≥75 且上涨占比 ≥0.52 且跌停 ≤15；freeze：涨停 <25 且上涨占比 <0.30；
     defensive：跌停 ≥30（恐慌闸门）或涨停 <45 或上涨占比 <0.40；高位崩塌（昨日 ≥5 板且
-    今日骤降 ≥2）时 aggressive 降级 normal。上证 5 日闸门在 M 线未启用
-    （engine idx5_force_defensive=None），idx5 仅作展示。
+    今日骤降 ≥2）时 aggressive 降级 normal。C6 新增：隔夜纳指/标普 ≤-2.0% 强制
+    defensive（排在恐慌闸门之后、分类之前，与 engine rules.C6 同口径）。
+    上证 5 日闸门在 M 线未启用（engine idx5_force_defensive=None），idx5 仅作展示。
     """
     iso = _date_iso(date8)
     rows = [r for r in sent_rows if (r["date"] or "") <= iso]
@@ -1014,6 +1058,8 @@ def _mf_env(sent_rows, date8):
     if zt is None or up is None:
         return "normal", cur, prev
     if (dt or 0) >= 30:
+        env = "defensive"
+    elif _us_gate_hit(us_row):
         env = "defensive"
     elif zt >= 75 and up >= 0.52 and (dt or 0) <= 15:
         env = "aggressive"
@@ -1029,22 +1075,36 @@ def _mf_env(sent_rows, date8):
     return env, cur, prev
 
 
+def _us_gate_hit(us_row):
+    """隔夜美股闸门判定（纳指/标普 ≤ _MF_US_GATE）；数据缺失不启用。"""
+    if not us_row:
+        return False
+    ndx, spx = us_row.get("纳斯达克综合"), us_row.get("标普500")
+    if ndx is not None and ndx <= _MF_US_GATE[0]:
+        return True
+    return spx is not None and spx <= _MF_US_GATE[1]
+
+
 def _load_opt():
-    """读优化器状态（pool_opt.json）；缺失/损坏/旧线版本回默认（结构规则不受影响）。"""
-    base = {"version": "C_Final", "updated": None,
-            "min_score": {"lu": 55.0, "nlu": 55.0}, "penalties": {"lu": {}, "nlu": {}},
+    """读优化器状态（pool_opt.json）；缺失/损坏/旧线版本回默认（结构规则不受影响）。
+
+    C7（2026-09-09）起版本门收紧到 C7 前缀：旧 C_Final 线旋钮（门槛 55）不带入——
+    C7 入选门槛基准 70（expB 实验证据：60~70 分区间 5 只全亏、>=70 占 98%），
+    优化器界限同步放宽到 60~75。"""
+    base = {"version": "C7_Final", "updated": None,
+            "min_score": {"lu": 70.0, "nlu": 70.0}, "penalties": {"lu": {}, "nlu": {}},
             "oos_reviews": [], "log": []}
     try:
         with open(POOL_OPT, encoding="utf-8") as f:
             d = json.load(f)
         ver = str(d.get("version") or "")
-        if not ver.startswith("C_Final"):
-            return base   # M_Final 线的旧旋钮不带入 C 线（概念口径分桶语义已变）
+        if not ver.startswith("C7"):
+            return base   # C_Final 旧线旋钮不带入 C7 线
         base["version"] = ver
         base["updated"] = d.get("updated")
         ms = d.get("min_score") or {}
-        base["min_score"] = {"lu": float(ms.get("lu") or 55.0),
-                             "nlu": float(ms.get("nlu") or 55.0)}
+        base["min_score"] = {"lu": float(ms.get("lu") or 70.0),
+                             "nlu": float(ms.get("nlu") or 70.0)}
         pn = d.get("penalties") or {}
         base["penalties"] = {"lu": dict(pn.get("lu") or {}), "nlu": dict(pn.get("nlu") or {})}
         base["oos_reviews"] = list(d.get("oos_reviews") or [])
@@ -1295,8 +1355,15 @@ def build_pool(date8, bundles, data):
         idx5 = index_gain(index_series("SH", date8), _date_iso(date8), 5)
     except Exception:  # noqa: BLE001
         idx5 = None
-    env, cur, prev_lb = _mf_env(sent_rows, date8)
+    us_row = _us_row(date8)
+    us_gate = _us_gate_hit(us_row)
+    env, cur, prev_lb = _mf_env(sent_rows, date8, us_row)
     qz, qn = _MF_QUOTA[env]
+    # C7 市场量能闸门：缩量日不低吸（env 配额之外的市场级开关，缺数据不启用）
+    amt_ratio = _market_amt_ratio(date8)
+    amt_gate = (amt_ratio is not None and amt_ratio < _NLU_AMT_RATIO_MIN)
+    if amt_gate:
+        qn = 0
     yizi_prev = _prev_yizi_codes(date8, sent_rows)
     opt = _load_opt()
     ms_lu = float(opt["min_score"]["lu"])
@@ -1378,14 +1445,21 @@ def build_pool(date8, bundles, data):
     out_picks = [_pool_pick_row(c) for c in picks]
 
     env_cn = _MF_ENV_CN[env]
+    _us_ndx_txt = (f"{round(us_row.get('纳斯达克综合'), 2)}%" if us_row
+                   and us_row.get("纳斯达克综合") is not None else "-")
+    _amt_txt = f"{round(amt_ratio, 2)}" if amt_ratio is not None else "-"
     market = {
         "情绪判断": f"{env_cn}（{cycle.get('phase', '-')}）· 涨停 {int(cur.get('zt') or 0)} 家"
                     f"·上涨占比 {(cur.get('up_ratio') or 0) * 100:.0f}%"
-                    f"·跌停 {int(cur.get('dt') or 0)} 家·上证5日 {round(idx5, 2) if idx5 is not None else '-'}%",
+                    f"·跌停 {int(cur.get('dt') or 0)} 家·上证5日 {round(idx5, 2) if idx5 is not None else '-'}%"
+                    f"·隔夜纳指 {_us_ndx_txt}·市场量能 {_amt_txt}"
+                    + ("·隔夜美股重挫强制防守" if us_gate else "")
+                    + ("·缩量闸门今日不低吸" if amt_gate else ""),
         "主线方向": "、".join([t["题材"] for t in themes[:2]]) or "无明显主线",
         "操作策略": f"环境={env_cn}·配额 涨停{qz}+非涨停{qn}"
                     + ("·冰点空仓观察" if env == "freeze" else
-                       "·进攻环境只做涨停组" if env == "aggressive" else "·纪律执行买点/风险位"),
+                       "·进攻环境只做涨停组" if env == "aggressive" else "·纪律执行买点/风险位")
+                    + ("·防守/冰点档建议半仓（资金管理层 S1）" if env in ("defensive", "freeze") else ""),
     }
     risk = {
         "abort": ["涨停组低开(开盘<0)或高开>+5% 放弃；非涨停组开盘超出 -2%~+3% 放弃",
@@ -1410,7 +1484,9 @@ def build_pool(date8, bundles, data):
             "validation": data.get("pool_validation"),
             "optimizer": data.get("pool_optimizer"),
             "sector_meta": ind_meta,
-            "note": f"C_Final 主板概念口径（strategy-iter C1→C3 三轮迭代收敛，概念一阶因子）"
+            "note": f"C7 主板概念口径（strategy-iter C1→C3 概念收敛"
+                    f"，C4→C6 隔夜美股闸门，C7 门槛70+市场量能闸门：expB/expC 单变量实验采纳）"
+                    f"·资金管理层 S1=防守/冰点档半仓（建议层，实盘自选）"
                     f"·每日验证自我优化·规则化模拟验证，非投资建议；"
                     f"选股范围=沪深主板(600/601/603/605/000/001/002/003)，研究层用全市场；"
                     f"概念为主(驱动概念=所属概念中当日涨幅最高者)、行业为辅；"
@@ -1605,10 +1681,8 @@ def _load_track():
 
 def _save_track(track):
     os.makedirs(os.path.dirname(POOL_TRACK), exist_ok=True)
-    tmp = POOL_TRACK + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(track, f, ensure_ascii=False)
-    os.replace(tmp, POOL_TRACK)
+    Path(POOL_TRACK).write_text(json.dumps(track, ensure_ascii=False),
+                                encoding="utf-8")
 
 
 def record_validation(date8, val):
@@ -1855,13 +1929,12 @@ def update_optimizer(date8):
                    ("窗口样本积累中（涨停组 n=%d / 低吸组 n=%d），按 C_Final 默认口径"
                     % (state["samples"]["lu"], state["samples"]["nlu"]))}
     os.makedirs(os.path.dirname(POOL_OPT), exist_ok=True)
-    tmp = POOL_OPT + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"version": ver, "updated": str(date8),
-                   "min_score": state["min_score"], "penalties": state["penalties"],
-                   "oos_reviews": reviews,
-                   "log": log}, f, ensure_ascii=False)
-    os.replace(tmp, POOL_OPT)
+    Path(POOL_OPT).write_text(
+        json.dumps({"version": ver, "updated": str(date8),
+                    "min_score": state["min_score"], "penalties": state["penalties"],
+                    "oos_reviews": reviews,
+                    "log": log}, ensure_ascii=False),
+        encoding="utf-8")
     return out
 
 

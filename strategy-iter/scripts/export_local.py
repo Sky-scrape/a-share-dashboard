@@ -1,6 +1,7 @@
 """Export local DuckDB daily kline window to parquet (raw + qfq)."""
+import datetime
 import os
-import sys
+import re
 from pathlib import Path
 import duckdb
 
@@ -13,36 +14,46 @@ START = "2024-09-01"
 END = "2026-09-03"
 
 
-def main():
-    con = duckdb.connect(DB, read_only=True)
-    out1 = BASE / "data" / "daily_raw.parquet"
-    con.execute(f"""
-        COPY (
-          SELECT thscode, date, open, high, low, close, prev_close, volume, amount
-          FROM raw_kline_daily
-          WHERE date >= DATE '{START}' AND date <= DATE '{END}'
-        ) TO '{out1}' (FORMAT PARQUET, COMPRESSION ZSTD)
-    """)
-    n1 = con.execute(f"SELECT COUNT(*) FROM '{out1}'").fetchone()[0]
-    print("daily_raw rows:", n1, flush=True)
+def _validated(v: str, kind: str) -> str:
+    """日期绑定值严格校验（ISO 日历日），非法即拒绝。"""
+    if not isinstance(v, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError(f"非法{kind}: {v!r}")
+    datetime.date.fromisoformat(v)
+    return v
 
-    out2 = BASE / "data" / "daily_qfq.parquet"
-    con.execute(f"""
-        COPY (
-          SELECT thscode, date, open, high, low, close, volume, amount
-          FROM v_daily_qfq
-          WHERE date >= DATE '{START}' AND date <= DATE '{END}'
-        ) TO '{out2}' (FORMAT PARQUET, COMPRESSION ZSTD)
-    """)
-    n2 = con.execute(f"SELECT COUNT(*) FROM '{out2}'").fetchone()[0]
-    print("daily_qfq rows:", n2, flush=True)
+
+def main():
+    start, end = _validated(START, "起始日期"), _validated(END, "结束日期")
+    # SQL 全部为固定字面量，日期经参数绑定传入（无任何拼接）；导出走
+    # DataFrame.to_parquet，路径由 BASE + 字面量文件名构造，不可偏航。
+    con = duckdb.connect(DB, read_only=True)
+
+    df_raw = con.execute(
+        "SELECT thscode, date, open, high, low, close, prev_close, volume, amount "
+        "FROM raw_kline_daily WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE) "
+        "ORDER BY thscode, date",
+        [start, end]).df()
+    out_raw = Path(BASE) / "data" / "daily_raw.parquet"
+    out_raw.parent.mkdir(parents=True, exist_ok=True)
+    df_raw.to_parquet(out_raw, index=False, compression="zstd")
+    print("daily_raw rows:", len(df_raw), flush=True)
+
+    df_qfq = con.execute(
+        "SELECT thscode, date, open, high, low, close, volume, amount "
+        "FROM v_daily_qfq WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE) "
+        "ORDER BY thscode, date",
+        [start, end]).df()
+    out_qfq = Path(BASE) / "data" / "daily_qfq.parquet"
+    df_qfq.to_parquet(out_qfq, index=False, compression="zstd")
+    print("daily_qfq rows:", len(df_qfq), flush=True)
 
     # trade dates list
     dates = [r[0] for r in con.execute(
-        f"SELECT DISTINCT strftime(date,'%Y-%m-%d') FROM raw_kline_daily "
-        f"WHERE date >= DATE '{START}' AND date <= DATE '{END}' ORDER BY 1").fetchall()]
-    with open(BASE / "data" / "trade_dates.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(dates))
+        "SELECT DISTINCT strftime(date,'%Y-%m-%d') FROM raw_kline_daily "
+        "WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE) ORDER BY 1",
+        [start, end]).fetchall()]
+    (Path(BASE) / "data" / "trade_dates.txt").write_text(
+        "\n".join(dates), encoding="utf-8")
     print("trade dates:", len(dates), dates[0], "..", dates[-1], flush=True)
     con.close()
 

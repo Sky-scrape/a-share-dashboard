@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import sys
 from pathlib import Path
 
@@ -263,8 +264,9 @@ def main(argv=None):
     report = render_report(run_dir.name, st, stc, monthly, groups, groups_c)
     out_md = run_dir / "capital_report.md"
     out_md.write_text(report, encoding="utf-8")
-    with open(run_dir / "capital_curve.csv", "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
+    buf = io.StringIO()
+    if True:
+        w = csv.writer(buf)
         w.writerow(["T1", "picks", "trades", "day_ret_pct", "equity", "trades_detail"])
         for d in daily:
             w.writerow([d["T1"], d["n_pick"], d["n_trade"],

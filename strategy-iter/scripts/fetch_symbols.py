@@ -1,5 +1,6 @@
 """Fetch full A-share symbol table (with names) for SH/SZ/BJ."""
 import csv
+import io
 import sys
 from pathlib import Path
 
@@ -35,10 +36,11 @@ def main():
         if offset > 30000:
             break
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["thscode", "ticker", "name", "exchange"])
-        w.writeheader()
-        w.writerows(rows)
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=["thscode", "ticker", "name", "exchange"])
+    w.writeheader()
+    w.writerows(rows)
+    OUT.write_text(buf.getvalue(), encoding="utf-8")
     print(f"SAVED {OUT} rows={len(rows)}")
 
 

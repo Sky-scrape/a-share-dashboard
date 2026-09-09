@@ -15,6 +15,7 @@ ETF 快照、估值；akshare（新浪/东财）保留用于大盘指数、两�
 import sys
 import time
 import json
+from pathlib import Path
 import datetime as _dt
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -208,8 +209,8 @@ def _get_industry_map():
     if not mapping:
         raise RuntimeError("ValueError: 行业成分映射为空")
     os.makedirs(_cache_dir(), exist_ok=True)
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(mapping, f, ensure_ascii=False)
+    Path(cache_file).write_text(json.dumps(mapping, ensure_ascii=False),
+                                encoding="utf-8")
     return mapping
 
 
@@ -757,12 +758,14 @@ def etf():
 
 def _em_global_quotes(secids):
     """东财全球指数实时（push2delay 直连）：返回 [{名称, 最新价, 涨跌幅}]。"""
-    url = ("https://push2delay.eastmoney.com/api/qt/ulist.np/get?fltt=2"
-           "&secids=" + ",".join(secids) + "&fields=f2,f3,f4,f12,f14")
     try:
-        r = requests.get(url, timeout=12,
-                         headers={"User-Agent": "Mozilla/5.0",
-                                  "Referer": "https://quote.eastmoney.com/"})
+        r = requests.get(
+            "https://push2delay.eastmoney.com/api/qt/ulist.np/get",
+            params={"fltt": 2, "secids": ",".join(secids),
+                    "fields": "f2,f3,f4,f12,f14"},
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0",
+                     "Referer": "https://quote.eastmoney.com/"})
         data = r.json()
         diff = (data.get("data") or {}).get("diff") or []
         rows = []

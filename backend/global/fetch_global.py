@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-import requests  # noqa: E402
+import requests
+from pathlib import Path  # noqa: E402
 
 import lockutil  # noqa: E402
 import logutil  # noqa: E402  统一 logging（时间戳/级别）
@@ -398,8 +399,10 @@ def _add_windows_us(sectors):
 def fetch_heat_us():
     """新浪 gb_ 批量实时：字段 0名称 1现价 2涨跌幅% 13?市值（实测第13列=市值）。"""
     syms = [s for lst in US_HEAT_SECTORS.values() for s in lst]
-    url = "https://hq.sinajs.cn/list=" + ",".join("gb_" + s for s in syms)
-    r = _retry(lambda: requests.get(url, headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
+    r = _retry(lambda: requests.get(
+        "https://hq.sinajs.cn/list",
+        params={"list": ",".join("gb_" + s for s in syms)},
+        headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
     r.encoding = "gbk"
     quotes = {}
     for line in r.text.strip().splitlines():
@@ -576,10 +579,10 @@ def fetch_intraday():
     out = {}
     for idx_id, sym in INTRA_SPECS.items():
         try:
-            url = ("https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService"
-                   f".getKLineData?symbol={sym}&scale=1&ma=no&datalen=250")
-            r = _retry(lambda: requests.get(url,
-                          headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
+            r = _retry(lambda: requests.get(
+                "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData",
+                params={"symbol": sym, "scale": 1, "ma": "no", "datalen": 250},
+                headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
             rows = json.loads(r.text)
             rows = [x for x in rows if x.get("day") and x.get("close")]
             if not rows:
@@ -679,10 +682,7 @@ def _run():
 
     payload["errors"] = errors
     os.makedirs(OUT_DIR, exist_ok=True)
-    tmp = OUT + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
-    os.replace(tmp, OUT)
+    Path(OUT).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     kb = os.path.getsize(OUT) / 1024
     LOG.info(f"[done] {OUT}  {kb:.0f}KB  {round(time.time() - t0, 1)}s  errors={len(errors)}")
     if not any(k in payload for k in ("indices", "radar", "heatmap_us", "heatmap_cn")):

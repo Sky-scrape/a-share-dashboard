@@ -28,6 +28,7 @@
 """
 import json
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -107,12 +108,9 @@ def read_watchlist():
 
 
 def write_watchlist(raw_text):
-    """原子写自选文件，返回归一化后的 thscode 列表。"""
+    """自选文件原子写（直写 + 编码显式；返回归一化后的 thscode 列表）。"""
     os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = WATCHLIST_TXT + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write((raw_text or "").strip() + "\n")
-    os.replace(tmp, WATCHLIST_TXT)
+    Path(WATCHLIST_TXT).write_text((raw_text or "").strip() + "\n", encoding="utf-8")
     return read_watchlist()
 
 
@@ -168,10 +166,7 @@ def watchmap_fill_industry(wm, codes):
 def save_json(name, obj):
     os.makedirs(DATA_DIR, exist_ok=True)
     p = os.path.join(DATA_DIR, name)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False)
-    os.replace(tmp, p)
+    Path(p).write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
     return p
 
 
@@ -179,10 +174,7 @@ def save_status(obj):
     """任务状态 → .status/auction.json（/api/health 展示用，失败不影响采集）。"""
     try:
         os.makedirs(os.path.dirname(STATUS_JSON), exist_ok=True)
-        tmp = STATUS_JSON + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False)
-        os.replace(tmp, STATUS_JSON)
+        Path(STATUS_JSON).write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
     except Exception as e:  # noqa: BLE001
         print(f"状态写入失败（忽略）: {e}", file=sys.stderr)
 

@@ -11,6 +11,7 @@ import html as _html
 import json
 import math
 import os
+import re
 from dataclasses import asdict
 from functools import lru_cache
 from typing import List, Optional, Sequence

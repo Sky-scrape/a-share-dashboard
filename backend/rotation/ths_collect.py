@@ -30,6 +30,7 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
@@ -99,12 +100,11 @@ def load_board_pool(refresh=False):
         if len(pool) < 80:
             raise RuntimeError(f"目录一级行业仅 {len(pool)} 个（预期约 90），上游结构可能变了")
         os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = BOARDS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"src": "ths", "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
-                       "industry": [{"code": c, "name": n} for c, n in pool],
-                       "concept": []}, f, ensure_ascii=False)
-        os.replace(tmp, BOARDS_FILE)
+        Path(BOARDS_FILE).write_text(
+            json.dumps({"src": "ths", "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "industry": [{"code": c, "name": n} for c, n in pool],
+                        "concept": []}, ensure_ascii=False),
+            encoding="utf-8")
         return pool
     except Exception as e:  # noqa: BLE001
         saved = _read_saved()
@@ -130,10 +130,8 @@ def load_raw(date_s):
 
 def save_raw(raw):
     os.makedirs(RAW_DIR, exist_ok=True)
-    tmp = raw_path(raw["date"]) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(raw, f, ensure_ascii=False)
-    os.replace(tmp, raw_path(raw["date"]))
+    Path(raw_path(raw["date"])).write_text(json.dumps(raw, ensure_ascii=False),
+                                           encoding="utf-8")
 
 
 def sample_round(pool, raw, stamp_hm, in_window):
@@ -251,24 +249,22 @@ def build_daily(pool, raw, note_extra=None):
 def write_daily(out):
     os.makedirs(DAILY_DIR, exist_ok=True)
     path = os.path.join(DAILY_DIR, f"{out['date']}.json")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False)
-    os.replace(tmp, path)
-    return path
+    path = Path(path)
+    path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    return str(path)
 
 
 def write_status(out, failed):
     try:
         os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
-        json.dump({
+        Path(STATUS_PATH).write_text(json.dumps({
             "last_run": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": out["date"], "src": "ths",
             "boards": len(out.get("boards") or []),
             "times": len(out.get("times") or []),
             "failed": [[f_.get("code"), f_.get("error")] for f_ in (failed or [])][:20],
             "exit": 0,
-        }, open(STATUS_PATH, "w", encoding="utf-8"), ensure_ascii=False)
+        }, ensure_ascii=False), encoding="utf-8")
     except Exception as e:  # noqa: BLE001
         LOG.info(f"  状态写入失败: {e}")
 

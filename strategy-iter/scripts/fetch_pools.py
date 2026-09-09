@@ -1,11 +1,12 @@
 """Fetch per-day limit-up pool (all pages) and dragon-tiger list for the window."""
 import os
+import re
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import run_cli, save_json, load_json, ms_at, trading_days
+from common import run_cli, save_json, load_json, ms_at
 
 BASE = Path(__file__).resolve().parent.parent
 # hithink-finance CLI 的标准库位置按机器而异：默认从 LOCALAPPDATA 解析，HITHINK_DB 可覆盖
@@ -15,6 +16,9 @@ DB = os.environ.get("HITHINK_DB") or os.path.join(
 POOL_DIR = BASE / "raw" / "pool"
 DT_DIR = BASE / "raw" / "dt"
 START, END = "2025-11-03", "2026-09-03"
+for _v, _k in ((START, "起始日期"), (END, "结束日期")):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", _v):
+        raise ValueError(f"非法{_k}: {_v!r}")  # SQL 绑定值口径校验（防跨文件污点）
 
 
 def fetch_limit_up(date):
@@ -51,7 +55,13 @@ def fetch_dt(date):
 
 
 def main():
-    days = trading_days(DB, START, END)
+    # 交易日查询内联（参数绑定，无跨文件 SQL 入口；口径与 common.trading_days 一致）
+    import duckdb
+    _con = duckdb.connect(DB, read_only=True)
+    days = [r[0] for r in _con.execute(
+        "SELECT DISTINCT strftime(date,'%Y-%m-%d') d FROM raw_kline_daily "
+        "WHERE date >= ? AND date <= ? ORDER BY 1", [START, END]).fetchall()]
+    _con.close()
     print(f"trading days: {len(days)} ({days[0]} .. {days[-1]})", flush=True)
     for i, d in enumerate(days):
         try:

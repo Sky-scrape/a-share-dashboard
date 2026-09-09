@@ -12,7 +12,9 @@
   python backend/derive.py --force    # 强制全量重算
 """
 import argparse
+from pathlib import Path
 import csv
+import io
 import datetime
 import json
 import os
@@ -167,15 +169,20 @@ def derive_recap(force=False):
     if not force and not _is_stale(sent_out, src_max):
         return False
     sent, promo = compute_sentiment()
-    with open(sent_out, "w", newline="", encoding="utf-8-sig") as f:
-        wcsv = csv.DictWriter(f, fieldnames=["version", "date", "index", "label", "zt",
-                                             "dt", "max_lb", "promo_rate", "up_ratio", "zhaban"])
+    def _csv_text(fieldnames, rows):
+        buf = io.StringIO()
+        wcsv = csv.DictWriter(buf, fieldnames=fieldnames)
         wcsv.writeheader()
-        wcsv.writerows(sent)
-    with open(promo_out, "w", newline="", encoding="utf-8-sig") as f:
-        wcsv = csv.DictWriter(f, fieldnames=["date", "prev_date", "prev_zt", "promo_zt", "promo_rate"])
-        wcsv.writeheader()
-        wcsv.writerows(promo)
+        wcsv.writerows(rows)
+        return buf.getvalue()
+
+    Path(sent_out).write_text(
+        _csv_text(["version", "date", "index", "label", "zt",
+                   "dt", "max_lb", "promo_rate", "up_ratio", "zhaban"], sent),
+        encoding="utf-8-sig")
+    Path(promo_out).write_text(
+        _csv_text(["date", "prev_date", "prev_zt", "promo_zt", "promo_rate"], promo),
+        encoding="utf-8-sig")
     print(f"derive: sentiment {len(sent)} 天 · promotion {len(promo)} 天 -> {PANEL_RECAP}")
     return True
 
@@ -539,18 +546,12 @@ def derive_rotation(force=False):
     changed = False
     if force or _is_stale(stats_out, src_max):
         st = compute_rotation_stats()
-        tmp = stats_out + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(st, f, ensure_ascii=False)
-        os.replace(tmp, stats_out)
+        Path(stats_out).write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
         changed = True
     if force or _is_stale(matrix_out, src_max):
         mx = compute_matrix()
         if mx is not None:
-            tmp = matrix_out + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(mx, f, ensure_ascii=False)
-            os.replace(tmp, matrix_out)
+            Path(matrix_out).write_text(json.dumps(mx, ensure_ascii=False), encoding="utf-8")
             changed = True
     if changed:
         print(f"derive: rotation panel -> {PANEL_ROT}")

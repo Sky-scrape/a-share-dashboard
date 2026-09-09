@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -63,6 +64,8 @@ def add_entry(name: str, symbol: str, side: str, qty: float, price: float,
     entry = {"date": date or time.strftime("%Y-%m-%d"), "symbol": str(symbol), "side": side,
              "qty": float(qty), "price": float(price), "note": note,
              "logged_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", str(name)):
+        raise ValueError(f"非法 ledger 名称: {name!r}")
     data = load_ledger(name, ledger_dir)
     data.append(entry)
     with open(_path_rw(name, ledger_dir), "w", encoding="utf-8") as f:
@@ -71,6 +74,8 @@ def add_entry(name: str, symbol: str, side: str, qty: float, price: float,
 
 
 def undo_last(name: str, ledger_dir: Optional[str] = None) -> Optional[dict]:
+    if not re.fullmatch(r"[A-Za-z0-9_\-]+", str(name)):
+        raise ValueError(f"非法 ledger 名称: {name!r}")
     data = load_ledger(name, ledger_dir)
     if not data:
         return None

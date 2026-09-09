@@ -12,6 +12,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -155,6 +156,8 @@ def _run(args, date):
         "prev": prev_zt,
     }
     if args.out:
+        if ".." in args.out or not re.fullmatch(r"[\w\/:.\-]+\.json", args.out):
+            raise SystemExit(f"非法输出路径: {args.out}")
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         tmp = args.out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

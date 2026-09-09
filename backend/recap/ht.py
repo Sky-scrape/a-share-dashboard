@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 _EXE = None
 
@@ -117,9 +118,9 @@ def catalog(tag, cache_dir=None, cache_days=7):
     items = d.get("item") or []
     if cache_file and items:
         os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump({"ts": time.time(), "items": items}, f,
-                      ensure_ascii=False)
+        Path(cache_file).write_text(
+            json.dumps({"ts": time.time(), "items": items}, ensure_ascii=False),
+            encoding="utf-8")
     return items
 
 
@@ -146,7 +147,7 @@ def symbol_names(cache_dir=None, cache_days=1):
         offset += len(batch)
     if cache_file and names:
         os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump({"ts": time.time(), "names": names}, f,
-                      ensure_ascii=False)
+        Path(cache_file).write_text(
+            json.dumps({"ts": time.time(), "names": names}, ensure_ascii=False),
+            encoding="utf-8")
     return names

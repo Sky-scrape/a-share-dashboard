@@ -40,6 +40,21 @@ from modules import MODULES  # noqa: E402
 
 FAILED = []
 
+_ALLOWED_HOSTS = ("127.0.0.1", "localhost")
+
+
+def uopen(url, **kwargs):
+    """urlopen 的回环白名单包装：smoke 的全部请求只允许打本机看板。
+
+    URL 一律由 `base = http://127.0.0.1:{port}` 拼接而来，校验 schema/host
+    防拼接偏航（安全扫描口径），行为与直连 urlopen 完全一致。"""
+    from urllib.parse import urlsplit
+    u = url.full_url if isinstance(url, urllib.request.Request) else url
+    parts = urlsplit(u)
+    if parts.scheme != "http" or parts.hostname not in _ALLOWED_HOSTS:
+        raise ValueError(f"smoke 仅允许访问本机回环地址: {u!r}")
+    return urllib.request.urlopen(url, **kwargs)
+
 
 def check(name, cond, detail=""):
     mark = "PASS" if cond else "FAIL"
@@ -59,7 +74,7 @@ def free_port():
 def get(base, path, retries=3):
     for i in range(retries):
         try:
-            with urllib.request.urlopen(base + path, timeout=30) as r:
+            with uopen(base + path, timeout=30) as r:
                 return r.status, json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             # 4xx/5xx 是服务端的确定性回答：原样返回结构化结果（无数据环境下
@@ -79,7 +94,7 @@ def post(base, path, obj):
     data = json.dumps(obj).encode("utf-8")
     req = urllib.request.Request(base + path, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with uopen(req, timeout=30) as r:
         return r.status, json.loads(r.read().decode("utf-8"))
 
 
@@ -100,7 +115,7 @@ def main():
         # 等待就绪
         for _ in range(30):
             try:
-                urllib.request.urlopen(base + "/api/health", timeout=2)
+                uopen(base + "/api/health", timeout=2)
                 break
             except Exception:
                 time.sleep(0.5)
@@ -342,7 +357,7 @@ def main():
             pass  # 400 也接受（urllib 对 4xx 抛异常）
         req = urllib.request.Request(base + "/api/recap/note?date=..%2F..")
         try:
-            urllib.request.urlopen(req, timeout=10)
+            uopen(req, timeout=10)
             st = 200
         except urllib.error.HTTPError as e:
             st = e.code
@@ -604,14 +619,14 @@ def main():
               "_maybe_auto_sector_backfill" in _sp and "is_trade_today" in _sp
               and "respond=False" in _sp and "09:26" in _sp)
         try:
-            code = urllib.request.urlopen(base + "/quant", timeout=5).status
+            code = uopen(base + "/quant", timeout=5).status
         except Exception as e:
             code = str(e)
         check("/quant 路由 200", code == 200, str(code))
 
         # ---- 实时竞价板块（只读 data/auction/，采集器独立进程）----
         try:
-            code = urllib.request.urlopen(base + "/auction", timeout=5).status
+            code = uopen(base + "/auction", timeout=5).status
         except Exception as e:
             code = str(e)
         check("/auction 路由 200", code == 200, str(code))
@@ -1037,7 +1052,7 @@ def main():
             code = str(e)
         check("job 非法 kind 拒绝", code == 400, str(code))
         try:
-            code = urllib.request.urlopen(base + "/api/quant/job/..%2F..", timeout=10).status
+            code = uopen(base + "/api/quant/job/..%2F..", timeout=10).status
         except urllib.error.HTTPError as e:
             code = e.code
         except Exception as e:
@@ -1051,12 +1066,12 @@ def main():
         check("job 类型白名单含 wf/refresh", '"wf"' in qapi and '"refresh"' in qapi
               and "run_wf" in rjob and "run_refresh" in rjob)
         try:
-            rlen = urllib.request.urlopen(base + "/quant-results/dual_ma_report.html", timeout=10).status
+            rlen = uopen(base + "/quant-results/dual_ma_report.html", timeout=10).status
         except Exception as e:
             rlen = str(e)
         check("报告直链 200", rlen == 200, str(rlen))
         try:
-            code2 = urllib.request.urlopen(base + "/quant-results/..%2Fserver.py", timeout=10).status
+            code2 = uopen(base + "/quant-results/..%2Fserver.py", timeout=10).status
         except urllib.error.HTTPError as e:
             code2 = e.code
         except Exception as e:
@@ -1079,7 +1094,7 @@ def main():
 
         # quote 代理：不强依赖网络（允许降级 error，但必须 JSON 且非 500 崩溃）
         try:
-            with urllib.request.urlopen(base + "/api/quote?codes=600519", timeout=20) as r:
+            with uopen(base + "/api/quote?codes=600519", timeout=20) as r:
                 q = json.loads(r.read().decode("utf-8"))
             check("/api/quote 结构", "list" in q or "error" in q, str(q)[:80])
         except Exception as e:
