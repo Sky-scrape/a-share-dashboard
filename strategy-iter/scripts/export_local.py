@@ -2,6 +2,7 @@
 import datetime
 import os
 import re
+import sys
 from pathlib import Path
 import duckdb
 
@@ -10,8 +11,26 @@ BASE = Path(__file__).resolve().parent.parent
 DB = os.environ.get("HITHINK_DB") or os.path.join(
     os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
     "hithink-finance", "data", "market.duckdb")
-START = "2024-09-01"
-END = "2026-09-03"
+
+sys.path.insert(0, str(BASE))
+from engine.data import SEL_END  # noqa: E402  窗口日期唯一来源（engine/data.py）
+
+START = "2024-09-01"   # 前复权暖机历史，早于选股窗口，独立口径
+
+
+def _next_trade_date(con) -> str:
+    """导出上界 = SEL_END 的次一交易日（T+1 走势验证需要）。
+
+    SEL_END 见 engine/data.py（唯一日期源）；T+1 不再另存一份硬编码，直接从本地
+    库现取 SEL_END 之后首个有日线的交易日（MIN 保证恰好 T+1，库更新再多也不多导）。
+    库还没同步到 T+1 时报错——宁可显式失败，不静默截短验证窗口。
+    """
+    row = con.execute(
+        "SELECT MIN(DISTINCT strftime(date,'%Y-%m-%d')) FROM raw_kline_daily "
+        "WHERE date > CAST(? AS DATE)", [SEL_END]).fetchone()
+    if not row or not row[0]:
+        raise RuntimeError(f"本地库尚无 {SEL_END} 之后的交易日数据，请先同步行情再导出")
+    return row[0]
 
 
 def _validated(v: str, kind: str) -> str:
@@ -23,10 +42,11 @@ def _validated(v: str, kind: str) -> str:
 
 
 def main():
-    start, end = _validated(START, "起始日期"), _validated(END, "结束日期")
+    con = duckdb.connect(DB, read_only=True)
+    start = _validated(START, "起始日期")
+    end = _validated(_next_trade_date(con), "结束日期")
     # SQL 全部为固定字面量，日期经参数绑定传入（无任何拼接）；导出走
     # DataFrame.to_parquet，路径由 BASE + 字面量文件名构造，不可偏航。
-    con = duckdb.connect(DB, read_only=True)
 
     df_raw = con.execute(
         "SELECT thscode, date, open, high, low, close, prev_close, volume, amount "

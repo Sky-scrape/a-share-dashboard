@@ -12,9 +12,11 @@ BASE = Path(__file__).resolve().parent.parent
 DATA = BASE / "data"
 RAW = BASE / "raw"
 
-WIN_START = "2025-11-03"   # warm-up start for pools/industries
+# ---- 窗口日期唯一来源：scripts/export_local.py 与 scripts/fetch_pools.py 由此派生 ----
+WIN_START = "2025-11-03"   # warm-up start for pools/industries (= fetch_pools.START)
 SEL_START = "2026-01-02"   # first selection day (first 2026 trade day)
-SEL_END = "2026-09-02"     # last selectable T (T+1 = 2026-09-03)
+SEL_END = "2026-09-10"     # last selectable trade day T（导出上界 T+1 不在此硬编码，
+                           # export_local 从本地库现取 SEL_END 之后首个交易日）
 
 
 def load_daily() -> tuple[pd.DataFrame, pd.DataFrame]:

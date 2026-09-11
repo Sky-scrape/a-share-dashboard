@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title A股看板
 cd /d "%~dp0"

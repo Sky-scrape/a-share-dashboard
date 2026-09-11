@@ -7,13 +7,18 @@
 validation.csv，按冻结执行层（C3 buys，= speculate._MF_BUY 同口径）模拟逐日组合。
 
 执行近似口径（日线 bar 无法还原盘中路径，各处近似在报告中原样披露）：
+执行层常量单一来源 = backend/execution_layer.py（MF_BUY），本脚本不再自带副本
+（2026-09-10 口径对齐：历史上把「买入触发过滤」low_min=-3% 误当出场止损，
+执行层风险位实为 risk_low=-5% 盘中 / risk_close=-4% 收盘确认）。
 
 主口径 = 实时可执行近似（无未来函数，信息按盘中可得顺序使用）：
 - 涨停组：开盘涨幅 ∈ [0,+5]% 开盘市价买入（低开不接、高开>+5% 放弃 = 实时可判）；
-  执行层「盘中最低≥昨收-3% 才买」实时不可知，近似为 **-3% 破位即离场**（小止损，
-  因而 -5% 大止损在本组几乎不触发）；未破位收盘离场。
+  执行层「盘中最低≥昨收-3% 才买」是**买入触发过滤**（用全天最低，实时不可知，
+  只在对照口径使用）；可执行口径的风险位取执行层 risk_low=-5%：盘中最低 ≤ -5%
+  破位离场，否则收盘离场（risk_close=-4% 的离场价即收盘价，与收盘离场同价，
+  仅作风险标记存在）。
 - 低吸组：限价单挂在 max(开盘,昨收)（"收盘站上 max(开盘,昨收) 才买"的实时版本 =
-  价格上穿该位即成交，用 T+1 最高价≥挂单价判定是否成交）；全天最低 ≤ -4%（风险位）
+  价格上穿该位即成交，用 T+1 最高价≥挂单价判定是否成交）；全天最低 ≤ risk_low=-4%
   按止损优先离场（保守：日线无法区分止损与成交的盘中先后）；否则收盘离场。
 - 每日等权：当日成交标的均分当日资金，未成交/缺席槽位闲置（收益 0）；
   组合日收益 = 成交标的收益均值；按 T+1 交易日复利；年化按 244 交易日；费前。
@@ -39,9 +44,18 @@ from pathlib import Path
 
 TRADING_DAYS_PER_YEAR = 244
 
-# 冻结执行层（C3 buys，engine/rules.py M3 = speculate._MF_BUY 同口径）
-LU = {"win_min": 0.0, "win_max": 5.0, "low_min": -3.0}
-NLU = {"win_min": -2.0, "win_max": 3.0, "risk_low": -4.0}
+# 冻结执行层 = backend/execution_layer.py（单一来源），不再手抄副本。
+_HERE = Path(__file__).resolve()
+_ROOT = _HERE.parent.parent.parent                     # scripts -> strategy-iter -> 仓库根
+_BACKEND = str(_ROOT / "backend")
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
+import execution_layer as _el  # noqa: E402
+
+# lu：win_min/win_max 买点窗口（低开不接 / 高开放弃）、low_min 买入触发过滤、
+#     risk_low/risk_close 风险位；nlu：窗口 + 风险位。
+LU = dict(_el.MF_BUY["lu"])
+NLU = dict(_el.MF_BUY["nlu"])
 
 
 def load_validation(run_dir):
@@ -81,13 +95,13 @@ def trade_pnl(row, mode="realtime"):
             return None                      # 低开不接 / 高开>+5% 放弃（开盘即可判）
         if mode == "confirm":
             if l is None or l < LU["low_min"]:
-                return None                  # 回看：全天破 -3% 的直接不买
+                return None                  # 回看：触发过滤（盘中最低≥昨收-3%）不满足，不买
             if not (c > o):
                 return None                  # 回看：收盘确认才买
             entry, exit_pct = o, c
         else:
             entry = o
-            exit_pct = LU["low_min"] if (l is not None and l < LU["low_min"]) else c
+            exit_pct = LU["risk_low"] if (l is not None and l <= LU["risk_low"]) else c
         return (1 + exit_pct / 100.0) / (1 + entry / 100.0) - 1
     # 低吸组：限价挂在 max(开盘,昨收)
     if not (NLU["win_min"] <= o <= NLU["win_max"]):
@@ -228,8 +242,9 @@ def render_report(run_name, st, stc, monthly, groups, groups_c):
     lines += ["", "## 月度（主口径）", "", "| 月 | 月收益 | 有持仓日/交易日 |", "|---|---|---|"]
     for m in monthly:
         lines.append(f"| {m['month']} | {f1(m['ret_pct'])} | {m['traded_days']}/{m['days']} |")
-    lines += ["", "> 日线口径近似：涨停组「盘中最低≥昨收-3% 才买」实时不可知，近似为 -3% 破位即离场"
-              "（因此 -5% 大止损在本组几乎不触发）；低吸组限价单成交用「最高价触及挂单价」判定，"
+    lines += ["", "> 日线口径近似：涨停组风险位取执行层 risk_low=-5%（盘中最低 ≤-5% 破位离场）；"
+              "risk_close=-4% 的离场价即收盘价、与收盘离场同价；「盘中最低≥昨收-3% 才买」"
+              "属买入触发过滤（含回看），只在对照口径使用。低吸组限价单成交用「最高价触及挂单价」判定，"
               "止损与成交的盘中先后无法区分、按止损优先（保守）。本曲线为 T+1 日内一轮口径"
               "（收盘/止损离场），持仓过 T+1 收盘之后的路径不在验证范围内；费前（不含佣金/滑点）。",
               "> 本回测为规则化模拟，非投资建议。"]
@@ -265,13 +280,14 @@ def main(argv=None):
     out_md = run_dir / "capital_report.md"
     out_md.write_text(report, encoding="utf-8")
     buf = io.StringIO()
-    if True:
-        w = csv.writer(buf)
-        w.writerow(["T1", "picks", "trades", "day_ret_pct", "equity", "trades_detail"])
-        for d in daily:
-            w.writerow([d["T1"], d["n_pick"], d["n_trade"],
-                        round(d["day_ret"] * 100, 4), round(d["equity"], 6),
-                        " ".join(f"{c}:{p:+.2f}" for c, _n, _g, p in d["trades"])])
+    w = csv.writer(buf)
+    w.writerow(["T1", "picks", "trades", "day_ret_pct", "equity", "trades_detail"])
+    for d in daily:
+        w.writerow([d["T1"], d["n_pick"], d["n_trade"],
+                    round(d["day_ret"] * 100, 4), round(d["equity"], 6),
+                    " ".join(f"{c}:{p:+.2f}" for c, _n, _g, p in d["trades"])])
+    out_csv = run_dir / "capital_curve.csv"
+    out_csv.write_text(buf.getvalue(), encoding="utf-8")   # 头注承诺的逐日曲线产物
     print(f"== {run_dir.name} 资金曲线（实时可执行口径） ==")
     print(f"累计 {st['total_pct']:+.2f}% · 年化 {st['ann_pct']:+.2f}% · "
           f"回撤 {st['max_dd_pct']:+.2f}% · 敞口 {st['exposure']}%")

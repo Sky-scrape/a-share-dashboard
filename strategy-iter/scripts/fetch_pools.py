@@ -15,7 +15,11 @@ DB = os.environ.get("HITHINK_DB") or os.path.join(
     "hithink-finance", "data", "market.duckdb")
 POOL_DIR = BASE / "raw" / "pool"
 DT_DIR = BASE / "raw" / "dt"
-START, END = "2025-11-03", "2026-09-03"
+sys.path.insert(0, str(BASE))
+from engine.data import WIN_START, SEL_END  # noqa: E402  窗口日期唯一来源（engine/data.py）
+
+# 涨停池/龙虎榜按可选股日 T 抓取，抓取窗口 = [WIN_START, SEL_END]，不再另存硬编码
+START, END = WIN_START, SEL_END
 for _v, _k in ((START, "起始日期"), (END, "结束日期")):
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", _v):
         raise ValueError(f"非法{_k}: {_v!r}")  # SQL 绑定值口径校验（防跨文件污点）

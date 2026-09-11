@@ -3,7 +3,6 @@ requests>=2.28          # 全球总览 / 轮动抓取
 numpy>=1.26             # 量化引擎
 pandas>=2.2
 pyarrow>=15
-scipy>=1.11             # 量化因子统计（可选）
 akshare>=1.14           # 复盘辅助数据源（大盘指数/监管公告/外围）；缺失时相关模块降级报错
 py-mini-racer>=0.6      # 全球总览美股热力图：新浪美股页面 JS 解码（fetch_global._us_daily_closes）
 pytest>=8               # python -m pytest quant/tests tests -q

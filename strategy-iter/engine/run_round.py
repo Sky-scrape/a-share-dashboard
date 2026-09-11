@@ -44,6 +44,19 @@ def run_round(version: str, out_dir: Path, store=None, pre=None) -> dict:
                 f"US 因子覆盖率 {cov:.1%} < 95%：先运行 python backend/us_market.py "
                 f"回补 factors.json（诚实降级不允许静默发生）")
 
+    # 概念维度硬断言（2026-09-12，与 US 断言同风格）：启用概念因子/概念独狼闸门时，
+    # 概念归属映射过期（concept_map 7 天新鲜度）会让整个概念维度静默降级——C10 轮
+    # 曾因此丢 21 票且 strong_concept_rate=null 只能事后发现。研究审计不允许静默。
+    cfg_con_on = ("concept" in cfg.get("lu_group", {}).get("weights", {})
+                  or "concept" in cfg.get("nlu_group", {}).get("weights", {})
+                  or cfg.get("lu_group", {}).get("exclude_concept_lonewolf"))
+    if cfg_con_on and not store.con_membership:
+        raise RuntimeError(
+            "概念归属映射为空（concept_map.json 缺失或 >7 天未更新）："
+            "概念因子将整体降级。先重建映射再跑轮次，例如 "
+            "python -c \"import sys; sys.path.insert(0,'backend/recap'); "
+            "import concept_map; concept_map.build(force=True)\"")
+
     picks_rows, val_rows, daily_notes = [], [], []
 
     for T in tdays:

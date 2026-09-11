@@ -86,3 +86,29 @@ def trading_days(db_path, start, end):
         "WHERE date >= ? AND date <= ? ORDER BY 1", [start, end]).fetchall()
     con.close()
     return [r[0] for r in rows]
+
+
+def local_db():
+    """本地 hithink DuckDB 路径（与 fetch_pools/export_local 同一解析）。"""
+    import os
+    return os.environ.get("HITHINK_DB") or os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+        "hithink-finance", "data", "market.duckdb")
+
+
+def next_trade_date(sel_end):
+    """本地库现取 sel_end 之后首个有日线的交易日 = 导出/日线抓取的 T+1 上界。
+
+    与 export_local._next_trade_date 同一口径：库没同步到 T+1 时显式报错，
+    不静默截短（宁可失败，不虚构覆盖）。"""
+    import duckdb
+    con = duckdb.connect(local_db(), read_only=True)
+    try:
+        row = con.execute(
+            "SELECT MIN(DISTINCT strftime(date,'%Y-%m-%d')) FROM raw_kline_daily "
+            "WHERE date > CAST(? AS DATE)", [sel_end]).fetchone()
+    finally:
+        con.close()
+    if not row or not row[0]:
+        raise RuntimeError(f"本地库尚无 {sel_end} 之后的交易日数据，请先同步行情")
+    return row[0]
