@@ -14,6 +14,7 @@ import argparse
 import datetime
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,7 @@ if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
 
 import em_common  # noqa: E402  东财直连共享封装（backend/em_common.py）
+import fsutil     # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 
 os.environ.setdefault("HTTP_PROXY", "")
 os.environ.setdefault("HTTPS_PROXY", "")
@@ -192,8 +194,6 @@ def main():
         if common_times is None:
             common_times = set()
         common = sorted(common_times)
-        if common and len(common) < len(out["times"] if "times" in out else []):
-            pass
         for c in out["series"]:
             s = out["series"][c]
             keep = {t: i for i, t in enumerate(s["times"]) if t in common}
@@ -206,10 +206,7 @@ def main():
 
         os.makedirs(DAILY_DIR, exist_ok=True)
         path = os.path.join(DAILY_DIR, f"{ds}.json")
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=False)
-        os.replace(tmp, path)
+        fsutil.save_json_atomic(path, out)   # 原子写（backend/fsutil.py）
         print(f"  {ds}: {ok_cnt} 板块, {len(common)} 时间点 -> {path}")
 
 

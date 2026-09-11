@@ -272,6 +272,12 @@ tr.sp-row-near td { background: var(--warn-soft); }
 .sp-fate-band b { font-family: var(--mono); color: var(--text-1); }
 @media (max-width: 860px) { .sp-rules-grid { grid-template-columns: 1fr; } }
 .ov-warn { color: var(--up); font-size: 13px; margin-top: 12px; }
+#fetchAlert { display: none; }
+#fetchAlert.show {
+  display: block; margin: 0 0 12px; padding: 10px 14px;
+  border: 1px solid var(--up); border-radius: var(--r-md);
+  background: var(--bg-1); color: var(--up); font-size: 13px; line-height: 1.6;
+}
 .tmpl-btn { font-size: 13px; padding: 5px 11px; }
 .dist-chart { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding: 0 4px; }
 .dist-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; min-width: 0; }
@@ -367,6 +373,9 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
     <a href="#g-pool" data-g="g-pool">⑥ 明日备选池</a>
     <span class="gnote">点击组标题可折叠（记忆状态）</span>
   </nav>
+
+  <!-- 采集失败告警（页面级置顶，任何折叠状态下都可见） -->
+  <div id="fetchAlert"></div>
 
   <!-- ① 市场温度 -->
   <section class="gsec" id="g-temp">
@@ -555,7 +564,7 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
     </header>
     <div class="gbody">
       <div class="section">
-        <div class="section-title">明日交易备选池<span class="sp-note">基于当日复盘信息规则化筛选 · 非投资建议</span></div>
+        <div class="section-title">明日交易备选池<span class="sp-note">基于当日复盘信息规则化筛选 · 终版池于次日美股收盘后生成 · 非投资建议</span></div>
         <div class="card" id="poolBox"><div class="empty">加载中…</div></div>
       </div>
     </div>
@@ -646,11 +655,18 @@ function bindSortable(containerId, name, paintFn) {
 let SNAP = null;      // 当前快照
 let DATE_DP = null;   // 复盘日期日历（AKDP）
 let ztRows = [];      // 涨停池原始行（供搜索）
+/* label/阶段 → mood-pill 样式类（2026-09-10 合并：此前投机周期 PH_CLS 与情绪指数
+   moodClsOf 两份各自维护，映射口径还不完全一致；现全站共用这一份，缺省 flat） */
+const MOOD_CLS = { "启动": "warm", "发酵": "warm", "亢奋": "hot", "高潮": "hot",
+                   "震荡": "flat", "退潮": "cold", "冰点": "cold" };
+/* 后端情绪档位（backend/derive 情绪指数同一 JSON 对象里的 sentiment_level：
+   亢奋/发酵/震荡/冰点，指数 70/55/40 口径）。renderSentiment 到货时缓存；
+   旧面板无该字段时保持 null，速览走前端本地规则回退。 */
+let SENT_LEVEL = null;
 
 async function loadDates() {
   try {
-    const r = await fetch("/api/recap/dates");
-    const j = await r.json();
+    const j = await AK.getJson("/api/recap/dates");   // JSON 请求统一走 lib 包装（错误分支行为不变）
     const sel = $("dateSel");
     if (j.dates.length === 0) { $("status").textContent = "data/ 下还没有快照，先跑 python backend/fetch_daily.py"; return; }
     if (!DATE_DP) {
@@ -694,7 +710,24 @@ function modErr(name) {
 }
 
 function render() {
-  // 渲染错误隔离：单模块异常只在自己容器内显示错误框，不再连带全页空白（历史回归重灾区）
+  // 渲染错误隔离：单模块异常只在自己容器内显示错误框，不再连带全页空白（历史回归重灾区）。
+  // 2026-09-10 收敛：隔离实现统一走 lib AK.safeRender（console+toast 留痕），
+  // 本页降级行为不变——异常仍写进各自容器（onErr 回调）。
+  // 采集失败页面级告警：置顶横幅，任何折叠状态下都可见（09-10 四模块静默失败的教训）
+  {
+    const errs = Object.entries(SNAP.modules || {})
+      .filter(([, m]) => m.status === "error").map(([n]) => n);
+    const fa = $("fetchAlert");
+    if (fa) {
+      if (errs.length) {
+        fa.textContent = "⚠ 本次采集 " + errs.length + " 个模块失败：" + errs.join("、")
+          + " ——相关数据可能不完整（抓取链已自动重试，仍失败；可稍后点「重新抓取」补抓）";
+        fa.className = "show";
+      } else {
+        fa.className = "";
+      }
+    }
+  }
   const plan = [
     [renderOverview, "overview"],
     [renderIndices, "indices"],
@@ -722,13 +755,11 @@ function render() {
     [renderPool, "poolBox"],
   ];
   for (const [fn, boxId] of plan) {
-    try {
-      fn();
-    } catch (e) {
+    AK.safeRender(fn, fn.name, function (e, name) {
       console.error(fn.name, e);
       const el = document.getElementById(boxId);
       if (el) el.innerHTML = errHtml(fn.name + " 渲染异常", String((e && e.message) || e));
-    }
+    });
   }
 }
 
@@ -754,12 +785,25 @@ function calcPromotion() {
            rate: Math.round(red / total * 100), lianbanRate: Math.round(lianban / total * 100) };
 }
 
+/* 后端档位（sentiment_level）→ 速览胶囊文案；与前端本地判档共用同一组 label/cls */
+const MOOD_LEVELS = {
+  "亢奋": { label: "亢奋·高潮", cls: "hot" },
+  "发酵": { label: "发酵·做多", cls: "warm" },
+  "震荡": { label: "震荡·修复", cls: "flat" },
+  "冰点": { label: "冰点·防守", cls: "cold" },
+};
 function moodLabel(ztCount, maxLb, promo) {
   const z = ztCount == null ? 0 : Number(ztCount);
   const lb = maxLb == null ? 0 : Number(maxLb);
   const pr = promo && promo.ok ? promo.lianbanRate : null;
   let label, cls, reason;
-  if (z >= 100 && (pr == null || pr >= 40)) { label = "亢奋·高潮"; cls = "hot"; reason = "涨停潮 + 高晋级"; }
+  // 口径收敛（2026-09-10）：优先后端 derive 的 sentiment_level（指数 70/55/40 口径）——
+  // 前端按涨停家数 100/60/30 判档与后端指数口径可能打架；旧面板无该字段时回退本地规则
+  const lv = SENT_LEVEL && MOOD_LEVELS[SENT_LEVEL];
+  if (lv) {
+    label = lv.label; cls = lv.cls; reason = "情绪指数判定：" + SENT_LEVEL;
+  }
+  else if (z >= 100 && (pr == null || pr >= 40)) { label = "亢奋·高潮"; cls = "hot"; reason = "涨停潮 + 高晋级"; }
   else if (z >= 60) { label = "发酵·做多"; cls = "warm"; reason = "涨停充足，情绪向上"; }
   else if (z >= 30) { label = "震荡·修复"; cls = "flat"; reason = "结构性机会"; }
   else { label = "冰点·防守"; cls = "cold"; reason = "涨停稀少，控制仓位"; }
@@ -1325,8 +1369,7 @@ async function renderNote() {
   const box = $("noteBox");
   let server = null;
   try {
-    const r = await fetch("/api/recap/note?date=" + d);
-    const j = await r.json();
+    const j = await AK.getJson("/api/recap/note?date=" + d);
     server = j.content == null ? "" : String(j.content);
     NOTE_OK = true;
   } catch (e) { NOTE_OK = false; }
@@ -1395,12 +1438,12 @@ function renderSpecCycle() {
   const sp = specData();
   if (!sp) return specMissing(box);
   const cy = sp.cycle || {};
-  const PH_CLS = {"启动":"warm","发酵":"warm","高潮":"hot","震荡":"flat","退潮":"cold","冰点":"cold"};
+  // 阶段→样式映射已合并进全站 MOOD_CLS（2026-09-10，见文件顶部口径注释）
   const ind = cy.indicators || {};
   const f1 = v => (v == null) ? "-" : (Math.round(v * 10) / 10);
   const pc = v => (v == null) ? "-" : Math.round(v * 100) + "%";
   let html = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px">'
-    + '<span class="mood-pill ' + (PH_CLS[cy.phase] || "flat") + '">' + esc(cy.phase || "数据不足") + '</span>'
+    + '<span class="mood-pill ' + (MOOD_CLS[cy.phase] || "flat") + '">' + esc(cy.phase || "数据不足") + '</span>'
     + '<span class="sp-kv" style="margin:0">'
     + '<span>涨停 <b>' + f1(ind.zt) + '</b> 家（前3日均 ' + f1(ind.zt_prev3) + '）</span>'
     + '<span>最高连板 <b>' + f1(ind.max_lb) + '</b>（前3日均 ' + f1(ind.max_lb_prev3) + '）</span>'
@@ -1652,6 +1695,17 @@ function renderPool() {
   const sp = specData();
   if (!sp) return specMissing(box);
   const p = sp.pool || {};
+  if (!p.ok && p.stage === "pending") {
+    let ph = '<div class="sp-empty" style="border:1px dashed var(--line);border-radius:var(--r-md);padding:14px">'
+      + '⏳ <b>备选池待隔夜确认</b>——' + esc(p.note || "隔夜美股场次未定")
+      + '。终版池在次日美股收盘后（北京时间约 04:30-05:30）由收盘链自动生成覆盖。</div>';
+    if (p.validation) ph += '<div style="margin-top:8px;font-size:13px;color:var(--text-2)">昨日池验证：'
+      + (p.validation.ok ? '已记档（' + ((p.validation.picks || []).length) + ' 只）' : esc(p.validation.note || p.validation.error || "-")) + '</div>';
+    if (p.optimizer) ph += '<div style="font-size:13px;color:var(--text-2)">优化器：' + esc(p.optimizer.version || "-")
+      + ' · ' + esc(p.optimizer.note || p.optimizer.error || "") + '</div>';
+    box.innerHTML = ph;
+    return;
+  }
   if (!p.ok) { box.innerHTML = '<div class="sp-empty">' + esc(p.error || "暂无备选池数据（历史快照未含该模块，可运行回填）。") + "</div>"; return; }
   const mk = p.market || {}, rk = p.risk || {}, cc = p.concl || {};
   const stars = n => "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
@@ -1668,6 +1722,15 @@ function renderPool() {
       h += '<div style="margin:4px 0 8px;font-size:12px;color:var(--text-2)"><span style="font-family:var(--mono)">' + esc(va.date || "-") + '</span> 选出的标的今日表现：'
         + chip("涨停组", st.lu) + chip("低吸组", st.nlu)
         + (st.overall && st.overall.valid ? ('<span class="sp-badge">买点触发率 ' + st.overall.buy_trigger_rate + '%</span>') : "") + '</div>';
+      const ex = st.exec;
+      const exg = (k, lbl) => { const e = ex && ex[k];
+        if (!e || !e.n_exec) return "";
+        return lbl + ' 可成交 ' + e.n_exec + ' · 实时均益 ' + (e.pnl_avg ?? "-") + '% · MFE +'
+          + (e.mfe_avg ?? "-") + '% / MAE ' + (e.mae_avg ?? "-") + '%'
+          + (e.stop_hit ? '（止损 ' + e.stop_hit + '，误触 ' + e.stop_whipsaw + '）' : '');
+      };
+      const exLine = [exg("lu", "涨停组"), exg("nlu", "低吸组")].filter(Boolean).join('　');
+      if (exLine) h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">执行口径（实时可成交，费前）：' + exLine + '</div>';
       (va.picks || []).forEach(x => {
         const done = x.close != null;
         h += '<div style="margin:4px 0;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-1);font-size:13px">'
@@ -1740,7 +1803,7 @@ function renderPool() {
     + '<li>情绪判断：' + esc(mk["情绪判断"] || "-") + '</li>'
     + '<li>主线方向：' + esc(mk["主线方向"] || "-") + '</li>'
     + '<li>操作策略：' + esc(mk["操作策略"] || "-") + '</li></ul></div>';
-  h += '<div class="sp-rule-card"><h4>二、明日重点关注标的（2 涨停板 + 2 非涨停板）</h4>';
+  h += '<div class="sp-rule-card"><h4>二、明日重点关注标的</h4>';
   (p.picks || []).forEach((x, i) => {
     h += '<div style="margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-1)">'
       + '<div style="font-size:13px"><b>' + (i + 1) + '. 【' + esc(x["名称"]) + ' / ' + esc(x["代码"]) + '】</b> '
@@ -1773,7 +1836,7 @@ function renderPool() {
 async function loadBoardStrength() {
   const box = $("boardStrength");
   try {
-    const rd = await (await fetch("/api/dates")).json();
+    const rd = await AK.getJson("/api/dates");
     const dates = (rd.dates || []).slice(-5);
     if (dates.length < 2) { box.innerHTML = `<div class="empty">轮动历史数据不足（需 ≥2 个交易日）</div>`; return; }
     // 5 个 /api/day 都是全量分时 JSON，串行 await 又慢又互相放大延迟；并行拉取，
@@ -1826,10 +1889,16 @@ if (EMBED) document.body.classList.add("embed");
 try {
   AKBAR.renderNavgroup({ slot: "navgroupSlot", active: "/recap" });
 } catch(e){}
-/* 主题切换（晨报⇄夜台）：只有取 JS 色板或手绘 SVG 的分组需要重画；
-   fill/stroke 已换成 CSS 变量的会自动跟随，分布柱色板是 JS 数组必须重渲染。 */
-window.addEventListener("akthemechange", function () {
-  try { renderDist(); renderBoardDetail(); renderLadder(); renderSpecCycle(); } catch (e) {}
+/* 主题切换（晨报⇄夜台）：重绘注册制（AKTHEME.onRedraw，2026-09-10 收敛，不再手写
+   akthemechange 监听清单）。只有取 JS 色板或手绘 SVG 的分组需要重画；
+   fill/stroke 已换成 CSS 变量的会自动跟随，分布柱色板是 JS 数组必须重渲染。
+   AK.safeRender 单块隔离：一个分组重绘失败不再连带其余。 */
+AKTHEME.onRedraw(function () {
+  if (!SNAP) return;   // 数据未装载过时无需重画（首绘即当前主题）
+  AK.safeRender(renderDist, "renderDist");
+  AK.safeRender(renderBoardDetail, "renderBoardDetail");
+  AK.safeRender(renderLadder, "renderLadder");
+  AK.safeRender(renderSpecCycle, "renderSpecCycle");
 });
 /* toast 已收敛 AK.toast（lib/util.js，样式见 tokens.css #akToast）：保留同名包装，调用点不用动 */
 function toast(msg, type, ms) { AK.toast(msg, type, ms); }
@@ -1955,6 +2024,11 @@ async function renderSentiment(){
     var data = await r.json();
     var series = data.series || [];
     if (!series.length) { box.innerHTML = '<div class="empty">暂无足够历史数据</div>'; return; }
+    // 缓存后端情绪档位（derive 情绪行自带 label=指数 70/55/40 口径；sentiment_level 为顶层别名，
+    // 都缺时回退前端涨停家数判档），到货后速览胶囊（moodLabel）按后端指数口径刷新一次
+    var lastSent = series.length ? series[series.length - 1] : null;
+    SENT_LEVEL = data.sentiment_level || (lastSent && (lastSent.sentiment_level || lastSent.label)) || null;
+    if (SENT_LEVEL && SNAP) { try { renderOverview(); } catch (e) {} }
 
     var W = 640, H = 150, pad = 10;
     var n = series.length;
@@ -1977,7 +2051,8 @@ async function renderSentiment(){
       return parseInt(ds.slice(4, 6), 10) + "月" + parseInt(ds.slice(6, 8), 10) + "日";
     }
     function moodClsOf(s){
-      return s.label === "亢奋" ? "hot" : s.label === "发酵" ? "warm" : s.label === "震荡" ? "flat" : "cold";
+      // label→样式映射已合并进全站 MOOD_CLS（2026-09-10）；未知 label 维持原回退 cold
+      return MOOD_CLS[s.label] || "cold";
     }
     function fmtInfo(s){
       var pr = s.promo_rate == null ? "--" : (s.promo_rate * 100).toFixed(0) + "%";

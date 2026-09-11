@@ -21,9 +21,13 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 import ht
 import providers
+import fsutil
 
 BACKFILL_MODULES = [
     "limit_up_pool",
@@ -61,13 +65,9 @@ def main():
         targets = [args.date]
     else:
         dates = recent_trade_dates()
-        targets = [d for d in dates[:-1]  # 今天由每日抓取负责
+        # 缺口 = 近 N 个交易日里没有快照文件的日期（今天由每日抓取负责）
+        targets = [d for d in dates[:-1]
                    if not os.path.exists(os.path.join(data_dir, f"{d}.json"))]
-        # 已有快照但缺补抓模块的也算目标（除非 --force 会整体重抓）
-        for d in dates[:-1]:
-            f = os.path.join(data_dir, f"{d}.json")
-            if os.path.exists(f) and targets and d not in targets:
-                continue
 
     if not targets:
         print("无缺口，无需补抓。")
@@ -119,10 +119,7 @@ def main():
             "prev": prev,
             "backfill": True,
         }
-        tmp = out + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, out)
+        fsutil.save_json_atomic(out, snapshot, indent=2)   # 原子写（backend/fsutil.py）
         print(f"    已写入 {out}")
 
     providers.set_context(providers.DATE, historical=False)  # 复位历史模式

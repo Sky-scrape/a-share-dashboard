@@ -457,15 +457,11 @@ function nowHMS() {
 }
 function hms2min(h, m) { return (+h) * 60 + (+m); }   // 强转：传字符串时会变拼接（"09"*60+"17" = "54017"），阶段判断会全部穿透
 function pad2(n) { return String(n).padStart(2, "0"); }
-function today8() {
-  var d = new Date();
-  return "" + d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate());
-}
+/* 本地日期工具已收敛 /lib/util.js（AK.dates，2026-09-10）：保留同名薄委托，
+   本页十来处调用点（含「数据日」标注与体检面板口径）不改。 */
+function today8() { return AK.dates.today8(); }
+function mdOf(d8) { return AK.dates.mdOf(d8); }
 function isWeekend() { var w = new Date().getDay(); return w === 0 || w === 6; }
-function mdOf(d8) {
-  d8 = String(d8 || "");
-  return d8.length === 8 ? d8.slice(4, 6) + "/" + d8.slice(6, 8) : d8;
-}
 /* 数据新鲜度统一口径（隔日 / 周末 / 漏采 / 今日只采到 live 没采到终态）。
    只信数据文件自带的竞价日：.status/auction.json.date 是「任务上次运行日」，
    空池跳过也会写今天，拿来当数据日会把隔日旧数据误判成今日新鲜数据。 */
@@ -495,8 +491,9 @@ function roundInWindow(r) {
 
 /* ---- 顶栏导航（五页共用；竞价排在轮动之前）---- */
 try { AKBAR.renderNavgroup({ slot: "navgroupSlot", active: "/auction" }); } catch (e) {}
-/* 主题切换（晨报⇄夜台）：三张图按当前 state 重画，P() 会取到新主题色 */
-window.addEventListener("akthemechange", function () {
+/* 主题切换（晨报⇄夜台）：重绘注册制（AKTHEME.onRedraw，2026-09-10 收敛，不再手写
+   akthemechange 监听清单）；三张图按当前 state 重画，P() 会取到新主题色 */
+AKTHEME.onRedraw(function () {
   safeRender(renderDist);
   safeRender(renderSector);
   if (state.curveCode && state.series) renderCurve();
@@ -557,13 +554,12 @@ function poll() {
   }).catch(function (e) { if (seq === _pollSeq) renderFresh("bad", "请求失败: " + e); });
 }
 
-/* 单块渲染抛错只污染自己（复盘页同口径：避免「改一处全页空白」） */
+/* 单块渲染抛错只污染自己（复盘页同口径：避免「改一处全页空白」）。
+   2026-09-10 收敛：实现统一在 lib/util.js AK.safeRender（console.error + AK.toast），
+   本页保留同名薄委托，调用点与行为（含可选实参透传）不变。 */
 function safeRender(fn) {
   var args = Array.prototype.slice.call(arguments, 1);
-  try { fn.apply(null, args); } catch (e) {
-    console.error((fn.name || "render") + " 渲染失败", e);
-    toast((fn.name || "render") + " 渲染失败：" + (e && e.message ? e.message : e));
-  }
+  return AK.safeRender(function () { return fn.apply(null, args); }, (fn && fn.name) || "render");
 }
 
 function applyPayload(d) {
@@ -1571,11 +1567,7 @@ $("btnPool").addEventListener("click", function () {
 });
 $("poolClose").addEventListener("click", function () { $("poolMask").classList.remove("show"); });
 $("poolSave").addEventListener("click", function () {
-  fetch("/api/auction/watchlist", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: $("poolEdit").value })
-  }).then(function (r) { return r.json(); }).then(function (d) {
-    if (d.error) { $("poolMsg").textContent = "保存失败: " + d.error; return; }
+  AK.postJson("/api/auction/watchlist", { text: $("poolEdit").value }).then(function (d) {
     var msg = "已保存 " + d.total + " 个自选（" + (d.note || "") + "）";
     if (d.invalid_total) {
       // 不静默丢代码：写错「茅台」或漏一位时会从池子里掉出去
@@ -1602,7 +1594,7 @@ function watchAuctionFetch() {
   $("btnFetch").disabled = true;
   state.fetchTimer = setInterval(function () {
     tries++;
-    fetch("/api/auction/status").then(function (r) { return r.json(); }).then(function (s) {
+    AK.getJson("/api/auction/status").then(function (s) {
       if (s.fetching) return;
       clearInterval(state.fetchTimer); state.fetchTimer = null;
       $("btnFetch").disabled = false;
@@ -1618,7 +1610,7 @@ function watchAuctionFetch() {
 $("btnFetch").addEventListener("click", function () {
   var btn = this;
   btn.disabled = true;
-  fetch("/api/fetch-auction", { method: "POST" }).then(function (r) { return r.json(); }).then(function (d) {
+  AK.postJson("/api/fetch-auction", {}).then(function (d) {
     if (d.status === "started") { toast("已启动后台补抓（日志 .status/logs/fetch-auction.log）"); watchAuctionFetch(); }
     else { toast(d.status === "running" ? "已有采集在运行" : JSON.stringify(d)); watchAuctionFetch(); }
   }).catch(function (e) { toast("补抓失败: " + e, "err"); setTimeout(function () { btn.disabled = false; }, 3000); });

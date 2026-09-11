@@ -17,7 +17,11 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import snapio  # noqa: E402
+_BACKEND_ROOT = os.path.dirname(HERE)
+if _BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, _BACKEND_ROOT)
+import snapio   # noqa: E402
+import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 
 
 def main():
@@ -42,12 +46,10 @@ def main():
             continue
         gz = fp + ".gz"
         before = len(data.encode("utf-8"))
-        after = len(gzip.compress(data.encode("utf-8"), compresslevel=9))
+        blob = gzip.compress(data.encode("utf-8"), compresslevel=9)   # 压一次复用
+        after = len(blob)
         if not args.dry_run:
-            raw = gzip.compress(data.encode("utf-8"), compresslevel=9)
-            with open(gz + ".tmp", "wb") as f:
-                f.write(raw)
-            os.replace(gz + ".tmp", gz)
+            fsutil.save_bytes_atomic(gz, blob)   # 原子写（半截 .gz 同样不可读）
             # 校验 gzip 可解析后再删原文件
             try:
                 json.loads(gzip.open(gz, "rt", encoding="utf-8").read())

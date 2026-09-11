@@ -105,11 +105,21 @@ def order_key(result):
 
 @pytest.mark.parametrize("spec", SPECS, ids=[f"spec{i}" for i in range(len(SPECS))])
 def test_rule_engine_matches_exported_code(panel, cfg, spec):
-    """表单规则引擎与导出的等价 Python 必须逐单一致。"""
+    """表单规则引擎与导出的等价 Python 必须逐单一致。
+
+    导出代码经沙盒正式 API（build_user_strategy，含 AST 白名单扫描）加载，
+    同时覆盖「导出产物可用」与「沙盒接受导出代码」两条链路。"""
     r1 = run_backtest(GenericRuleStrategy(**spec), panel, cfg)
-    ns = {}
-    exec(generate_python_code(spec), ns)
-    r2 = run_backtest(ns["MyStrategy"](), panel, cfg)
+    # 导出产物 import 引擎本体（from quant_sim.core.strategy_base import Strategy），
+    # 在线沙盒白名单只放行三方库——测试内临时放行 quant_sim 顶级包，不改动生产口径。
+    from quant_sim.strategies import sandbox as _sb
+    _old = _sb._ALLOWED_MODULES
+    _sb._ALLOWED_MODULES = _old | {"quant_sim"}
+    try:
+        strategy = build_user_strategy(generate_python_code(spec))
+    finally:
+        _sb._ALLOWED_MODULES = _old
+    r2 = run_backtest(strategy, panel, cfg)
     assert order_key(r1) == order_key(r2)
     assert abs(r1.metrics["累计收益率"] - r2.metrics["累计收益率"]) < 1e-12
     assert r1.metrics["交易次数"] == r2.metrics["交易次数"]

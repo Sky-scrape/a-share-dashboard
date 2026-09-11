@@ -66,7 +66,9 @@ class CostModel:
             return CostBreakdown()
         commission = max(amount * self.commission_rate(symbol, side), self.min_commission_for(symbol))
         stamp = 0.0 if (side is Side.BUY or self.is_fund(symbol)) else amount * self.stamp_tax_rate_sell
-        transfer = 0.0 if self.is_fund(symbol) else amount * self.transfer_fee_rate * 2.0  # 沪深双边
+        # costs() 本身按单边(side)逐笔调用；transfer_fee_rate 默认万 0.1 已是「双边各收万 0.1」
+        # 的单边口径，不再额外 ×2（否则变成万 0.2/边，与本文件头注释「沪深双边万 0.1」不符）。
+        transfer = 0.0 if self.is_fund(symbol) else amount * self.transfer_fee_rate
         other = amount * self.other_fee_rate
         return CostBreakdown(
             commission=round(commission, 2),
@@ -79,7 +81,7 @@ class CostModel:
         """不含最低佣金的费率估计（用于下单前的资金预留与风控）。"""
         rate = self.commission_rate(symbol, side)
         if not self.is_fund(symbol):
-            rate += self.transfer_fee_rate * 2.0 + self.other_fee_rate
+            rate += self.transfer_fee_rate + self.other_fee_rate
             if side is Side.SELL:
                 rate += self.stamp_tax_rate_sell
         return rate

@@ -17,13 +17,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import time
 from typing import Dict, List, Optional
 
 import pandas as pd
 
 from .. import paths as _paths
+from ..core.fsutil import save_json_atomic
 from ..strategies.store import _safe
 
 
@@ -31,6 +31,32 @@ def _dir(ledger_dir: Optional[str]) -> str:
     if ledger_dir:
         return _paths.resolve(ledger_dir)
     return _paths.ledger_dir()
+
+
+#: 台账名黑名单：路径分隔符、Windows 保留字符、空白、控制字符、DEL
+_LEDGER_BAD_CHARS = set('/\\:*?"<>|') | {"\t", "\n", "\r", "\v", "\f"}
+#: Windows 保留设备名（不分大小写、不带扩展名也保留）：CON NUL COM1… 会裸盘失败
+_WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {
+    f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
+
+
+def _validate_name(name: str) -> str:
+    """台账名安全校验（**黑名单制**）：防路径穿越与危险文件名，同时放行中文等全角字符。
+
+    曾用 [A-Za-z0-9_-] 白名单把中文台账名整体拒掉——中文支持是规格不是漏洞。
+    文件名安全由两层共同保证：这里拒绝危险字符，落盘时再经 store._safe 清洗。
+    拒绝：/ \\ : * ? " < > |、任何空白与控制字符、"."/".." 及以 "." 开头的名字、
+    Windows 保留设备名（con/nul/com1…，2026-09-11 补：这类名落盘会直接失败）。
+    """
+    s = str(name)
+    if not s or s in (".", "..") or s.startswith("."):
+        raise ValueError(f"非法 ledger 名称: {name!r}")
+    if s.lower().split(".")[0] in _WINDOWS_RESERVED:
+        raise ValueError(f"非法 ledger 名称（Windows 保留设备名）: {name!r}")
+    for ch in s:
+        if ch in _LEDGER_BAD_CHARS or ch.isspace() or ord(ch) < 32 or ord(ch) == 127:
+            raise ValueError(f"非法 ledger 名称: {name!r}")
+    return s
 
 
 def _path(name: str, ledger_dir: Optional[str] = None) -> str:
@@ -45,6 +71,7 @@ def _path_rw(name: str, ledger_dir: Optional[str] = None) -> str:
 
 
 def load_ledger(name: str, ledger_dir: Optional[str] = None) -> List[dict]:
+    _validate_name(name)   # 与写入口径一致：坏名直接报错，不静默当空台账
     p = _path(name, ledger_dir)
     if not os.path.exists(p):
         return []
@@ -64,28 +91,25 @@ def add_entry(name: str, symbol: str, side: str, qty: float, price: float,
     entry = {"date": date or time.strftime("%Y-%m-%d"), "symbol": str(symbol), "side": side,
              "qty": float(qty), "price": float(price), "note": note,
              "logged_at": time.strftime("%Y-%m-%d %H:%M:%S")}
-    if not re.fullmatch(r"[A-Za-z0-9_\-]+", str(name)):
-        raise ValueError(f"非法 ledger 名称: {name!r}")
+    _validate_name(name)
     data = load_ledger(name, ledger_dir)
     data.append(entry)
-    with open(_path_rw(name, ledger_dir), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    save_json_atomic(_path_rw(name, ledger_dir), data, indent=1)
     return entry
 
 
 def undo_last(name: str, ledger_dir: Optional[str] = None) -> Optional[dict]:
-    if not re.fullmatch(r"[A-Za-z0-9_\-]+", str(name)):
-        raise ValueError(f"非法 ledger 名称: {name!r}")
+    _validate_name(name)
     data = load_ledger(name, ledger_dir)
     if not data:
         return None
     last = data.pop()
-    with open(_path_rw(name, ledger_dir), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    save_json_atomic(_path_rw(name, ledger_dir), data, indent=1)
     return last
 
 
 def clear_ledger(name: str, ledger_dir: Optional[str] = None) -> bool:
+    _validate_name(name)
     p = _path(name, ledger_dir)
     if os.path.exists(p):
         os.remove(p)

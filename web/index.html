@@ -5,21 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>日内轮动 · A股看板</title>
-<link rel="stylesheet" href="lib/tokens.css">
-<script src="lib/util.js"></script>
-<script src="lib/theme.js"></script>
-<script src="lib/echarts.min.js"></script>
-<script src="lib/freshness.js"></script>
-<script src="lib/datepicker.js"></script>
-<script src="lib/appbar.js"></script>
+<link rel="stylesheet" href="/lib/tokens.css">
+<script src="/lib/util.js"></script>
+<script src="/lib/theme.js"></script>
+<script src="/lib/echarts.min.js"></script>
+<script src="/lib/freshness.js"></script>
+<script src="/lib/datepicker.js"></script>
+<script src="/lib/appbar.js"></script>
 <script>
-/* 中文日期：当年省略年份，如 2026-08-28 → 8月28日 */
-function fmtCn(d) {
-  if (!d) return '';
-  const mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
-  if (!mt) return String(d);
-  return (+mt[1] === new Date().getFullYear() ? '' : mt[1] + '年') + (+mt[2]) + '月' + (+mt[3]) + '日';
-}
+/* 中文日期 fmtCn 已收敛 /lib/util.js（AK.dates.fmtCn，五页单一来源，2026-09-10） */
 </script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -449,8 +443,7 @@ async function loadDay(date){
 }
 async function loadDates(){
   try{
-    const r = await fetch('/api/dates');
-    const d = await r.json();
+    const d = await AK.getJson('/api/dates');   // JSON 请求统一走 lib 包装（错误分支行为不变）
     DATE_LIST = (d.dates || []).slice();
     if (!DATE_DP) {
       DATE_DP = AKDP.create({ mount: $('dateSel'), dates: DATE_LIST, value: DATA.date,
@@ -459,7 +452,7 @@ async function loadDates(){
       DATE_DP.setDates(DATE_LIST);
       DATE_DP.setValue(DATA.date);
     }
-    $('modeBadge').textContent = '真实数据 ' + fmtCn(DATA.date);
+    $('modeBadge').textContent = '真实数据 ' + AK.dates.fmtCn(DATA.date);
     $('modeBadge').className = 'badge ok';
     const cov = coverageNote();
     if (cov && cov.warn) {
@@ -596,9 +589,9 @@ function buildCharts(){
   // —— 涨跌幅曲线 ——
   curveChart = echarts.getInstanceByDom(cEl) || echarts.init(cEl);
   curveChart.setOption(curveBaseOption());
-  if (!buildCharts._resizeBound) {   // resize 监听只注册一次，避免随刷新累积
+  if (!buildCharts._resizeBound) {   // resize 监听只注册一次，避免随刷新累积（防抖统一在 lib AK.onResize）
     buildCharts._resizeBound = true;
-    window.addEventListener('resize', ()=>{
+    AK.onResize(() => {
       heatChart && heatChart.resize();
       curveChart && curveChart.resize();
       matrixChart && matrixChart.resize();
@@ -641,14 +634,13 @@ async function loadMatrix(){
   if (!box) return;
   try{
     if (!MX){
-      const r = await fetch('/api/rotation-matrix');
-      const j = await r.json();
+      const j = await AK.getJson('/api/rotation-matrix');
       if (!j.dates || !j.dates.length) throw new Error('暂无矩阵数据（先积累轮动分时）');
       MX = j;
     }
     if (!matrixApi.stats) {
       try {
-        const s = await (await fetch('/api/rotation-stats')).json();
+        const s = await AK.getJson('/api/rotation-stats');
         // 派生层重写面板瞬间可能读到空兜底（无 dates/race）：不缓存，留给后续重试
         if (s && ((s.dates && s.dates.length) || (s.race && s.race.length))) matrixApi.stats = s;
       } catch(e){}
@@ -712,7 +704,7 @@ function drawMatrix(){
     if (!RACE.length && (!matrixApi.stats || !matrixApi.stats.race || !matrixApi.stats.race.length)) {
       // stats 可能曾读到空兜底：强制重取一次再重试
       $('mxSub').textContent = '加载多日轮动数据…';
-      fetch('/api/rotation-stats').then(r=>r.json()).then(s=>{
+      AK.getJson('/api/rotation-stats').then(s=>{
         if (s && s.race && s.race.length) {
           matrixApi.stats = s;
           if (MX) MX.race = s.race;
@@ -931,9 +923,11 @@ function updateHeat(){
   opt.series[0].data = data;
   heatChart.setOption(opt, true);
 }
-let PALETTE = P().cat.slice();   // 主题切换时在 akthemechange 里刷新
-/* 主题切换（晨报⇄夜台）：重建图表基础配置并按当前数据重画；race 用最后帧，不重播动画 */
-window.addEventListener('akthemechange', () => {
+let PALETTE = P().cat.slice();   // 主题切换时在重绘回调里刷新
+/* 主题切换（晨报⇄夜台）：重建图表基础配置并按当前数据重画；race 用最后帧，不重播动画。
+   注册制（AKTHEME.onRedraw，2026-09-10 收敛）：不再手写 akthemechange 监听清单，
+   apply() 切主题后统一回调；事件本身保留给其他非图表监听。 */
+AKTHEME.onRedraw(() => {
   PALETTE = P().cat.slice();
   buildCharts();
   if (DATA) { updateHeat(); updateCurves(); }
@@ -1174,8 +1168,7 @@ async function refreshWatch(){
   const items = watchViewItems();
   if (!items.length) { box.innerHTML = '<span class="sub" style="padding:8px">该分组暂无股票（点击行可设置成本价）</span>'; return; }
   try {
-    const r = await fetch('/api/quote?codes=' + watchList.map(function(w){ return w.code; }).join(','));
-    const j = await r.json();
+    const j = await AK.getJson('/api/quote?codes=' + watchList.map(function(w){ return w.code; }).join(','));
     if (!j.list) throw new Error(j.error || 'no data');
     const m = {}; j.list.forEach(function(x){ m[x.code] = x; });
     let rows = items.map(function(w){
@@ -1249,10 +1242,9 @@ function addWatch(){
 let autoTimer = null;
 let notifyOn = false;
 let lastSigKey = '';
-function localToday(){
-  const d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-}
+/* localToday 单一来源 /lib/util.js（AK.dates.today10）。用函数声明（提升）而非
+   const 绑定：本页初始化路径多处早于本节执行，const 会踩 TDZ。 */
+function localToday() { return AK.dates.today10(); }
 /* ============ 盘中实时模式 ============ */
 let followLive = true;   // 是否跟随实时（用户拖动时间轴后暂停跟随）
 function isTradingTimeNow(){
@@ -1302,7 +1294,7 @@ let lastPctAlert = {};     // code -> {t}  尾盘拉升去重
 function checkWatchAlert(){
   const cfg = alertCfg;
   if (!cfg.enabled || !watchList.length || !isTradingTimeNow()) return;
-  fetch('/api/quote?codes=' + watchList.map(function(w){ return w.code; }).join(',')).then(r => r.json()).then(j => {
+  AK.getJson('/api/quote?codes=' + watchList.map(function(w){ return w.code; }).join(',')).then(j => {
     if (!j.list) return;
     const now = Date.now();
     j.list.forEach(x => {
@@ -1420,6 +1412,7 @@ function checkPersistentAlert(){
 
 let histView = false;   // 用户是否正在主动浏览历史日（是则 autoTick 不跨日强拉回今天）
 async function autoTick(){
+  if (document.hidden) return;   // 后台标签页停轮询（竞价页同先例；回前台 visibilitychange 立即补拉一次）
   if (demoMode) return;
   if (DATA.date !== localToday()) {
     if (!histView) loadDay();   // 跨日/新交易日：整页自动跳到最新日（旧 bug：直接 return，页面永远停在前一日）
@@ -1470,8 +1463,8 @@ async function refreshPanelsTick(){
   if (++_panelTickN % 4 !== 0) return;
   try {
     const [m, s] = await Promise.all([
-      fetch('/api/rotation-matrix').then(r => r.json()),
-      fetch('/api/rotation-stats').then(r => r.json())
+      AK.getJson('/api/rotation-matrix'),
+      AK.getJson('/api/rotation-stats')
     ]);
     if (m && m.dates && m.dates.length) MX = m;
     if (s && ((s.dates && s.dates.length) || (s.race && s.race.length))) matrixApi.stats = s;
@@ -1485,10 +1478,11 @@ function startAutoRefresh(){
   autoTimer = setInterval(autoTick, 30000);
   setInterval(refreshWatch, 60000);   // 自选价格与提醒轮询
   // 隔夜外围：采集器每交易日 08:40 更新 global.json，页面对应低频重拉
-  // （autoTick 只管当日分时，不碰这块；数据一天一变，10 分钟轮询 + 唤醒重拉足够）
-  setInterval(renderOvernight, 10*60*1000);
+  // （autoTick 只管当日分时，不碰这块；数据一天一变，10 分钟轮询 + 唤醒重拉足够；
+  // 后台标签页不加 hidden 短路前的 10 分钟全量拉纯属浪费——2026-09-10 收敛）
+  setInterval(() => { if (!document.hidden) renderOvernight(); }, 10*60*1000);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) renderOvernight();   // 息屏/休眠后重新看到页面时拉最新
+    if (!document.hidden) { renderOvernight(); autoTick(); }   // 息屏/休眠后重新看到页面时立即补拉最新
   });
 }
 function updateAll(){
@@ -1558,7 +1552,7 @@ function exitCompare(){
   CMP = null;
   $('btnExitCompare').style.display = 'none';
   if (!demoMode) {
-    $('modeBadge').textContent = '真实数据 ' + fmtCn(DATA.date);
+    $('modeBadge').textContent = '真实数据 ' + AK.dates.fmtCn(DATA.date);
     $('modeBadge').className = 'badge ok';
   }
   updateCurves();
@@ -1943,12 +1937,12 @@ $('btnFetch').onclick = async function(){
       // 轮询 /api/health：fetched_at 变化或任务完成后自动刷新。
       // 单实例防重：重复点击会叠加多个 15s 轮询 → 多次 location.reload()
       if (btnFetch._watch) { return; }
-      const h0 = await (await fetch('/api/health')).json();
+      const h0 = await AK.getJson('/api/health');
       const base = (h0.rotation && h0.rotation.fetched_at) || '';
       const t0 = Date.now();
       const t = setInterval(async () => {
         try {
-          const h = await (await fetch('/api/health')).json();
+          const h = await AK.getJson('/api/health');
           const fa = (h.rotation && h.rotation.fetched_at) || '';
           const taskDone = h.rotation && h.rotation.task && h.rotation.task.last_run &&
             h.rotation.task.last_run > base && h.rotation.task.exit === 0;

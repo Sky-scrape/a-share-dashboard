@@ -28,7 +28,6 @@
 """
 import json
 import os
-from pathlib import Path
 import re
 import sys
 
@@ -36,6 +35,7 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BACKEND_DIR))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 
+import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 from thscodes import to_thscode  # noqa: E402  代码转换单一来源（backend/thscodes.py）
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data", "auction")
@@ -108,9 +108,8 @@ def read_watchlist():
 
 
 def write_watchlist(raw_text):
-    """自选文件原子写（直写 + 编码显式；返回归一化后的 thscode 列表）。"""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    Path(WATCHLIST_TXT).write_text((raw_text or "").strip() + "\n", encoding="utf-8")
+    """自选文件原子写（backend/fsutil 原子写 + 编码显式；返回归一化后的 thscode 列表）。"""
+    fsutil.save_text_atomic(WATCHLIST_TXT, (raw_text or "").strip() + "\n")
     return read_watchlist()
 
 
@@ -164,17 +163,15 @@ def watchmap_fill_industry(wm, codes):
 
 
 def save_json(name, obj):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    p = os.path.join(DATA_DIR, name)
-    Path(p).write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
-    return p
+    """竞价产物原子写（live.json 每 30s 重写、server 随时读——backend/fsutil.py
+    临时文件 + os.replace，读方永远看不到半截文件；目录由 fsutil 自动建）。"""
+    return fsutil.save_json_atomic(os.path.join(DATA_DIR, name), obj)
 
 
 def save_status(obj):
     """任务状态 → .status/auction.json（/api/health 展示用，失败不影响采集）。"""
     try:
-        os.makedirs(os.path.dirname(STATUS_JSON), exist_ok=True)
-        Path(STATUS_JSON).write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+        fsutil.save_json_atomic(STATUS_JSON, obj)
     except Exception as e:  # noqa: BLE001
         print(f"状态写入失败（忽略）: {e}", file=sys.stderr)
 

@@ -11,12 +11,17 @@
 import json
 import os
 import random
+import sys
 import time
 
 import requests
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
+_BACKEND = os.path.join(PROJECT_ROOT, "backend")
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
+import fsutil   # noqa: E402  原子写盘单一来源（boards.json 与 ths_collect 双写方同口径）
 DATA_DIR = os.path.join(PROJECT_ROOT, "data", "rotation")
 BOARDS_FILE = os.path.join(DATA_DIR, "boards.json")
 
@@ -113,7 +118,7 @@ def fetch_boards(industry_count=len(SW_L1_NAMES), concept_count=0, refresh=False
             boards["concept"] = con[:concept_count]
 
     os.makedirs(DATA_DIR, exist_ok=True)
-    json.dump(boards, open(BOARDS_FILE, "w", encoding="utf-8"), ensure_ascii=False)
+    fsutil.save_json_atomic(BOARDS_FILE, boards)
     return boards
 
 

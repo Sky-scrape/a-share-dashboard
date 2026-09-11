@@ -88,6 +88,7 @@ sys.path.insert(0, os.path.join(ROOT, "backend", "auction"))
 import derive          # noqa: E402  派生层（面板文件产出方）
 import lockutil        # noqa: E402
 import snapio          # noqa: E402
+import fsutil          # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 import collector as quant_collector  # noqa: E402  量化平台只读采集层（backend/quant）
 import quant_api                     # noqa: E402  量化引擎接线 API（回测/选股/信号/研究）
 import auc_config                    # noqa: E402  竞价板块配置（观察池/自选单一来源）
@@ -258,6 +259,57 @@ def _read_panel(path, parser):
     return obj
 
 
+# ---------------- 大 JSON 文件的「序列化 bytes + ETag」mtime 缓存 ----------------
+# /api/day（~800KB，轮动页 30s 轮询 + 复盘页 5 连拉）此前每请求都要
+# json.load 全量解析再 dumps 算 ETag；缓存下沉到序列化层后，
+# 文件 mtime+size 不变时 304 与 200 都近零成本（零读盘零解析零重序列化）。
+_etag_body_cache = {}   # path -> [(mtime_ns, size), body_bytes, etag, [gz_bytes 或 None]]
+_ETAG_BODY_CACHE_MAX = 64   # /api/day 可带任意历史 date（每条约 1MB body+gzip），封顶防回看累积
+
+
+def _cached_json_bytes(path):
+    """纯 JSON 文件 → (紧凑序列化 bytes, ETag, gzip 槽位)，按 mtime+size 缓存。
+
+    锁只护字典读写；解析/序列化在锁外做（与 _read_panel 同一纪律）。
+    gzip 槽位惰性填充：首个接受 gzip 的 200 请求算一次并缓存，之后复用。
+    超上限按 LRU 淘汰（命中即移到队尾）。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    with _CACHE_LOCK:
+        ent = _etag_body_cache.get(path)
+        if ent and ent[0] == key:
+            _etag_body_cache[path] = _etag_body_cache.pop(path)   # LRU：移到队尾
+            return ent[1], ent[2], ent[3]
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+    except Exception:
+        # 读失败（写半截等）：有过缓存就沿旧值，否则按无数据处理
+        return (ent[1], ent[2], ent[3]) if ent else None
+    body = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    # ETag 用 SHA-256（Mimosa 弱哈希清零；ETag 本非安全原语，换算法仅一次性 304 失效）
+    etag = '"%s"' % hashlib.sha256(body).hexdigest()
+    ent = [key, body, etag, [None]]   # 槽位用可变列表：gzip 结果可回填复用
+    with _CACHE_LOCK:
+        _etag_body_cache[path] = ent
+        while len(_etag_body_cache) > _ETAG_BODY_CACHE_MAX:
+            _etag_body_cache.pop(next(iter(_etag_body_cache)))
+    return body, etag, ent[3]
+
+
+def _snapshot_payload(date8):
+    """复盘快照（/data/YYYYMMDD.json，~420KB，兼容 .json.gz）mtime 缓存解析。
+
+    快照按日期不可变、抓取窗口内才整体重写：解压+解析只在文件变化后做一次，
+    之后走 _etag_json 的 304 协商。"""
+    p = snapio.snap_path(RECAP_DATA, date8)
+    data = _read_panel(p, lambda x: snapio.load(date8, RECAP_DATA))
+    return data
+
+
 def _parse_sentiment_csv(path):
     rows = []
     version = None
@@ -371,6 +423,34 @@ def industry_map_payload():
 
 # ---------------- 运维健康聚合 ----------------
 
+_recap_err_cache = {"key": None, "errors": ()}
+
+
+def _recap_errors_cached(cap_path):
+    """复盘快照 error 字段的 mtime+size 缓存。
+
+    /api/health 被新鲜度胶囊 2 分钟轮询一次；此前每次都全量解压解析 ~420KB
+    快照只为取 error 明细。文件不变时直接复用上次结果（模式照 _read_panel）。"""
+    try:
+        key = (cap_path, os.path.getmtime(cap_path), os.path.getsize(cap_path))
+    except OSError:
+        return []
+    with _CACHE_LOCK:
+        if _recap_err_cache["key"] == key:
+            return list(_recap_err_cache["errors"])
+    try:
+        d = snapio.load(os.path.basename(cap_path)[:8]) or {}
+        errors = [
+            {"module": k, "error": (v.get("error") or "")[:120]}
+            for k, v in (d.get("modules") or {}).items()
+            if v.get("status") == "error"]
+    except Exception:
+        errors = []
+    with _CACHE_LOCK:
+        _recap_err_cache.update(key=key, errors=errors)
+    return errors
+
+
 def health_payload():
     rd, cd = rot_dates(), recap_dates()
     rot_path = os.path.join(ROT_DAILY, rd[-1] + ".json") if rd else None
@@ -382,16 +462,7 @@ def health_payload():
         d = _read_json_file(rot_path) or {}
         rot_failed = (d.get("failed") or [])[:10]
         rot_coverage = d.get("coverage")
-    recap_errors = []
-    if cap_path:
-        try:
-            d = snapio.load(cd[0]) or {}
-            recap_errors = [
-                {"module": k, "error": (v.get("error") or "")[:120]}
-                for k, v in (d.get("modules") or {}).items()
-                if v.get("status") == "error"]
-        except Exception:
-            pass
+    recap_errors = _recap_errors_cached(cap_path) if cap_path else []
     glob_d = _read_json_file(GLOBAL_JSON) if os.path.exists(GLOBAL_JSON) else None
     glob_ft = (glob_d or {}).get("fetched_at") or ""
     glob_errors = list((glob_d or {}).get("errors") or {})
@@ -571,6 +642,13 @@ POST_ROUTES = [(re.compile(p), fn) for p, fn in POST_ROUTES]
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # HTTP/1.1 keep-alive：手机经 Tailscale 访问省去每请求 TCP 握手。
+    # 纪律：所有 send 路径必须带 Content-Length（_json/_etag_json/_etag_body/_file 均已带；
+    # 304 无体合法；SimpleHTTPRequestHandler 托管的静态文件自带 Content-Length；
+    # send_error 亦自带）。空闲连接由类属性 timeout 兜底掐断，不占死线程。
+    protocol_version = "HTTP/1.1"
+    timeout = 60   # 空闲/僵死连接 60s 后断开（StreamRequestHandler.setup 里落到 socket）
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=MAIN_WEB, **kwargs)
 
@@ -613,42 +691,74 @@ class Handler(SimpleHTTPRequestHandler):
     def _etag_json(self, obj):
         """带 ETag/304 的 JSON：轮询方数据未变时不回传整包（/api/day 同款）。"""
         body = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        etag = '"%s"' % hashlib.md5(body).hexdigest()
+        etag = '"%s"' % hashlib.sha256(body).hexdigest()
+        self._send_etag_body(body, etag)
+
+    def _send_etag_body(self, body, etag, gz_slot=None):
+        """按已算好的 ETag 发送预序列化 JSON bytes（304 或 200+gzip）。
+
+        gz_slot：可选 [bytes 或 None] 单槽列表，gzip 结果跨请求复用
+        （/api/day 等大 JSON 命中缓存后连压缩都省掉）。ETag 与压缩无关：
+        同一数据无论客户端是否接受 gzip 都是同一 ETag，304 协商不受影响。
+
+        复用槽位时仍须按本次请求的 Accept-Encoding 判定：槽位一旦被浏览器填满，
+        若不复判就会把 gzip 发给没要压缩的客户端（curl/脚本拿到 1f 8b 二进制）。
+        """
         if self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
             self.end_headers()
             return
+        wants_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+        gz = None
+        if gz_slot is not None and wants_gzip:
+            with _CACHE_LOCK:
+                gz = gz_slot[0]
+        if gz is not None:
+            out, enc = gz, "gzip"
+        else:
+            out, enc = self._maybe_gzip(body)
+            if enc and gz_slot is not None:
+                with _CACHE_LOCK:
+                    gz_slot[0] = out
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("ETag", etag)
-        body, enc = self._maybe_gzip(body)
         if enc:
             self.send_header("Content-Encoding", enc)
             self.send_header("Vary", "Accept-Encoding")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(out)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(out)
 
-    def _file(self, path, ctype, cache="no-store"):
-        """静态文件。cache=no-store（页面，刷新即见）/ etag（lib 常改文件，304 协商）
-        / long（vendored 大文件，max-age 长缓存 + 304 兜底）。"""
+    def _file(self, path, ctype, cache="etag"):
+        """静态文件。cache=etag（页面与常改文件，304 协商缓存；页面从 no-store 改为
+        协商后，刷新仍即时可见——文件一变 ETag 就变——但未变化的整页传输省掉）
+        / long（vendored 大文件，max-age 长缓存 + 304 兜底）/ no-store（永不缓存）。"""
         try:
             with open(path, "rb") as f:
                 body = f.read()
             st = os.stat(path)
         except OSError:
             return self._json({"error": "not found"}, 404)
-        etag = '"%s"' % hashlib.md5(f"{st.st_size}-{st.st_mtime_ns}".encode()).hexdigest()
+        etag = '"%s"' % hashlib.sha256(f"{st.st_size}-{st.st_mtime_ns}".encode()).hexdigest()
         if cache in ("etag", "long") and self.headers.get("If-None-Match") == etag:
             self.send_response(304)
             self.send_header("ETag", etag)
             self._cc("no-cache" if cache == "etag" else "public, max-age=86400, immutable")
             self.end_headers()
             return
+        # 文本类按 Accept-Encoding 压缩（手机/Tailscale 拉 ~100KB 页面/1MB echarts 降数倍）；
+        # ETag 由 mtime+size 决定、与压缩无关，协商语义不变（Accept-Encoding 判别照 _maybe_gzip）
+        enc = None
+        if ctype.startswith(("text/", "application/json")):
+            body, enc = self._maybe_gzip(body)
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("ETag", etag)
+        if enc:
+            self.send_header("Content-Encoding", enc)
+            self.send_header("Vary", "Accept-Encoding")
         if cache == "long":
             self._cc("public, max-age=86400, immutable")
         elif cache == "etag":
@@ -768,11 +878,12 @@ class Handler(SimpleHTTPRequestHandler):
         date = self._query().get("date", [dates[-1]])[0]
         if not _DATE_RE.fullmatch(date):   # 白名单，防路径穿越
             return self._json({"error": "日期格式非法"}, 400)
-        data = self._read_json(os.path.join(ROT_DAILY, f"{date}.json"))
-        if data is None:
+        # ETag/304 + mtime 缓存：分时文件未变时零读盘零解析（bytes 层缓存见 _cached_json_bytes），
+        # 盘中 30s 轮询与复盘页 5 连拉在数据未更新时都是 304 空回
+        cached = _cached_json_bytes(os.path.join(ROT_DAILY, f"{date}.json"))
+        if cached is None:
             return self._json({"error": f"没有 {date} 的数据"}, 404)
-        # ETag/304：盘中轮询的数据未变化时不再回传整包分时 JSON
-        return self._etag_json(data)
+        return self._send_etag_body(cached[0], cached[1], cached[2])
 
     def api_boards(self):
         boards = self._read_json(ROT_BOARDS)
@@ -826,19 +937,22 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json({"date": date, "content": content, "saved_at": saved_at})
 
     def api_snapshot(self, name):
-        # /data/YYYYMMDD.json：白名单已由路由正则保证（仅 8 位数字.json），防路径穿越
-        data = snapio.load(name[:-5], RECAP_DATA)    # 自动兼容 .json.gz
+        # /data/YYYYMMDD.json：白名单已由路由正则保证（仅 8 位数字.json），防路径穿越。
+        # 快照按日期不可变（~420KB）：mtime 缓存解析 + ETag/304，复盘页切日期回看不重解压
+        data = _snapshot_payload(name[:-5])
         if data is None:
             return self._json({"error": "snapshot missing or broken"}, 500)
-        return self._json(data)
+        return self._etag_json(data)
 
     # ---------------- GET handlers：全球 / 量化 ----------------
 
     def api_global(self):
-        data = self._read_json(GLOBAL_JSON)
-        if data is None:
+        # 全球总览（~429KB，一天一变）：mtime 缓存的 bytes + ETag/304，
+        # 轮动页隔夜外围条 10 分钟轮询与全球页刷新在数据未变时零开销
+        cached = _cached_json_bytes(GLOBAL_JSON)
+        if cached is None:
             return self._json({"error": "尚无全球总览数据，请先 POST /api/fetch-global 或运行 backend/global/fetch_global.py"}, 404)
-        return self._json(data)
+        return self._send_etag_body(cached[0], cached[1], cached[2])
 
     def api_quant(self):
         force = self._query().get("fresh", [""])[0] in ("1", "true")
@@ -1159,10 +1273,10 @@ class Handler(SimpleHTTPRequestHandler):
         os.makedirs(RECAP_NOTES, exist_ok=True)
         fp = os.path.join(RECAP_NOTES, date + ".md")
         try:
-            tmp = fp + ".tmp"
-            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                f.write(content)
-            os.replace(tmp, fp)
+            # fsutil 原子写（临时文件 + os.replace + Windows 短重试，2026-09-11 收编：
+            # 此处曾有一份同构内联实现，再往前 tmp 变量是死代码、直写目标文件）。
+            # newline="\n"：笔记按 LF 落盘
+            fsutil.save_text_atomic(fp, content, newline="\n")
         except Exception as e:
             return self._json({"status": "error", "error": str(e)}, 500)
         return self._json({"status": "saved",

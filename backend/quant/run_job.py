@@ -15,20 +15,57 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+_BACKEND = os.path.dirname(HERE)
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
 
 import quant_api   # noqa: E402
+import fsutil      # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+from quant_api import df_records, import_engine, jd, tradable_codes   # noqa: E402
 
 
 def _now():
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def parse_grid(grids_spec) -> dict:
+    """前端网格参数 → {key: [候选值]}（run_grid 与 run_wf 曾各写一份，已收编）。
+
+    list 原样收；字符串按中英逗号切；数字串转 int/float，其余保留字符串。
+    """
+    grids = {}
+    for k, v in (grids_spec or {}).items():
+        vals = v if isinstance(v, list) else [x for x in str(v).replace("，", ",").split(",") if x.strip()]
+        parsed = []
+        for x in vals:
+            try:
+                n = float(x)
+                parsed.append(int(n) if n == int(n) else n)
+            except ValueError:
+                parsed.append(x.strip())
+        grids[k] = parsed
+    return grids
+
+
+def merge_variant_desc(base_desc: dict, kw: dict) -> dict:
+    """基础策略描述 + 网格组合 kw → 变体描述（grid/wf 同一约定，曾各写一份）。
+
+    builtin 深合并进 params；rule 并进 spec；kind 缺省 builtin。
+    """
+    if base_desc.get("kind") == "rule":
+        return {"kind": "rule", "spec": {**(base_desc.get("spec") or {}), **kw}}
+    desc = {"kind": base_desc.get("kind", "builtin"), "family": base_desc.get("family")}
+    desc["params"] = {**(base_desc.get("params") or {}), **kw}
+    return desc
+
+
 def run_screener(p, qa):
-    quant_api._import_engine()
+    import_engine()
     from quant_sim.research import screener as sc
 
     tmpl = sc.TEMPLATES.get(p.get("template") or "") or {}
@@ -52,18 +89,18 @@ def run_screener(p, qa):
                     enrich=bool(p.get("enrich", False)))
     table = res.get("table")
     return {
-        "table": qa._df_records(table, cap=400),
+        "table": df_records(table, cap=400),
         "columns": list(table.columns) if table is not None else [],
         "display_cols": sc.DISPLAY_COLS,
-        "steps": {k: _jd(v) for k, v in (res.get("steps") or {}).items()},
+        "steps": {k: jd(v) for k, v in (res.get("steps") or {}).items()},
         "warnings": res.get("warnings") or [],
-        "asof": _jd(res.get("asof")),
+        "asof": jd(res.get("asof")),
         "template_note": tmpl.get("note", ""),
     }
 
 
 def run_signals(p, qa):
-    quant_api._import_engine()
+    import_engine()
     from quant_sim.tools.signals import run_signal_for_name
     codes = p.get("codes") or None
     report = run_signal_for_name(
@@ -77,27 +114,17 @@ def run_signals(p, qa):
 
 
 def run_grid(p, qa):
-    quant_api._import_engine()
+    import_engine()
     from quant_sim.research import runner
 
-    codes = [str(c).strip() for c in (p.get("codes") or []) if str(c).strip()]
+    benchmark = (p.get("benchmark") or "").strip() or None
+    codes = tradable_codes(p.get("codes") or [], benchmark)
     if not codes:
         raise ValueError("网格研究需要标的池")
-    benchmark = (p.get("benchmark") or "").strip() or None
-    load_codes = list(dict.fromkeys(codes + ([benchmark] if benchmark else [])))
+    load_codes = codes + ([benchmark] if benchmark else [])
     panel = qa.load_panel_for_api(load_codes, p.get("start"), p.get("end"),
                                   p.get("adjust", "qfq"), p.get("data_mode", "auto"))
-    grids = {}
-    for k, v in (p.get("grids") or {}).items():
-        vals = v if isinstance(v, list) else [x for x in str(v).replace("，", ",").split(",") if x.strip()]
-        parsed = []
-        for x in vals:
-            try:
-                n = float(x)
-                parsed.append(int(n) if n == int(n) else n)
-            except ValueError:
-                parsed.append(x.strip())
-        grids[k] = parsed
+    grids = parse_grid(p.get("grids"))
     if not grids:
         raise ValueError("网格为空：至少给一个参数的候选值列表")
     keys = list(grids)
@@ -105,14 +132,9 @@ def run_grid(p, qa):
     if len(variants) > 240:
         raise ValueError(f"组合数 {len(variants)} > 240，请收缩网格")
     base_desc = dict(p.get("strategy") or {})
-    fixed = dict(base_desc.get("params") or {})
 
     def build(kw):
-        desc = {"kind": base_desc.get("kind", "builtin"), "family": base_desc.get("family")}
-        desc["params"] = {**fixed, **kw}
-        if base_desc.get("kind") == "rule":
-            desc = {"kind": "rule", "spec": {**(base_desc.get("spec") or {}), **kw}}
-        return qa.build_strategy_from_desc(desc, panel.symbols)
+        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes)
 
     cfg = runner.make_backtest_config(
         start=p.get("start"), end=p.get("end"),
@@ -131,7 +153,7 @@ def run_grid(p, qa):
     return {
         "grid_keys": keys,
         "n_variants": len(variants),
-        "rows": qa._df_records(ranked, cap=300),
+        "rows": df_records(ranked, cap=300),
         "columns": list(ranked.columns),
         "rank_by": p.get("rank_by", "夏普比率"),
         "warnings": qa.panel_warnings(panel),
@@ -140,28 +162,18 @@ def run_grid(p, qa):
 
 def run_wf(p, qa):
     """滚动 WF：与 grid 同一 desc 合并约定；每折训练窗网格选参后立刻在紧邻 test 窗验证。"""
-    quant_api._import_engine()
+    import_engine()
     from quant_sim.research.runner import make_backtest_config
     from quant_sim.research.grid_walkforward import walk_forward
 
-    codes = [str(c).strip() for c in (p.get("codes") or []) if str(c).strip()]
+    benchmark = (p.get("benchmark") or "").strip() or None
+    codes = tradable_codes(p.get("codes") or [], benchmark)
     if not codes:
         raise ValueError("WF 研究需要标的池")
-    benchmark = (p.get("benchmark") or "").strip() or None
-    load_codes = list(dict.fromkeys(codes + ([benchmark] if benchmark else [])))
+    load_codes = codes + ([benchmark] if benchmark else [])
     panel = qa.load_panel_for_api(load_codes, p.get("start"), p.get("end"),
                                   p.get("adjust", "qfq"), p.get("data_mode", "auto"))
-    grids = {}
-    for k, v in (p.get("grids") or {}).items():
-        vals = v if isinstance(v, list) else [x for x in str(v).replace("，", ",").split(",") if x.strip()]
-        parsed = []
-        for x in vals:
-            try:
-                n = float(x)
-                parsed.append(int(n) if n == int(n) else n)
-            except ValueError:
-                parsed.append(x.strip())
-        grids[k] = parsed
+    grids = parse_grid(p.get("grids"))
     if not grids:
         raise ValueError("网格为空：WF 每折都要跑网格，至少给一个参数的候选值列表")
     n_combo = 1
@@ -170,14 +182,9 @@ def run_wf(p, qa):
     if n_combo > 60:
         raise ValueError(f"WF 网格组合数 {n_combo} > 60（每折都要全跑一遍），请收缩候选")
     base_desc = dict(p.get("strategy") or {})
-    fixed = dict(base_desc.get("params") or {})
 
     def build(**kw):   # walk_forward/grid_search 以 factory(**combo) kwargs 约定调用
-        desc = {"kind": base_desc.get("kind", "builtin"), "family": base_desc.get("family")}
-        desc["params"] = {**fixed, **kw}
-        if base_desc.get("kind") == "rule":
-            desc = {"kind": "rule", "spec": {**(base_desc.get("spec") or {}), **kw}}
-        return qa.build_strategy_from_desc(desc, panel.symbols)
+        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes)
 
     cfg = make_backtest_config(
         start=p.get("start"), end=p.get("end"),
@@ -197,15 +204,15 @@ def run_wf(p, qa):
     oos = res.oos_equity
     step = max(1, len(oos) // 240) if len(oos) else 1
     return {
-        "folds": qa._df_records(res.folds, cap=40),
+        "folds": df_records(res.folds, cap=40),
         "oos_curve": {"dates": [d.strftime("%Y-%m-%d") for d in oos.index][::step],
-                      "equity": [qa._jd(x) for x in oos.values][::step]},
-        "oos_metrics": {k: qa._jd(v) for k, v in (res.oos_metrics or {}).items()},
-        "overfit_ratio": qa._jd(res.overfit_ratio),
+                      "equity": [jd(x) for x in oos.values][::step]},
+        "oos_metrics": {k: jd(v) for k, v in (res.oos_metrics or {}).items()},
+        "overfit_ratio": jd(res.overfit_ratio),
         "rank_by": res.rank_by,
         "warmup_days": res.warmup_days,
-        "verdict": {k: qa._jd(v) for k, v in (res.verdict or {}).items()},
-        "param_stability": [{kk: qa._jd(vv) for kk, vv in row.items()} for row in (res.param_stability or [])],
+        "verdict": {k: jd(v) for k, v in (res.verdict or {}).items()},
+        "param_stability": [{kk: jd(vv) for kk, vv in row.items()} for row in (res.param_stability or [])],
         "warnings": qa.panel_warnings(panel),
     }
 
@@ -214,7 +221,7 @@ def run_refresh(p, qa):
     """本地缓存刷新：symbols 缺省 = data/cn_a/daily 全池。
     ⚠️ 引擎 export 是整文件重写不是增量合并——默认从 2018-01-01 全量重导（与引擎 CLI 同约定），
     绝不能只导最近窗口，否则会把多年缓存截断成几十行。"""
-    quant_api._import_engine()
+    import_engine()
     import glob
     from quant_sim.data.hithink import export_any
 
@@ -234,24 +241,6 @@ def run_refresh(p, qa):
             "before": before.get("latest"), "after": after.get("latest"),
             "note": "个股走本地 hithink DuckDB（秒级）；ETF/指数走远端 fund/index.history"}
 
-class _JD:
-    @staticmethod
-    def __call__(v):
-        try:
-            if v != v or v in (float("inf"), float("-inf")):
-                return None
-        except TypeError:
-            pass
-        if hasattr(v, "item"):
-            try:
-                return v.item()
-            except Exception:
-                pass
-        return v if isinstance(v, (str, int, float, bool, list, dict, type(None))) else str(v)
-
-
-_jd = _JD()
-
 
 def main():
     pfile, ofile = sys.argv[1], sys.argv[2]
@@ -268,10 +257,8 @@ def main():
     except Exception as e:
         out.update({"status": "error", "finished": _now(), "error": str(e)[:500],
                     "trace": traceback.format_exc()[-1500:]})
-    tmp = ofile + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, default=_jd)
-    os.replace(tmp, ofile)
+    # server 每几秒轮询本文件，必须原子写：直写的截断窗口会被 job_get 读到半截 JSON
+    fsutil.save_json_atomic(ofile, out, default=jd)
 
 
 if __name__ == "__main__":

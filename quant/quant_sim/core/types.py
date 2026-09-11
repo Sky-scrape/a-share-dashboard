@@ -86,10 +86,6 @@ class Bar:
     def is_valid(self) -> bool:
         return (not self.suspended) and self.close > 0 and self.volume > 0
 
-    @property
-    def pct_chg(self) -> float:
-        return self.close / self.pre_close - 1.0 if self.pre_close else 0.0
-
 
 class BarPanel:
     """多标的日线容器（列式存储）。
@@ -258,19 +254,11 @@ class BarPanel:
         return i
 
     def bars(self, date) -> Dict[str, Bar]:
-        """某交易日全部有效标的的 Bar（引擎主循环调用）。"""
+        """某交易日全部有效标的的 Bar（报告导出/测试用；引擎主循环走 bars_view 懒构造）。"""
         i = self.date_index(date)
-        return self.bars_at(i)
-
-    def bars_view(self, i: int) -> "BarsView":
-        """当日 Bar 的**懒构造只读视图**：500 标的×数千日的回测里，策略/撮合每日
-        只摸几只，不应物化 500 个 Bar 对象（实测 bars_at 全量构造占主循环一半耗时）。"""
-        return BarsView(self, i)
-
-    def bars_at(self, i: int) -> Dict[str, Bar]:
         a = self.arrays
         out: Dict[str, Bar] = {}
-        date = self.dates[i]
+        date_ts = self.dates[i]
         for j, symbol in enumerate(self.symbols):
             close = a["close"][i, j]
             if np.isnan(close):
@@ -280,7 +268,7 @@ class BarPanel:
             pre_close = a["pre_close"][i, j]
             out[symbol] = Bar(
                 symbol=symbol,
-                date=date,
+                date=date_ts,
                 open=float(a["open"][i, j]),
                 high=float(a["high"][i, j]),
                 low=float(a["low"][i, j]),
@@ -292,6 +280,11 @@ class BarPanel:
                 is_st=bool(a["is_st"][i, j]),
             )
         return out
+
+    def bars_view(self, i: int) -> "BarsView":
+        """当日 Bar 的**懒构造只读视图**：500 标的×数千日的回测里，策略/撮合每日
+        只摸几只，不应物化 500 个 Bar 对象（实测全量构造占主循环一半耗时）。"""
+        return BarsView(self, i)
 
     def price_at(self, i: int, symbol: str, field: str = "close") -> Optional[float]:
         j = self._col.get(symbol)
@@ -344,10 +337,6 @@ class Side(str, Enum):
     BUY = "buy"
     SELL = "sell"
 
-    @property
-    def sign(self) -> int:
-        return 1 if self is Side.BUY else -1
-
 
 class OrderType(str, Enum):
     MARKET = "market"
@@ -380,10 +369,6 @@ class Order:
         self.side = Side(self.side)
         self.order_type = OrderType(self.order_type)
         self.quantity = int(self.quantity)
-
-    @property
-    def tag(self) -> str:
-        return f"{self.symbol}.{'B' if self.side is Side.BUY else 'S'}#{self.id}"
 
 
 @dataclass
@@ -473,7 +458,7 @@ class Trade:
 
 
 class BarsView(Mapping):
-    """某交易日 Bar 的懒构造只读视图（Mapping 接口，兼容 bars_at 的 dict 用法）。
+    """某交易日 Bar 的懒构造只读视图（Mapping 接口，兼容全量 Bar dict 的用法）。
 
     存在的意义：主循环每日只应为用户真正查询的标的付 Bar 构造成本。
     keys/__iter__/valid_symbols/fill_last_prices 全部走 numpy 掩码，不构造 Bar；

@@ -15,8 +15,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
-from pathlib import Path
+
+_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
+import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 
 _EXE = None
 
@@ -118,9 +123,7 @@ def catalog(tag, cache_dir=None, cache_days=7):
     items = d.get("item") or []
     if cache_file and items:
         os.makedirs(cache_dir, exist_ok=True)
-        Path(cache_file).write_text(
-            json.dumps({"ts": time.time(), "items": items}, ensure_ascii=False),
-            encoding="utf-8")
+        fsutil.save_json_atomic(cache_file, {"ts": time.time(), "items": items})
     return items
 
 
@@ -147,7 +150,5 @@ def symbol_names(cache_dir=None, cache_days=1):
         offset += len(batch)
     if cache_file and names:
         os.makedirs(cache_dir, exist_ok=True)
-        Path(cache_file).write_text(
-            json.dumps({"ts": time.time(), "names": names}, ensure_ascii=False),
-            encoding="utf-8")
+        fsutil.save_json_atomic(cache_file, {"ts": time.time(), "names": names})
     return names

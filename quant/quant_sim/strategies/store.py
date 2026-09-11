@@ -20,12 +20,87 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .. import paths as _paths
+from ..core.fsutil import save_json_atomic
 
-_BUILTIN_FAMILIES = {
-    "dual_ma": "quant_sim.strategies:DualMAStrategy",
-    "momentum": "quant_sim.strategies:MomentumRankingStrategy",
-    "meanrev": "quant_sim.strategies:MeanReversionStrategy",
+def _build_dual_ma(params: dict, codes: Optional[List[str]]):
+    """dual_ma 族参数适配（原 quant_api if-chain 收编）：标的缺省取池首、参数清洗与校验。"""
+    from .moving_average import DualMAStrategy
+
+    sym = params.pop("symbol", None) or (codes[0] if codes else None)
+    if not sym:
+        raise ValueError("双均线策略需要标的（标的池第一只或 params.symbol）")
+    fast, slow = int(params.get("fast", 20)), int(params.get("slow", 60))
+    if fast >= slow:
+        raise ValueError(f"fast({fast}) 必须小于 slow({slow})")
+    if not params.get("atr_stop"):
+        params.pop("atr_stop", None)
+    return DualMAStrategy(symbol=sym, **params)
+
+
+def _build_momentum(params: dict, codes: Optional[List[str]]):
+    from .momentum_ranking import MomentumRankingStrategy
+
+    uni = params.pop("universe", None) or codes
+    if len(uni) < 2:
+        raise ValueError("动量轮动至少需要 2 只标的池")
+    return MomentumRankingStrategy(universe=list(uni), **params)
+
+
+def _build_meanrev(params: dict, codes: Optional[List[str]]):
+    from .mean_reversion import MeanReversionStrategy
+
+    sym = params.pop("symbol", None) or (codes[0] if codes else None)
+    if not sym:
+        raise ValueError("均值回归策略需要标的")
+    return MeanReversionStrategy(symbol=sym, **params)
+
+
+#: 内置策略族注册表——**单一事实源**：
+#:   * 构建：build_saved 与 quant_api.build_strategy_from_desc 都走 build(params, codes)；
+#:   * 描述：quant_api.meta() 的表单（label/params）从这里派生。
+#: cls 为「模块:类名」字符串（延迟导入，供既有引用与存档回放）；build 收编了原先
+#: 散在 quant_api if-chain 里的每族适配（标的缺省、参数清洗、校验），三条构造路径永不漂移。
+BUILTIN_FAMILIES: Dict[str, dict] = {
+    "dual_ma": {
+        "cls": "quant_sim.strategies:DualMAStrategy",
+        "label": "双均线趋势（单标的）",
+        "params": [
+            {"k": "fast", "label": "快线 EMA/SMA 周期", "type": "int", "default": 20, "min": 3, "max": 120},
+            {"k": "slow", "label": "慢线周期", "type": "int", "default": 60, "min": 5, "max": 250},
+            {"k": "target_weight", "label": "目标仓位", "type": "float", "default": 0.95, "min": 0.05, "max": 1.0, "step": 0.05},
+            {"k": "atr_stop", "label": "ATR 移动止损倍数（0=关）", "type": "float", "default": 0, "min": 0, "max": 10, "step": 0.5},
+        ],
+        "build": _build_dual_ma,
+    },
+    "momentum": {
+        "cls": "quant_sim.strategies:MomentumRankingStrategy",
+        "label": "ETF 动量轮动（多标的）",
+        "params": [
+            {"k": "lookback", "label": "动量回看（日）", "type": "int", "default": 60, "min": 20, "max": 250},
+            {"k": "top_n", "label": "持有前 N 名", "type": "int", "default": 2, "min": 1, "max": 5},
+            {"k": "monthly", "label": "月度调仓（否则每日）", "type": "bool", "default": True},
+            {"k": "abs_momentum", "label": "绝对动量过滤（负动量不持有）", "type": "bool", "default": True},
+            {"k": "weight_per_slot", "label": "每槽仓位", "type": "float", "default": 0.48, "min": 0.05, "max": 1.0, "step": 0.02},
+            {"k": "skip_recent", "label": "跳过最近 N 日（防短期反转）", "type": "int", "default": 0, "min": 0, "max": 20},
+        ],
+        "build": _build_momentum,
+    },
+    "meanrev": {
+        "cls": "quant_sim.strategies:MeanReversionStrategy",
+        "label": "均值回归分批抄底（单标的）",
+        "params": [
+            {"k": "window", "label": "均线窗口", "type": "int", "default": 20, "min": 5, "max": 60},
+            {"k": "num_std", "label": "买入带（N 倍标准差）", "type": "float", "default": 2.0, "min": 0.5, "max": 4, "step": 0.25},
+            {"k": "max_batches", "label": "最大分批数", "type": "int", "default": 4, "min": 1, "max": 6},
+            {"k": "weight_per_batch", "label": "每批仓位", "type": "float", "default": 0.24, "min": 0.05, "max": 1.0, "step": 0.02},
+            {"k": "exit_to_mid", "label": "回到均线即离场", "type": "bool", "default": True},
+        ],
+        "build": _build_meanrev,
+    },
 }
+
+#: 旧名兼容别名（既有引用 _BUILTIN_FAMILIES[fam] 取「模块:类名」字符串处继续可用）
+_BUILTIN_FAMILIES = {k: v["cls"] for k, v in BUILTIN_FAMILIES.items()}
 
 
 def _safe(name: str) -> str:
@@ -92,8 +167,7 @@ def save_strategy(
         "created": created, "version": version,
         "updated": time.strftime("%Y-%m-%d %H:%M"),
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False, indent=2)
+    save_json_atomic(path, doc, indent=2)
     return path
 
 
@@ -160,14 +234,14 @@ def build_saved(s: SavedStrategy, universe: Optional[List[str]] = None, *, allow
         return build_user_strategy(s.payload["code"])
     if s.kind == "builtin":
         fam = s.payload.get("family")
-        ref = _BUILTIN_FAMILIES.get(fam)
+        ref = BUILTIN_FAMILIES.get(fam)
         if ref is None:
             raise ValueError(f"未知内置策略族 {fam}")
-        mod, cls = ref.split(":")
-        import importlib
-
-        klass = getattr(importlib.import_module(mod), cls)
-        return klass(**s.payload.get("params", {}))
+        # 与 quant_api.build_strategy_from_desc 同一构造路径（build 钩子）：
+        # 参数清洗/校验/标的缺省在「表单直连」与「存档回放」两路不再漂移
+        # （旧实现走 _BUILTIN_FAMILIES[fam].split(":") 直构，绕过了 build 适配）。
+        codes = list(s.payload.get("data_symbols") or []) or list(universe or [])
+        return ref["build"](dict(s.payload.get("params") or {}), codes)
     raise ValueError(f"未知类型 {s.kind}")
 
 

@@ -47,7 +47,13 @@ def uopen(url, **kwargs):
     """urlopen 的回环白名单包装：smoke 的全部请求只允许打本机看板。
 
     URL 一律由 `base = http://127.0.0.1:{port}` 拼接而来，校验 schema/host
-    防拼接偏航（安全扫描口径），行为与直连 urlopen 完全一致。"""
+    防拼接偏航（安全扫描口径），行为与直连 urlopen 完全一致。
+    Request 对象校验后必须原样传递——2026-09-10 修：此前把 Request 换成
+    full_url 字符串再 urlopen，POST 被静默降级成 GET（e96845b 回归，
+    watchlist/quant 系 POST 断言全部打在 GET 路由上）。"""
+    if isinstance(url, urllib.request.Request):
+        _loopback_url(url.full_url)
+        return urllib.request.urlopen(url, **kwargs)
     return urllib.request.urlopen(_loopback_url(url), **kwargs)
 
 
@@ -146,7 +152,7 @@ def main():
         check("轮动定格点（11:30/15:00）并入 daily 时间轴（尾部缺 15:00 防回退）",
               'for stamp in ("11:30", "15:00"):' in _tcs and "used = sorted(used + [frz[-1]]" in _tcs)
         check("轮动整轮空重试（上游抖动不留永久分钟洞）",
-              "for attempt in (1, 2):" in _tcs and "time.sleep(5)" in _tcs)
+              "_EmptyRound" in _tcs and "retry_on=_judge" in _tcs and "tries=1" in _tcs)
         check("rotation 断流自愈：stall+锁心跳断 6 分钟摘死锁拉起常驻循环（交易时段+日历 fail-closed）",
               "_maybe_auto_rotation_revive" in _srv2 and "lock_age < 360" in _srv2
               and '("09:36" <= hm <= "14:55")' in _srv2
@@ -291,8 +297,8 @@ def main():
               and "东财分时" not in rec_html and "近似匹配" not in rec_html)
         check("点数不足时有诚实空态而非静默空白", "chartNote" in rot_html and "无法成线" in rot_html
               and "暂无完整的盘中采集日" in rot_html)
-        check("隔夜外围条带有自动重拉+陈旧警示（不再只启动渲染一次）",
-              "setInterval(renderOvernight" in rot_html and "visibilitychange" in rot_html
+        check("隔夜外围条带有自动重拉+陈旧警示（后台标签 hidden 门 + 回前台立即补拉）",
+              "document.hidden) renderOvernight()" in rot_html and "visibilitychange" in rot_html
               and "数据陈旧" in rot_html)
         check("曲线空态恢复走 notMerge 重建（ECharts clear 后 merge 丢配置）",
               "curveBaseOption" in rot_html and "setOption(curveBaseOption(), true)" in rot_html)
@@ -393,7 +399,12 @@ def main():
         # ⑥ 明日备选池：容器/渲染器/注册/后端引擎（防结构回退）
         check("recap 明日备选池容器+渲染器", 'id="poolBox"' in rp and "function renderPool(" in rp
               and "[renderPool, \"poolBox\"]" in rp)
-        sp_src2 = open(os.path.join(ROOT, "backend", "recap", "speculate.py"), encoding="utf-8").read()
+        # 投机引擎 2026-09-10 拆为门面 speculate.py + spec_*.py 六模块（行为不变）：
+        # 源码文本断言改为读门面与全部子模块的拼接源码，断言本身一条不改
+        sp_src2 = "\n".join(
+            open(os.path.join(ROOT, "backend", "recap", _f), encoding="utf-8").read()
+            for _f in ("speculate.py", "spec_rules.py", "spec_series.py", "spec_duckdb.py",
+                       "spec_builders.py", "spec_pool.py", "spec_validate.py"))
         check("备选池后端引擎 build_pool", "def build_pool(" in sp_src2 and 'data["pool"]' in sp_src2
               and "_MF_QUOTA" in sp_src2 and "scan_trend(" in sp_src2)
         check("备选池 M_Final 主板口径+双组+负面清单", '"涨停组"' in sp_src2 and '"非涨停组"' in sp_src2
@@ -483,7 +494,7 @@ def main():
               "在榜" in rp and "近10日在榜≥4日" in rp
               and "连续≥3日" not in rp and "100%=完全换血" not in rp)
         # 投机分析后端契约：口径常量（防阈值/基准被改动）、providers 接线、registry 收录
-        sp_src = open(os.path.join(ROOT, "backend", "recap", "speculate.py"), encoding="utf-8").read()
+        sp_src = sp_src2   # 拼接源码同上（门面 + spec_* 六模块）
         check("投机偏离阈值口径冻结", "SEVERE_D10 = 100.0" in sp_src and "SEVERE_D30 = 200.0" in sp_src
               and '"10cm": 20.0' in sp_src and '"20cm": 30.0' in sp_src)
         check("投机基准指数口径", '"000001.SH"' in sp_src and '"399001.SZ"' in sp_src)
@@ -518,6 +529,20 @@ def main():
               and all(("function esc" not in s and "const esc" not in s and "esc1" not in s)
                       for s in _esc_holders + _esc_libs)
               and all("util.js" in s for s in _esc_holders))
+        # 2026-09-10 事故防回退：lib 别名若用 const/let/var 绑定，而该名字在本文件
+        # 更早处已被引用，就会踩 TDZ——global 页 fmtCn 曾因此在顶层 tickClocks() 抛
+        # ReferenceError，整页初始化中断（地图永远停在「加载中」）。别名须用函数声明（提升）。
+        _tzd_bad = []
+        for _rel in ("index.html", "recap/index.html", "auction/index.html",
+                     "global/index.html", "quant/index.html"):
+            _ls = open(os.path.join(ROOT, "web", _rel), encoding="utf-8").read().splitlines()
+            for _i, _ln in enumerate(_ls):
+                for _m in re.finditer(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*AK(?:THEME)?\.[\w.]+", _ln):
+                    _n = _m.group(1)
+                    if any(re.search(r"\b" + re.escape(_n) + r"\b", _l) for _l in _ls[:_i]):
+                        _tzd_bad.append(f"{_rel}:{_i + 1} {_n}")
+        check("五页 lib 别名均为函数声明（早于声明的 const 绑定会踩 TDZ，2026-09-10 事故）",
+              not _tzd_bad, str(_tzd_bad))
         _tok = open(os.path.join(ROOT, "web", "lib", "tokens.css"), encoding="utf-8").read()
         check("移动端顶栏/面板头换行适配在（2026-09-03 手机适配防回退）",
               "header.appbar { flex-wrap: wrap" in _tok and ".panel .head b" in _tok)
@@ -694,9 +719,7 @@ def main():
               and "snapio.list_dates" in pex_src)                   # 上一交易日快照单一入口
         check("执行层常量单一来源 execution_layer.py",
               os.path.isfile(os.path.join(ROOT, "backend", "execution_layer.py"))
-              and "execution_layer.MF_BUY" in open(os.path.join(ROOT, "backend", "recap",
-                                                                 "speculate.py"),
-                                                   encoding="utf-8").read())
+              and "execution_layer.MF_BUY" in sp_src2)   # 拼接源码（赋值现居 spec_validate.py）
         check("auction 页强弱转换起点不锁第一轮（首轮 not_ready 不再把面板转空）",
               "startMin" in ap and "rounds[0].items" not in
               ap.split("function renderFlip")[1].split('$("flipSeg")')[0])
@@ -965,7 +988,7 @@ def main():
               "auction", "auc_collector.py")) and os.path.isfile(os.path.join(ROOT, "backend",
               "auction", "auction_task.bat")))
 
-        # 观察池写入契约：归一化 + 不静默丢错代码 + 不冲掉注释（跑完按原文恢复，不弄脏用户自选）
+        # 观察池：代码映射（契约单一来源 auc_config/thscodes）
         sys.path.insert(0, os.path.join(ROOT, "backend", "auction"))
         import auc_config as auc_c  # noqa: E402
         check("代码映射覆盖北交所/B股/ETF（不会把 920xxx 归为沪B而丢出池）",
@@ -973,20 +996,57 @@ def main():
                   ("920819", "920819.BJ"), ("830799", "830799.BJ"), ("430047", "430047.BJ"),
                   ("900901", "900901.SH"), ("200011", "200011.SZ"), ("510300", "510300.SH"),
                   ("159915", "159915.SZ"), ("sh600000", "600000.SH"), ("6005", None), ("abc", None))))
-        wl_path = os.path.join(ROOT, "data", "auction", "watchlist.txt")
-        wl_raw0 = open(wl_path, encoding="utf-8").read() if os.path.isfile(wl_path) else ""
-        try:
-            st, w = post(base, "/api/auction/watchlist",
-                         {"text": "# 测试注释\n600519 茅台 920819\n"})
-            check("观察池 POST 返回 codes/invalid", st == 200 and w.get("codes") == ["600519.SH", "920819.BJ"]
-                  and w.get("invalid") == ["茅台"] and w.get("invalid_total") == 1, str(w)[:140])
-            check("观察池保存不丢注释行",
-                  "# 测试注释" in open(wl_path, encoding="utf-8").read())
-        finally:
-            post(base, "/api/auction/watchlist", {"text": wl_raw0})
-        check("观察池已恢复原文",
-              [x for x in open(wl_path, encoding="utf-8").read().splitlines() if not x.startswith("#")] ==
-              [x for x in wl_raw0.splitlines() if not x.startswith("#")])
+        # 观察池写入契约：归一化 + 不静默丢错代码 + 不冲掉注释。
+        # 2026-09-10 改造：此前经真实服务 POST 直改 data/auction/watchlist.txt 再恢复，
+        # smoke 中途崩溃（杀进程/断电）会把用户自选留在测试文本上。现在改为临时目录 +
+        # 注入路径（monkeypatch auc_config 的 DATA_DIR/WATCHLIST_TXT 模块常量）在进程内
+        # 验证同一对函数——POST 路由（server.py post_auction_watchlist）调用的就是
+        # parse_watchlist + write_watchlist 这两个，返回契约逐字段一致，全程不碰真实自选。
+        import tempfile
+        with tempfile.TemporaryDirectory() as _wl_dir:
+            _real_wl_dir, _real_wl_txt = auc_c.DATA_DIR, auc_c.WATCHLIST_TXT
+            auc_c.DATA_DIR = _wl_dir
+            auc_c.WATCHLIST_TXT = os.path.join(_wl_dir, "watchlist.txt")
+            try:
+                _text = "# 测试注释\n600519 茅台 920819\n"
+                _invalid = auc_c.parse_watchlist(_text)[1]
+                _codes = auc_c.write_watchlist(_text)
+                check("观察池归一化 codes/invalid（与 POST 路由同一对函数、同一契约）",
+                      _codes == ["600519.SH", "920819.BJ"] and _invalid == ["茅台"]
+                      and len(_invalid) == 1, f"{_codes} {_invalid}")
+                check("观察池保存不丢注释行",
+                      "# 测试注释" in open(auc_c.WATCHLIST_TXT, encoding="utf-8").read())
+                # 路由层契约（2026-09-11 补回：2026-09-10 改进程内直测后曾失去覆盖）。
+                # 进程内直调 Handler.post_auction_watchlist（_body/_json 打桩），
+                # 写盘经上面注入的临时目录，不碰真实自选、不占端口。
+                if ROOT not in sys.path:
+                    sys.path.insert(0, ROOT)
+                import server as ak_server   # noqa: E402  仅导入（启动在 __main__ 守卫内）
+                _h = ak_server.Handler.__new__(ak_server.Handler)
+
+                def _call_route(body):
+                    _cap = {}
+                    _h._body = lambda: body
+                    _h._json = lambda obj, status=200: _cap.update(obj=obj, status=status)
+                    ak_server.Handler.post_auction_watchlist(_h)
+                    return _cap["status"], _cap["obj"]
+
+                _st, _obj = _call_route({"text": _text})
+                check("观察池 POST 路由 200 契约（codes/total/invalid 截断/note）",
+                      _st == 200 and _obj.get("codes") == ["600519.SH", "920819.BJ"]
+                      and _obj.get("total") == 2 and _obj.get("invalid") == ["茅台"]
+                      and _obj.get("invalid_total") == 1 and "note" in _obj, str(_obj)[:80])
+                _st400, _obj400 = _call_route({"text": 12345})
+                check("观察池 POST 路由非字符串 text → 400 结构化错误",
+                      _st400 == 400 and "error" in _obj400, str(_obj400)[:80])
+                _many_bad = " ".join(f"bad{i:02d}" for i in range(25)) + " 600519"
+                _st_tr, _obj_tr = _call_route({"text": _many_bad})
+                check("观察池 POST 路由 invalid 只下发前 20 且给 total（25 个坏 token）",
+                      _st_tr == 200 and len(_obj_tr.get("invalid") or []) == 20
+                      and _obj_tr.get("invalid_total") == 25
+                      and _obj_tr.get("codes") == ["600519.SH"], str(_obj_tr)[:100])
+            finally:
+                auc_c.DATA_DIR, auc_c.WATCHLIST_TXT = _real_wl_dir, _real_wl_txt
 
         # ---- 量化工作台（引擎内置）----
         st, qt_meta = get(base, "/api/quant/meta")

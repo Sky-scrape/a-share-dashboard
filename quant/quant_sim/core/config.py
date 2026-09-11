@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List, Optional
+
+from .cost import CostModel
 
 __all__ = ["CostConfig", "SlippageConfig", "RiskConfig", "BacktestConfig", "DEFAULT_TRADING_DAYS"]
 
 DEFAULT_TRADING_DAYS = 244  # A 股年均交易日（2023 年为 242，取 244 作惯例口径）
 
+#: 费率默认值的**单一事实源**：CostConfig 与 CostModel 两套构造路径都从这里取值，
+#: 修改默认费率只改 CostModel 一处，两条路径永不漂移。
+_COST_DEFAULTS = CostModel()
+
 
 @dataclass
 class CostConfig:
-    buy_rate: float = 2.5e-4
-    sell_rate: float = 2.5e-4
-    min_commission: float = 5.0
-    stamp_tax_rate_sell: float = 5e-4
-    transfer_fee_rate: float = 1e-5
-    other_fee_rate: float = 0.0
-    fund_rate: float = 2.5e-4
-    fund_min_commission: float = 0.0
+    #: 默认值全部引用 CostModel 实例字段（单一来源，见模块顶注释）
+    buy_rate: float = _COST_DEFAULTS.buy_commission_rate
+    sell_rate: float = _COST_DEFAULTS.sell_commission_rate
+    min_commission: float = _COST_DEFAULTS.min_commission
+    stamp_tax_rate_sell: float = _COST_DEFAULTS.stamp_tax_rate_sell
+    transfer_fee_rate: float = _COST_DEFAULTS.transfer_fee_rate
+    other_fee_rate: float = _COST_DEFAULTS.other_fee_rate
+    fund_rate: float = _COST_DEFAULTS.fund_commission_rate
+    fund_min_commission: float = _COST_DEFAULTS.fund_min_commission
 
 
 @dataclass
@@ -87,7 +94,6 @@ class BacktestConfig:
     liquidate_on_end: bool = True
     #: 买入现金校验的预估缓冲：按 收盘价×(1+费率)×本系数 缩量，覆盖次日开盘跳空
     cash_demand_pct: float = 1.002
-    extra: Dict[str, object] = field(default_factory=dict)
 
     def normalized(self) -> "BacktestConfig":
         self.execution = (self.execution or "next_open").lower()

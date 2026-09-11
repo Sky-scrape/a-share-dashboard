@@ -256,13 +256,20 @@ def _key(op: dict) -> str:
     return json.dumps(op, sort_keys=True)
 
 
-def _series(op: dict, df: pd.DataFrame, cache: Dict[str, object]) -> object:
+def _series(op: dict, df: pd.DataFrame, cache) -> object:
+    """在历史 bar 上求操作数（NaN 前缀保留，交叉判定用最后两点）。
+
+    cache 是策略实例级缓存的「本 bar 视图」（_InstanceOpCache）：同窗口的指标
+    序列跨 bar / 跨 entry-exit 复用，窗口一变即整体重算（见 _InstanceOpCache）。
+    """
     if op.get("t") == "const":
         return float(op["v"])
     k = _key(op)
-    if k not in cache:
-        cache[k] = _compute(op, df)
-    return cache[k]
+    hit = cache.get(k)
+    if hit is None:
+        hit = _compute(op, df)
+        cache.set(k, hit)
+    return hit
 
 
 def _last2(v):
@@ -315,11 +322,36 @@ def _eval_cond(cond: dict, df: pd.DataFrame, cache: Dict[str, object]) -> bool:
     raise ValueError(f"未知操作符 {op}")
 
 
-def _rule_ok(rule: Optional[dict], df: pd.DataFrame, cache: Dict[str, object]) -> bool:
+def _rule_ok(rule: Optional[dict], df: pd.DataFrame, cache) -> bool:
     if not rule or not rule.get("conds"):
         return False
     results = [_eval_cond(c, df, cache) for c in rule["conds"]]
     return all(results) if rule.get("mode", "all") == "all" else any(results)
+
+
+class _InstanceOpCache:
+    """策略实例级 (symbol, op)→指标序列 缓存的「单 bar 视图」（对 _series 呈 dict 形态）。
+
+    每根 bar 对每只标的物化 history、全量重算一遍指标是规则策略的主要开销。
+    缓存提升到策略实例级后，同一窗口（同末日+同行数）的序列——entry 与 exit
+    共享操作数、以及同窗口重复求值——跨 bar 零成本复用。窗口一滑动立即整体
+    重算并覆盖：ewm 类指标（ema/macd）是全序列递归，尾部截断近似会有浮点差，
+    为保回测语义逐位一致，这里明确不做增量近似。
+    """
+
+    __slots__ = ("_store", "_prefix", "_tag")
+
+    def __init__(self, store: Dict[str, tuple], symbol: str, hist: pd.DataFrame) -> None:
+        self._store = store
+        self._prefix = f"{symbol}\x00"
+        self._tag = (hist.index[-1], len(hist))
+
+    def get(self, key: str):
+        hit = self._store.get(self._prefix + key)
+        return hit[1] if hit is not None and hit[0] == self._tag else None
+
+    def set(self, key: str, value) -> None:
+        self._store[self._prefix + key] = (self._tag, value)
 
 
 # ------------------------------------------------------------------ 策略
@@ -357,11 +389,18 @@ class GenericRuleStrategy(Strategy):
         self.trailing_pct = float(trailing_pct)
         self._peak: Dict[str, float] = {}
         self._look = max(_needed_bars(*_collect_ops({"entry": self.entry, "exit": self.exit})), 30)
+        # 实例级指标缓存：key=(symbol, op 规范 JSON)，value=((窗口末日, 行数), 序列)。
+        # on_start 时清空——同一策略实例可能被复用于不同面板/区间（如信号链路先跑
+        # 历史再取信号），窗口形状相同也可能对应不同数据，必须以运行为界失效。
+        self._ind_cache: Dict[str, tuple] = {}
         self.params = {
             "symbols": self.symbols, "target_weight": self.target_weight,
             "stop_loss_pct": self.stop_loss_pct, "take_profit_pct": self.take_profit_pct,
             "trailing_pct": self.trailing_pct,
         }
+
+    def on_start(self, ctx) -> None:
+        self._ind_cache = {}   # 每次回测运行开始清空实例级指标缓存（防跨运行脏复用）
 
     def on_bar(self, ctx) -> None:
         for s in self.symbols:
@@ -389,7 +428,7 @@ class GenericRuleStrategy(Strategy):
             hist = ctx.history(s, self._look)
             if hist is None or len(hist) < self._look * 0.6:
                 continue
-            cache: Dict[str, object] = {}
+            cache = _InstanceOpCache(self._ind_cache, s, hist)
             if holding:
                 if not self._peak.get(s):
                     self._peak[s] = px_now or self._peak.get(s, 0)

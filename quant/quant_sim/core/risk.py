@@ -107,6 +107,7 @@ class RiskManager:
             return RiskVerdict(False, 0, "下单数量必须为正")
         closing = False
         qty = int(order.quantity)
+        original_qty = qty   # 风控缩量的判定基准：任何 clone 之前的原始申请量
         if order.side is Side.SELL:
             if position_available <= 0:
                 return RiskVerdict(False, 0, "无可卖持仓（T+1 限制或空仓）")
@@ -159,8 +160,11 @@ class RiskManager:
             if affordable <= 0:
                 return RiskVerdict(False, 0, f"现金不足：约需 {qty * price_est:,.2f}，可用 {cash:,.2f}")
             qty = affordable
+        # 先与原始申请量比较、再 clone：旧写法 clone 后才判 `qty < order.quantity`
+        # 恒为 False，「风控缩量」的 reason 永远上不了报。
+        shrunk = qty < original_qty
         order = _clone(order, qty)
-        if qty < order.quantity:
+        if shrunk:
             return RiskVerdict(True, qty, f"风控缩量至 {qty}")
         return RiskVerdict(True, qty, "")
 

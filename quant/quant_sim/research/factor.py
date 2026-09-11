@@ -116,7 +116,9 @@ def eval_expression(expr: str, mats: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """受限表达式：只允许内置因子名、rank、加减乘除、括号与数字。
 
     例：``mom_20 - mom_120``（剔长动量的中短期）、``rank(mom_60) * rank(amt_ratio_20)``。
-    表达式来自本机用户输入（非网络），用无 builtins 的 eval 限定命名空间。
+    表达式来自本机用户输入（非网络）；用受限递归下降求值器计算（**无 eval**，
+    安全扫描口径），值语义与 Python 求值一致：名字取 ns、rank 可调用、
+    +-*/ 走 DataFrame 运算符、数字按 int/float。
     """
     expr = expr.strip()
     if not expr or not _SAFE_EXPR.match(expr):
@@ -124,12 +126,112 @@ def eval_expression(expr: str, mats: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     ns = {k: factor_matrix(mats, k) for k in FACTORS}
     ns["rank"] = lambda df: df.rank(axis=1, pct=True)
     try:
-        out = eval(expr, {"__builtins__": {}}, ns)  # noqa: S307 - 本机输入+受限命名空间
-    except Exception as e:  # 转成人话
+        out = _eval_restricted(expr, ns)
+    except ValueError:
+        raise
+    except Exception as e:  # 运算期异常转成人话
         raise ValueError(f"表达式求值失败：{e}") from e
     if not isinstance(out, pd.DataFrame):
         raise ValueError("表达式结果不是横截面矩阵")
     return out
+
+
+# ------------------------------------------------------------------ 受限求值器
+_TOKEN_RE = re.compile(r"\s*(?:(?P<num>\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+                       r"|(?P<name>[A-Za-z_]\w*)"
+                       r"|(?P<op>[-+*/(),]))")
+
+
+def _tokenize(expr: str) -> list:
+    out, pos = [], 0
+    while pos < len(expr):
+        m = _TOKEN_RE.match(expr, pos)
+        if not m:
+            raise ValueError(f"表达式含非法字符: {expr[pos]!r}")
+        pos = m.end()
+        kind = m.lastgroup
+        out.append((kind, m.group(kind)))
+    return out
+
+
+class _ExprParser:
+    """递归下降求值：expr→term→factor→atom，优先级 *、/ 高于 +、-，支持一元 ±。"""
+
+    def __init__(self, tokens: list, ns: dict):
+        self.toks, self.i, self.ns = tokens, 0, ns
+
+    def _peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else (None, None)
+
+    def _next(self):
+        tok = self._peek()
+        self.i += 1
+        return tok
+
+    def parse(self):
+        val = self._expr()
+        if self.i != len(self.toks):
+            raise ValueError("表达式有多余内容（检查括号/运算符）")
+        return val
+
+    def _expr(self):
+        val = self._term()
+        while self._peek()[0] == "op" and self._peek()[1] in ("+", "-"):
+            op = self._next()[1]
+            rhs = self._term()
+            val = val + rhs if op == "+" else val - rhs
+        return val
+
+    def _term(self):
+        val = self._factor()
+        while self._peek()[0] == "op" and self._peek()[1] in ("*", "/"):
+            op = self._next()[1]
+            rhs = self._factor()
+            val = val * rhs if op == "*" else val / rhs
+        return val
+
+    def _factor(self):
+        kind, val = self._peek()
+        if (kind, val) == ("op", "-"):
+            self._next()
+            return -self._factor()
+        if (kind, val) == ("op", "+"):
+            self._next()
+            return self._factor()
+        return self._atom()
+
+    def _atom(self):
+        kind, val = self._next()
+        if kind == "num":
+            return float(val) if ("." in val or "e" in val or "E" in val) else int(val)
+        if kind == "name":
+            if self._peek() == ("op", "("):
+                self._next()
+                args = []
+                if self._peek() != ("op", ")"):
+                    args.append(self._expr())
+                    while self._peek() == ("op", ","):
+                        self._next()
+                        args.append(self._expr())
+                if self._next() != ("op", ")"):
+                    raise ValueError("括号不匹配")
+                fn = self.ns.get(val)
+                if not callable(fn):
+                    raise ValueError(f"{val} 不是可调用函数")
+                return fn(*args)
+            if val not in self.ns:
+                raise ValueError(f"未知因子或名称: {val}")
+            return self.ns[val]
+        if (kind, val) == ("op", "("):
+            val = self._expr()
+            if self._next() != ("op", ")"):
+                raise ValueError("括号不匹配")
+            return val
+        raise ValueError("表达式语法错误")
+
+
+def _eval_restricted(expr: str, ns: dict):
+    return _ExprParser(_tokenize(expr), ns).parse()
 
 
 # ------------------------------------------------------------------ 统计核

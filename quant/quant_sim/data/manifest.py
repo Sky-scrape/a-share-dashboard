@@ -17,6 +17,8 @@ import os
 import time
 from typing import Dict, Optional
 
+from ..core.fsutil import save_json_atomic
+
 MANIFEST_NAME = "_manifest.json"
 
 
@@ -45,8 +47,7 @@ def update_manifest(dir_path: str, entries: Dict[str, dict]) -> None:
     for fname, meta in entries.items():
         merged[fname] = meta
     try:
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(merged, f, ensure_ascii=False, indent=1, sort_keys=True)
+        save_json_atomic(p, merged, indent=1, sort_keys=True)
     except OSError:
         pass  # 只读目录等极端情况：数据本身已落盘，不因元信息失败而炸导出
 

@@ -19,16 +19,20 @@
                                                     # build(force=False) 新鲜时 no-op、失败留日志不阻断）
     from concept_map import load                    # 消费方只读映射
 """
-import gzip
 import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(HERE))
+if _BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, _BACKEND_ROOT)
 
-import ht  # noqa: E402
+import ht       # noqa: E402
+import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 
 PATH = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                     "data", "recap", "concept_map.json")
@@ -66,10 +70,7 @@ def _archive(doc):
         os.makedirs(ARCHIVE_DIR, exist_ok=True)
         day = time.strftime("%Y%m%d")
         fp = os.path.join(ARCHIVE_DIR, f"concept_map_{day}.json.gz")
-        tmp = fp + ".tmp"
-        with gzip.open(tmp, "wt", encoding="utf-8") as f:
-            json.dump(doc, f, ensure_ascii=False)
-        os.replace(tmp, fp)
+        fsutil.save_gzip_json_atomic(fp, doc)
         olds = sorted(f for f in os.listdir(ARCHIVE_DIR)
                       if f.startswith("concept_map_") and f.endswith(".json.gz"))
         for name in olds[:-ARCHIVE_KEEP]:
@@ -83,7 +84,12 @@ def _archive(doc):
 
 
 def build(force=False, max_age_days=MAX_AGE_DAYS, log=None):
-    """全量重建；返回 (是否写入, 概念成功数/总数)。force=True 忽略新鲜度。"""
+    """全量重建；返回 (是否写入, 概念成功数/总数)。force=True 忽略新鲜度。
+
+    成分反查用 ThreadPoolExecutor(max_workers=8) 并发（与 providers 兜底自建、
+    boards 同套路）：390 个 ht 子进程从串行 ~10 分钟压到 ~1.5 分钟。单概念失败
+    跳过（结果按概念名归集，顺序无关）；进度日志按完成数打点。
+    """
     say = log or (lambda *a: None)
     if not force and os.path.exists(PATH):
         try:
@@ -102,41 +108,45 @@ def build(force=False, max_age_days=MAX_AGE_DAYS, log=None):
         except Exception:  # noqa: BLE001
             old_by_concept = {}
 
-    by_concept, failed = {}, []
-    for i, (code, name) in enumerate(cat):
+    def _fetch(item):
+        code, name = item
         try:
             d = ht.ht("index", "constituents", "--thscode", code, timeout=20)
             items = d.get("item") or []
             codes = sorted({str(m.get("thscode") or "").split(".")[0]
                             for m in items if m.get("thscode")})
+            return name, codes
+        except Exception:  # noqa: BLE001 - 单概念失败不中断
+            return name, []
+
+    by_concept, failed = {}, []
+    total = len(cat)
+    done = 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for name, codes in ex.map(_fetch, cat):
+            done += 1
             if codes:
                 by_concept[name] = codes
             else:
                 failed.append(name)
-        except Exception:  # noqa: BLE001 - 单概念失败不中断
-            failed.append(name)
-        if i % 40 == 0:
-            say(f"  concept_map {i}/{len(cat)} ok={len(by_concept)} fail={len(failed)}")
+            if done % 40 == 0 or done == total:
+                say(f"  concept_map {done}/{total} ok={len(by_concept)} fail={len(failed)}")
 
     # 失败概念沿用旧成员（成分漂移慢，宁旧勿缺）；失败面过大放弃覆盖
     for name in failed:
         if name in old_by_concept and old_by_concept[name]:
             by_concept[name] = old_by_concept[name]
-    if len(failed) > FAIL_RATIO_MAX * len(cat):
-        raise RuntimeError(f"概念成分失败面过大 {len(failed)}/{len(cat)}，放弃覆盖")
+    if len(failed) > FAIL_RATIO_MAX * total:
+        raise RuntimeError(f"概念成分失败面过大 {len(failed)}/{total}，放弃覆盖")
 
-    os.makedirs(os.path.dirname(PATH), exist_ok=True)
-    tmp = PATH + ".tmp"
     doc = {"ts": time.time(),
            "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-           "concepts_total": len(cat),
+           "concepts_total": total,
            "concepts_ok": len(by_concept),
            "by_concept": by_concept}
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(doc, f, ensure_ascii=False)
-    os.replace(tmp, PATH)
+    fsutil.save_json_atomic(PATH, doc)   # 原子写（临时文件 + replace，见 backend/fsutil.py）
     _archive(doc)
-    return True, (len(by_concept), len(cat))
+    return True, (len(by_concept), total)
 
 
 def load(max_age_days=MAX_AGE_DAYS):

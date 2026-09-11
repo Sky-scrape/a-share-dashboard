@@ -330,6 +330,23 @@ def test_validator_and_pool_exec_share_execution_layer():
     assert "execution_layer.MF_BUY" in open(pool_exec.__file__, encoding="utf-8").read()
 
 
+def test_backtest_proxy_constants_come_from_execution_layer():
+    """口径对齐（2026-09-10）：strategy-iter 可执行口径引用执行层单一来源、不得自带副本。
+
+    历史上 backtest_capital 手抄了一份常量，并把「买入触发过滤」low_min=-3% 误当出场
+    止损（执行层风险位实为 risk_low=-5% / risk_close=-4%）；本断言锁死该口径不再漂移。
+    """
+    import importlib.util
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = os.path.join(root, "strategy-iter", "scripts", "backtest_capital.py")
+    spec = importlib.util.spec_from_file_location("bt_under_test", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.LU == MF_BUY["lu"]
+    assert mod.NLU == MF_BUY["nlu"]
+
+
 # ---------------- pool_exec：昨日备选池 × 今日竞价执行判定 ----------------
 
 from pool_exec import _verdict  # noqa: E402
@@ -391,7 +408,7 @@ def test_pool_exec_clean_final_round_only():
 import speculate  # noqa: E402
 
 
-def _cf_pick(close, triggered=True, sc=None, buckets=()):
+def _c7_pick(close, triggered=True, sc=None, buckets=()):
     return {"close": close, "buy_triggered": triggered, "strong_concept": sc,
             "buckets": list(buckets)}
 
@@ -409,9 +426,9 @@ def test_oos_verdict_thresholds():
 
 def test_oos_state_mixed_rules_and_cum():
     track = {"validations": {
-        "20260907": {"rules": "cf", "picks": [_cf_pick(2.0), _cf_pick(-1.0, False, False, ["concept_cold"])]},
-        "20260908": {"rules": "mf", "picks": [_cf_pick(9.0)]},   # 旧线不计入样本外
-        "20260909": {"rules": "cf", "picks": [_cf_pick(1.0, sc=True)]},
+        "20260907": {"rules": "c7", "picks": [_c7_pick(2.0), _c7_pick(-1.0, False, False, ["concept_cold"])]},
+        "20260908": {"rules": "mf", "picks": [_c7_pick(9.0)]},   # 旧线不计入样本外
+        "20260909": {"rules": "c7", "picks": [_c7_pick(1.0, sc=True)]},
     }}
     o = speculate._oos_state(track)
     assert o["days"] == 2 and o["n"] == 3 and o["since"] == "20260907"
@@ -447,6 +464,50 @@ def test_val_attribute_concept_persistence_order():
                                     ind_pct=0.5, con_pct=None) == "资金承接不足"      # 缺失→后续归因
 
 
+def test_speculate_facade_reexports_are_single_source():
+    """门面必须纯转发（2026-09-11 补锁）：口径常量与子模块定义是同一对象。
+
+    smoke 的「七文件拼接源码 in」断言检测不出重复副本——门面与子模块各留一份
+    口径常量时照样通过；这里用身份断言堵住该盲区。"""
+    import spec_rules, spec_series, spec_duckdb   # noqa: E402
+    import spec_builders, spec_pool, spec_validate   # noqa: E402
+    for mod, names in (
+        (spec_rules, ("INDEX_BENCH", "NEAR_D10", "NEAR_D30", "NORMAL_D3", "RULES",
+                      "SCAN_TH", "SEVERE_D10", "SEVERE_D30")),
+        (spec_series, ("PANEL_SENTIMENT", "index_gain")),
+        (spec_duckdb, ("CACHE_DIR", "scan_deviation")),
+        (spec_builders, ("_FATE_ORDER", "build_themes")),
+        (spec_pool, ("_CONCEPT_LU_TIERS", "_MF_QUOTA", "RULES_VERSION", "build_pool")),
+        (spec_validate, ("_MF_BUY", "_OPT_MIN_SCORE", "_OOS_BASELINE",
+                         "_OOS_REVIEW_EVERY", "POOL_TRACK", "POOL_OPT")),
+    ):
+        for name in names:
+            assert getattr(speculate, name) is getattr(mod, name), f"{mod.__name__}.{name}"
+
+
+# ---------------- us_market：隔夜美股场次收盘判定（终版池前置守卫） ----------------
+
+import us_market   # noqa: E402
+from datetime import datetime as _dtm, timezone as _tzc   # noqa: E402
+
+
+def test_session_closed_follows_us_east_1615():
+    """场次收盘 = 美东 16:15（北京 04:15 夏令 / 05:15 冬令），与抓取层 _bar_closed 同规则。
+
+    旧版用「updated ≥ T+1 03:00」墙钟：冬令 03:00–05:15 间的重建会把未收盘场次
+    误判为终版。这里用固定美东时刻锁死三个窗口（盘中 / 收盘前一刻 / 收盘后）。"""
+    summer, winter = "2026-07-08", "2026-01-08"   # 两边都在各自时令段内
+    # 盘中：夏令美东 15:00（=UTC 19:00）/ 冬令美东 14:00（=UTC 19:00）→ 未收盘
+    assert us_market._session_closed(summer, _dtm(2026, 7, 8, 19, 0, tzinfo=_tzc.utc)) is False
+    assert us_market._session_closed(winter, _dtm(2026, 1, 8, 19, 0, tzinfo=_tzc.utc)) is False
+    # 收盘后：夏令美东 18:00（=UTC 22:00）/ 冬令美东 17:00（=UTC 22:00）→ 已收盘
+    assert us_market._session_closed(summer, _dtm(2026, 7, 8, 22, 0, tzinfo=_tzc.utc)) is True
+    assert us_market._session_closed(winter, _dtm(2026, 1, 8, 22, 0, tzinfo=_tzc.utc)) is True
+    # 临界点：美东 16:15 整即视为收盘（与 _bar_closed 的 now >= close_dt 一致）
+    assert us_market._session_closed(summer, _dtm(2026, 7, 8, 20, 15, tzinfo=_tzc.utc)) is True
+    assert us_market._session_closed(summer, _dtm(2026, 7, 8, 20, 14, tzinfo=_tzc.utc)) is False
+
+
 # ---------------- backtest_capital：资金曲线执行口径（实时主口径无未来函数） ----------------
 
 import os as _os  # noqa: E402
@@ -465,10 +526,17 @@ def _bt_row(grp, o, h, l, c, t1="2026-01-06", code="X"):
 
 
 def test_backtest_realtime_lu_stop_and_skip():
+    """实时主口径（2026-09-10 口径对齐）：涨停组风险位 = 执行层 risk_low=-5%。
+
+    对齐前本脚本误用买入触发过滤 low_min=-3% 作出场；-3% 破位但未破 -5% 的样本
+    现应持有到收盘（下例 p3）。
+    """
     assert bt.trade_pnl(_bt_row("lu", 6.0, 7.0, 5.5, 6.5)) is None       # 高开 >5% 放弃
     assert bt.trade_pnl(_bt_row("lu", -1.0, 1.0, -1.5, 0.5)) is None     # 低开不接
-    p = bt.trade_pnl(_bt_row("lu", 1.0, 1.2, -3.5, -2.0))                # 破 -3% → -3% 离场
-    assert abs(p - ((1 - 0.03) / 1.01 - 1)) < 1e-9
+    p = bt.trade_pnl(_bt_row("lu", 1.0, 1.2, -5.5, -2.0))                # 破 risk_low -5% → -5% 离场
+    assert abs(p - ((1 - 0.05) / 1.01 - 1)) < 1e-9
+    p3 = bt.trade_pnl(_bt_row("lu", 1.0, 1.2, -3.5, -2.0))               # 破 -3% 未破 -5%：收盘离场
+    assert abs(p3 - ((1 - 0.02) / 1.01 - 1)) < 1e-9
     p2 = bt.trade_pnl(_bt_row("lu", 1.0, 4.0, 0.5, 3.0))                 # 未破位收盘离场
     assert abs(p2 - (1.03 / 1.01 - 1)) < 1e-9
 
@@ -566,6 +634,46 @@ def test_rot_next_tick_aligns_to_minute():
     assert (tick - _dtm(2026, 9, 5, 10, 0, 30, 500000)).total_seconds() >= 5
     tick2 = tc._next_tick(_dtm(2026, 9, 5, 10, 1, 1), 60)   # 压线 :01：退一个节拍
     assert (tick2.hour, tick2.minute, tick2.second) == (10, 2, 2)
+
+
+# ---------------- fsutil：原子写盘单一来源（2026-09-10 收敛） ----------------
+
+import gzip as _gzip   # noqa: E402
+import json as _json   # noqa: E402
+
+import fsutil   # noqa: E402
+
+
+def test_fsutil_json_gzip_sig_roundtrip(tmp_path):
+    p = tmp_path / "a.json"
+    fsutil.save_json_atomic(p, {"名": "值", "n": 1}, indent=2)
+    assert _json.loads(p.read_text(encoding="utf-8")) == {"名": "值", "n": 1}
+    # default/sort_keys 透传（run_job 落盘 numpy 标量、manifest 排序键依赖）
+    d = tmp_path / "d.json"
+    fsutil.save_json_atomic(d, {"b": 1, "a": object()}, default=str, sort_keys=True)
+    assert list(_json.loads(d.read_text(encoding="utf-8"))) == ["a", "b"]
+    # utf-8-sig：CSV 场景 BOM 保持
+    csvp = tmp_path / "b.csv"
+    fsutil.save_text_atomic(csvp, "x,y\r\n1,2\r\n", encoding="utf-8-sig")
+    assert csvp.read_bytes()[:3] == b"\xef\xbb\xbf"
+    # gzip JSON 往返（快照归档路径）
+    gzp = tmp_path / "c.json.gz"
+    fsutil.save_gzip_json_atomic(gzp, {"k": [1, 2]})
+    assert _json.loads(_gzip.decompress(gzp.read_bytes()).decode("utf-8")) == {"k": [1, 2]}
+
+
+def test_fsutil_newline_param_and_tmp_cleanup(tmp_path):
+    # newline="\n" 强制 LF（recap 笔记口径）；缺省与 Path.write_text 同（平台翻译）
+    lf = tmp_path / "lf.md"
+    fsutil.save_text_atomic(lf, "a\nb\n", newline="\n")
+    assert lf.read_bytes() == b"a\nb\n"
+    native = tmp_path / "native.txt"
+    fsutil.save_text_atomic(native, "a\nb\n")
+    assert native.read_bytes() == (b"a\r\nb\r\n" if _os.name == "nt" else b"a\nb\n")
+    # 写入中途异常（不可编码字符）→ 临时文件被清理、目标不出现
+    with pytest.raises(UnicodeEncodeError):
+        fsutil.save_text_atomic(tmp_path / "bad.txt", "中文\ud800surrogate")
+    assert list(tmp_path.iterdir()) == [lf, native]
 
 
 if __name__ == "__main__":

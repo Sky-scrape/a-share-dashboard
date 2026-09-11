@@ -19,7 +19,6 @@
 import argparse
 import concurrent.futures as cf
 import datetime
-from pathlib import Path
 import json
 import os
 import random
@@ -32,6 +31,7 @@ import config
 
 sys.path.insert(0, os.path.dirname(config.PROJECT_ROOT + os.sep))  # 项目根
 sys.path.insert(0, os.path.join(config.PROJECT_ROOT, "backend"))
+import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 import lockutil  # noqa: E402
 
 LOCK_PATH = os.path.join(config.PROJECT_ROOT, ".status", "fetch-rotation.lock")
@@ -64,15 +64,14 @@ def _verify_trade_day(date_str):
     注意：只用于收盘后（≥15:30）场景——盘中日 K 尚未生成，验证会误判；
     指定历史日期时不适用（该接口只提供当日数据）。
     """
-    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-    from urllib.parse import urlsplit
-    _parts = urlsplit(url)
-    if _parts.scheme != "https" or _parts.hostname != "push2his.eastmoney.com":
-        raise ValueError(f"非白名单主机: {_parts.hostname!r}")  # SSRF 守卫（扫描器口径）
-    params = {"secid": "1.000001", "klt": "101", "fqt": "0", "lmt": "3",
-              "end": "20500101", "fields1": "f1,f2,f3,f4,f5,f6", "fields2": "f51"}
     try:
-        r = requests.get(url, params=params, headers=HEADERS, timeout=10)
+        r = requests.get(
+            "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            params={"secid": "1.000001", "klt": "101", "fqt": "0", "lmt": "3",
+                    "end": "20500101", "fields1": "f1,f2,f3,f4,f5,f6", "fields2": "f51"},
+            headers={"User-Agent": "Mozilla/5.0",
+                     "Referer": "https://quote.eastmoney.com/"},
+            timeout=10)
         d = r.json().get("data")
         if not d or not d.get("klines"):
             return None
@@ -276,22 +275,22 @@ def _run(args):
 
     os.makedirs(os.path.join(config.DATA_DIR, "daily"), exist_ok=True)
     path = os.path.join(config.DATA_DIR, "daily", f"{args.date}.json")
-    # 原子写：先写 .tmp 再 os.replace，避免服务端读到半截 JSON
-    Path(path).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    # 原子写（fsutil）：server/derive 随时在读，直写的截断窗口会拿到半截 JSON
+    fsutil.save_json_atomic(path, out)
     print(f"完成：{len(out['boards'])} 个板块，时间点 {len(out['times'])} 个 -> {path}")
     # 任务状态：供 /api/health 数据管家展示（失败不影响主流程）
     # 注意：必须写项目根 .status/（旧版误写 backend/.status 导致 health 永远看旧数据）
     try:
         st_dir = os.path.join(config.PROJECT_ROOT, ".status")
         os.makedirs(st_dir, exist_ok=True)
-        Path(os.path.join(st_dir, "rotation.json")).write_text(json.dumps({
+        fsutil.save_json_atomic(os.path.join(st_dir, "rotation.json"), {
             "last_run": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": args.date,
             "boards": len(out["boards"]),
             "times": len(out["times"]),
             "failed": failed,
             "exit": 0,
-        }, ensure_ascii=False), encoding="utf-8")
+        })
     except Exception as e:
         print(f"  状态写入失败: {e}")
 

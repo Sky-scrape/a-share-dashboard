@@ -24,6 +24,11 @@ python backend\recap\concept_map.py >> .status\logs\fetch-recap.log 2>&1
 if errorlevel 1 echo [warn] concept_map refresh failed (non-blocking) >> .status\logs\fetch-recap.log
 rem gzip archive snapshots older than 14 days
 python backend\recap\archive.py --older-than 14 >> .status\logs\fetch-recap.log 2>&1
+rem 全球总览收盘后刷新：CN 热力图数据源是**实时快照**，08:40 盘前抓不到当日成交数据，
+rem 只靠盘前那一轮会让 A 股热力图长期停在旧副本（2026-09-10 实测停在 3 天前）；
+rem 非阻塞，失败只记 [warn]（盘前/非交易日快照为空属预期，脚本内已按预期处理）
+python backend\global\fetch_global.py >> .status\logs\fetch-global.log 2>&1
+if errorlevel 1 echo [warn] global afterclose refresh failed (non-blocking) >> .status\logs\fetch-recap.log
 echo [%date% %time%] ==== fetch end (fetch=%RC_FETCH%) ==== >> .status\logs\fetch-recap.log
 if not "%RC_FETCH%"=="0" exit /b %RC_FETCH%
 exit /b 0

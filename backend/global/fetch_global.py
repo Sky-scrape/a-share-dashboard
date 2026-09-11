@@ -18,6 +18,7 @@ import os
 import random
 import sys
 import time
+from urllib.parse import urlencode
 
 # 禁用系统代理：直连新浪/东财接口（坏代理会导致请求挂起，与 server/providers 同一约定）
 os.environ.setdefault("HTTP_PROXY", "")
@@ -32,11 +33,12 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 import requests
-from pathlib import Path  # noqa: E402
 
 import lockutil  # noqa: E402
 import logutil  # noqa: E402  统一 logging（时间戳/级别）
 import http_retry  # noqa: E402  共享重试（backend/http_retry.py）
+import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import us_market  # noqa: E402  新浪美股静态页解码共享（backend/us_market.py）
 
 LOG = logutil.get_logger("ak.global")
 import ht  # noqa: E402  hithink CLI 封装（A股热力图）
@@ -257,10 +259,14 @@ def _load_board_daily(need):
     return board_daily
 
 
-def _cn_theme_daily():
-    """合成主题日收益。返回 (theme_daily: {theme: [(date, day_pct)]}, n_dates)。"""
+def _cn_theme_daily(board_daily=None):
+    """合成主题日收益。返回 (theme_daily: {theme: [(date, day_pct)]}, n_dates)。
+
+    board_daily：调用方预加载的 {board: {date: pct}}（_run 一次加载、radar 与
+    heatmap 两处共用，免得 30-46 份快照完整解析两遍）；None 时自行加载。"""
     need = MOM_WIN + TRAIL_WEEKS * TRAIL_STEP + 6
-    board_daily = _load_board_daily(need)
+    if board_daily is None:
+        board_daily = _load_board_daily(need)
     axis = sorted(set.intersection(*[set(v) for v in
                    (board_daily[n] for ns in CN_THEME_MAP.values() for n in ns if n in board_daily)]))
     theme_daily = {}
@@ -274,9 +280,10 @@ def _cn_theme_daily():
     return theme_daily, len(axis)
 
 
-def fetch_radar(indices):
+def fetch_radar(indices, board_daily=None):
     """RS = 主题20日动量 − 基准20日动量（%），MOM = 主题20日涨幅（%）。
-    基准：美股=标普500，A股=上证指数（复用本轮已抓的指数 hist）。"""
+    基准：美股=标普500，A股=上证指数（复用本轮已抓的指数 hist）。
+    board_daily：预加载的复盘快照行业逐日涨跌幅（见 _cn_theme_daily）。"""
     import akshare as ak
     errs = {}
     bench = {x["id"]: x for x in indices}
@@ -298,7 +305,7 @@ def fetch_radar(indices):
     try:
         if "SHA" not in bench:
             raise RuntimeError("缺上证指数基准")
-        theme_daily, n_axis = _cn_theme_daily()
+        theme_daily, n_axis = _cn_theme_daily(board_daily)
         cn_themes = []
         for theme in RADAR_AXES:
             rows = theme_daily.get(theme) or []
@@ -343,18 +350,22 @@ US_HEAT_SECTORS = {
 
 def _us_daily_closes(sym, n=WIN20 + 3):
     """新浪美股日线不复权收盘（最近 n 条）。
-    绕开 ak.stock_us_daily：它拉复权因子用小写 symbol，个股普遍 404 → eval(404页) SyntaxError。"""
+    解码路径共享自 backend/us_market.fetch_sina_us_daily（同一 URL 模板 +
+    zh_js_decode/MiniRacer，2026-09-10 收敛，此处不再留拷贝）；绕开
+    ak.stock_us_daily：它拉复权因子用小写 symbol，个股普遍 404 → eval(404页)
+    SyntaxError。窗口内若有真实拆分/除权（factor≠1 或 adjust≠0），不复权口径
+    失真 → 降级 None。"""
     import pandas as pd
-    import py_mini_racer
-    from akshare.stock.stock_us_sina import zh_js_decode
-    res = requests.get(f"https://finance.sina.com.cn/staticdata/us/{sym}", timeout=20)
-    payload = res.text.split("=", 1)[1].split(";")[0].replace('"', "")
-    js = py_mini_racer.MiniRacer()
-    js.eval(zh_js_decode)
-    df = pd.DataFrame(js.call("d", payload))
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date")
-    closes = [float(c) for c in df["close"] if c and float(c) > 0]
+    items = sorted(us_market.fetch_sina_us_daily(sym),
+                   key=lambda it: str(it.get("date"))[:10])   # 升序（旧实现显式排过）
+    closes = []
+    for it in items:
+        try:
+            c = float(it.get("close") or 0)
+        except (TypeError, ValueError):
+            continue
+        if c > 0:
+            closes.append(c)
     # 窗口内若有真实拆分/除权（factor≠1 或 adjust≠0），不复权口径失真 → 降级 None
     try:
         rj = requests.get(
@@ -397,11 +408,17 @@ def _add_windows_us(sectors):
 
 
 def fetch_heat_us():
-    """新浪 gb_ 批量实时：字段 0名称 1现价 2涨跌幅% 13?市值（实测第13列=市值）。"""
+    """新浪 gb_ 批量实时：字段 0名称 1现价 2涨跌幅% 13?市值（实测第13列=市值）。
+
+    逗号必须保持字面量：requests 的 dict 形式 params 会把 "," 编码成 %2C，新浪不认
+    （整串被当成一个不存在的符号 → 返回空 → "美股实时行情解析为空"，该面板自上线起
+    一直沿用旧副本）。故自行 urlencode 并 safe=","（2026-09-10 修复）。
+    """
     syms = [s for lst in US_HEAT_SECTORS.values() for s in lst]
+    qs = urlencode({"list": ",".join("gb_" + s for s in syms)}, safe=",")
     r = _retry(lambda: requests.get(
         "https://hq.sinajs.cn/list",
-        params={"list": ",".join("gb_" + s for s in syms)},
+        params=qs,
         headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
     r.encoding = "gbk"
     quotes = {}
@@ -437,25 +454,17 @@ def fetch_heat_us():
 
 
 def _latest_industry_map():
-    """个股→同花顺一级行业映射。
+    """个股→同花顺一级行业映射（2026-09-10 兜底读取下沉 industry_common）。
 
     优先读全站单一来源（data/auction/industry_map.json，industry_common）；
-    退回历史缓存文件仅限补抓旧日期的兼容路径。"""
+    退回历史缓存文件仅限补抓旧日期的兼容路径（读最近一份 stock_industry_*.json）。"""
     import industry_common
     shared = industry_common.load_shared_ticker_map()
     if shared:
         # 第二返回值是「映射 vintage」日期（8 位口径），供 heatmap asof 标注；
         # 不能用 "shared" 这类来源标签冒充日期（会原样漏到前端「截至 shared」）。
         return shared, industry_common.shared_map_date8()
-    if not os.path.isdir(HT_CACHE):
-        return None, None
-    files = sorted(f for f in os.listdir(HT_CACHE)
-                   if f.startswith("stock_industry_") and f.endswith(".json"))
-    if not files:
-        return None, None
-    fp = os.path.join(HT_CACHE, files[-1])
-    with open(fp, encoding="utf-8") as f:
-        return json.load(f), files[-1][15:23]
+    return industry_common.latest_cached_ticker_map(HT_CACHE)
 
 
 def _thscode(code):
@@ -475,13 +484,16 @@ def _compound(pcts, n):
     return round((acc - 1) * 100, 2)
 
 
-def _add_windows_cn(sectors):
+def _add_windows_cn(sectors, board_daily=None):
     """A股热力图补 5/20 日涨幅。
-    行业：复盘快照逐日涨跌幅复合（零远程调用）；
+    行业：复盘快照逐日涨跌幅复合（零远程调用；board_daily 预加载共享，见
+    _cn_theme_daily，None 时自行加载）；
     个股：hithink 前复权日线收盘（仅展示中的各行业成交额前 8 只，8 线程）。"""
     from concurrent.futures import ThreadPoolExecutor
     try:
-        bd = _load_board_daily(WIN20 + 12)
+        if board_daily is None:
+            board_daily = _load_board_daily(WIN20 + 12)
+        bd = board_daily
     except Exception as e:  # noqa: BLE001
         LOG.info(f"[warn] cn 行业历史缺失: {type(e).__name__}: {str(e)[:100]}")
         bd = {}
@@ -524,13 +536,23 @@ def _add_windows_cn(sectors):
     LOG.info(f"  [cn windows] 个股 {n_ok}/{len(stocks)}")
 
 
-def fetch_heat_cn():
+class NoSessionData(RuntimeError):
+    """实时快照为空＝尚无当日成交数据（盘前/非交易日），属预期而非抓取故障：
+
+    盘前 market_snapshot_all 的 last_price/turnover 必然为空。沿用上一份收盘副本
+    并标 stale（数据日如实展示）即可，不计入 errors——否则看板每天早上都显示
+    「N 项降级」，把正常状态报成故障（2026-09-10 修正）。
+    """
+
+
+def fetch_heat_cn(board_daily=None):
+    """A股热力图。board_daily：预加载的行业逐日涨跌幅（radar 共用一次加载）。"""
     ind_map, ind_date = _latest_industry_map()
     rows = ht.market_snapshot_all()
     live = [r for r in rows if r.get("last_price") and r.get("turnover")
             and r.get("price_change_ratio_pct") is not None]
     if not live:
-        raise RuntimeError("全市场快照为空")
+        raise NoSessionData("全市场快照为空（尚无当日成交数据）")
     try:
         name_map = ht.symbol_names(cache_dir=HT_CACHE)
     except Exception:  # noqa: BLE001
@@ -563,7 +585,7 @@ def fetch_heat_cn():
     if len(asof) == 8:
         asof = f"{asof[:4]}-{asof[4:6]}-{asof[6:]}"
     try:
-        _add_windows_cn(out)
+        _add_windows_cn(out, board_daily)
     except Exception as e:  # noqa: BLE001  窗口缺失不连坐主数据
         LOG.info(f"[warn] cn 窗口计算失败: {type(e).__name__}: {str(e)[:120]}")
     return {"asof": asof, "sectors": out}
@@ -619,6 +641,13 @@ def _run():
     errors = {}
     payload = {"fetched_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                "date": time.strftime("%Y-%m-%d")}
+    # A 股行业逐日涨跌幅：radar（need=46 天）与 heatmap windows（need=32 天）两处
+    # 共用一次加载——各解析 30-46 份快照一遍，不重复（2026-09-10）。
+    board_daily = None
+    try:
+        board_daily = _load_board_daily(MOM_WIN + TRAIL_WEEKS * TRAIL_STEP + 6)
+    except Exception as e:  # noqa: BLE001  两处消费方各自有缺失降级
+        LOG.info(f"[warn] boards 历史预加载失败: {type(e).__name__}: {str(e)[:120]}")
     # 降级保护：单块失败时沿用上一份同块数据并标 stale，
     # 防止盘前抓取（A股快照为空）把昨日完好的热力图冲成错误态
     try:
@@ -627,11 +656,11 @@ def _run():
     except Exception:  # noqa: BLE001
         _prev = {}
 
-    def _keep(key):
+    def _keep(key, why="本次失败"):
         old = _prev.get(key)
         if old:
             payload[key] = dict(old, stale=True)
-            LOG.info(f"[warn] {key} 本次失败，沿用上一份并标 stale")
+            LOG.info(f"[warn] {key} {why}，沿用上一份并标 stale")
 
     try:
         indices, e = fetch_indices()
@@ -645,7 +674,7 @@ def _run():
         LOG.info(f"[fail] indices: {errors['indices']}")
 
     try:
-        radar, e = fetch_radar(payload.get("indices") or [])
+        radar, e = fetch_radar(payload.get("indices") or [], board_daily)
         errors.update({f"radar_{k}": v for k, v in (e or {}).items()})
         if radar:
             payload["radar"] = radar
@@ -664,8 +693,13 @@ def _run():
         _keep("heatmap_us")
 
     try:
-        payload["heatmap_cn"] = fetch_heat_cn()
+        payload["heatmap_cn"] = fetch_heat_cn(board_daily)
         LOG.info("[ok] heatmap_cn")
+    except NoSessionData as e:
+        # 盘前/非交易日：实时快照本就没有当日成交数据——属预期，沿用上一份收盘副本，
+        # 不计入 errors（否则看板每个盘前都报「N 项降级」，把正常状态显示成故障）。
+        _keep("heatmap_cn", why="盘前无当日快照（预期）")
+        LOG.info(f"[info] heatmap_cn: {e}")
     except Exception as e:  # noqa: BLE001
         errors["heatmap_cn"] = f"{type(e).__name__}: {str(e)[:150]}"
         LOG.info(f"[fail] heatmap_cn: {errors['heatmap_cn']}")
@@ -681,8 +715,7 @@ def _run():
         LOG.info(f"[fail] intraday: {errors['intraday']}")
 
     payload["errors"] = errors
-    os.makedirs(OUT_DIR, exist_ok=True)
-    Path(OUT).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    fsutil.save_json_atomic(OUT, payload)   # 原子写（server 随时在读，防半截文件）
     kb = os.path.getsize(OUT) / 1024
     LOG.info(f"[done] {OUT}  {kb:.0f}KB  {round(time.time() - t0, 1)}s  errors={len(errors)}")
     if not any(k in payload for k in ("indices", "radar", "heatmap_us", "heatmap_cn")):

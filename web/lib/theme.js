@@ -87,6 +87,22 @@
     return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
 
+  /* 主题重绘注册表（2026-09-10 收敛）：canvas/SVG 不认 var()，切主题后需要重画的
+     图表函数在此注册，apply() 统一回调；五个页面不再各写一份 akthemechange 监听清单。
+     铁律不放松：重绘函数内部仍必须经 AKTHEME.C()（或页面 COL getter）取字面色。
+     akthemechange 事件本身保留：appbar 按钮图标等非图表监听不受影响。 */
+  var _redraws = [];
+
+  function onRedraw(fn) {
+    if (typeof fn === "function") _redraws.push(fn);
+  }
+
+  function runRedraws(t) {
+    _redraws.forEach(function (fn) {
+      try { fn(t); } catch (e) { /* 单页重绘失败不影响其他回调（错误隔离同 AK.safeRender 口径） */ }
+    });
+  }
+
   function apply(t, fromStorage) {
     if (THEMES.indexOf(t) < 0) t = "paper";
     if (document.documentElement.getAttribute("data-theme") !== t) {
@@ -99,6 +115,7 @@
     try {
       global.dispatchEvent(new CustomEvent("akthemechange", { detail: { theme: t } }));
     } catch (e) { /* 极旧浏览器无 CustomEvent：页面图表留旧色，CSS 主题仍生效 */ }
+    runRedraws(t);   // 注册制重绘（页面 onRedraw 注册的图表/手绘 SVG 回调）
   }
 
   function set(t) { apply(t, false); }
@@ -117,5 +134,5 @@
   /* 首次加载立即落 data-theme：本文件在 <head> 引入，先于首帧，不会闪纸色 */
   apply(get(), true);
 
-  global.AKTHEME = { get: get, set: set, toggle: toggle, isCyber: isCyber, label: label, icon: icon, C: C, alpha: alpha, rgbOf: rgbOf };
+  global.AKTHEME = { get: get, set: set, toggle: toggle, isCyber: isCyber, label: label, icon: icon, C: C, alpha: alpha, rgbOf: rgbOf, onRedraw: onRedraw };
 })(window);

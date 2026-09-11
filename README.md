@@ -117,13 +117,14 @@ A/
 │       └── auction_task.bat 定时任务入口（建议交易日 09:14，日志→.status/logs/fetch-auction.log）
 ├── quant/                 ★ 内置量化引擎（原独立项目整体迁入）
 │   ├── quant_sim/           引擎包：core事件撮合（T+1/涨跌停/整手/成本/滑点/参与率）/ data / strategies / metrics / report / research / tools
-│   ├── tests/               115 项引擎回归测试：python -m pytest quant/tests -q
+│   ├── tests/               115 项引擎回归测试：python -m pytest quant/tests -q（数目用 pytest quant/tests --collect-only 复核）
 │   ├── data/ results/ strategies_store/   行情缓存 / 研究产物 / 策略存档（引擎自管）
 │   └── docs/                design.md 架构全文 + changelog.md 演进记录
-├── strategy-iter/         ★ 策略自迭代（三轮完整区间迭代收敛 C_Final）
+├── strategy-iter/         ★ 策略自迭代（C7 固化口径：入选门槛 70 + 非涨停组市场量能闸门，全窗口重跑 61.88%/+2.47%）
 │   ├── engine/              数据/预计算/规则/选股/验证/出轮 引擎（概念与行业双口径单一来源）
-│   ├── scripts/             fetch_concepts 概念日线抓取 / backtest_capital 资金曲线回测 / gap_ahead_study 缺口前瞻回验 / analyze_round 轮末分析
-│   └── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》
+│   ├── scripts/             15 个脚本 + common.py（hithink 抓取公共库）：fetch_symbols 全市场标的表 / fetch_pools 涨停池+龙虎榜 / fetch_industries 行业指数成分与日线 / fetch_concepts 概念指数日线 / export_local 本地 DuckDB→parquet 日线导出 / analyze_round 轮末分析 / backtest_capital 资金曲线回测 / gap_ahead_study 竞价缺口前瞻回验 / exp_c6_variants C7 单变量变体实验 / exp_hold_sizing 持有期与资金管理实验 / c8_candidate_study C8 候选全窗口验证 / c8_factor_ablation C7 逐因素消融审计 / c9_exit_study C9 离场口径逐日推演 / c9_tp_study C9 止盈族否证研究 / c10_seal_study C10 封板日续持（右尾获取）研究
+│   ├── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》
+│   └── 自动选股与策略自迭代系统.md   系统总文档（验证区间以 engine/data.py 的 SEL_START/SEL_END 为唯一日期源）
 ├── data/
 │   ├── auction/           竞价产出：live.json 最新轮 + final.json 定盘 + series.json 当日轮次全量 + rounds_meta.json 逐轮元数据 + benchmark.json 基准 + sector.json 一级行业指数开盘缺口 + industry_map.json 个股→一级行业全量映射 + watchmap.json（行业/名称/来源）+ watchlist.txt（自选清单）
 │   ├── recap/             复盘快照（近期 .json，早期 .json.gz）+ panel/（sentiment.csv 等）+ notes/（复盘笔记 .md）+ concept_map.json（概念映射）+ pool_track.json / pool_opt.json（验证与优化器留痕）
@@ -148,7 +149,7 @@ A/
 ├── assets/                图标
 ├── docs/                  各板块文档（README-recap / README-rotation；开发日志 PROGRESS.md 仅本地保留，不入库）
 │   └── legacy/            合并前的旧版服务与脚本（仅归档，不再使用）
-└── .github/               CI：量化引擎回归测试（data/、.status/、.context/ 为本地运行数据与个人笔记，不入库）
+└── .github/               CI：量化引擎回归测试（python -m pytest quant/tests tests；smoke.py 文件名不入 pytest 收集，需本地起服务跑；data/、.status/、.context/ 为本地运行数据与个人笔记，不入库）
 ```
 
 ## 自动任务（Windows 计划任务）
@@ -158,9 +159,9 @@ A/
 | arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
 | areauction-live-fetch | 交易日 09:14 | backend/auction/auction_task.bat（09:15–09:24:30 每 30s live 轮询 + 09:25:10 终态 + 基准，日志 .status/logs/fetch-auction.log）；已设为**不看电池、错过可补跑、上限 PT30M** |
 | rotation-intraday-fetch | 交易日 09:25 | backend/rotation/fetch_day_task.bat → ths_collect.py 盘中逐分钟轮询循环（数据只到 15:00，收盘定格后自退）；不看电池、错过可补跑、上限 PT8H |
-| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档，日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成） |
+| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档 + **收盘后补刷全球总览**（CN 热力图数据源是实时快照，盘前那轮抓不到当日数据，见下行说明），日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成） |
 | rotation-daily-fetch | 每日 17:10 | backend/rotation/fetch_day_task.bat（盘中断档时的收盘定格兑底 + derive 重算；盘外定格不覆盖已有盘中数据） |
-| aglobal-daily-fetch | 工作日 08:40 | backend/global/fetch_task.bat → fetch_global.py（全球指数/雷达/热力/分时 → data/global/global.json）；08:40 = 美股凌晨收盘后、A股盘前窗口 |
+| aglobal-daily-fetch | 工作日 08:40 | backend/global/fetch_task.bat → fetch_global.py（全球指数/雷达/热力/分时 → data/global/global.json）；08:40 = 美股凌晨收盘后、A股盘前窗口。**注意**：A 股热力图取的是实时快照，盘前必然为空——此时按预期沿用上一份收盘副本（不记降级），当日收盘数据由上面 17:05 链补刷 |
 
 > 表内按一天里的触发时刻排序，与顶栏板块顺序（竞价 → 轮动 → 复盘 → 全球 → 量化）同调。手动重抓与计划任务共用文件锁（.status/fetch-*.lock），不会并发。
 

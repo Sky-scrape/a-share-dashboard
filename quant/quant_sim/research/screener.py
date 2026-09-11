@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from quant_sim.core.fsutil import save_json_atomic
 from quant_sim.data.hithink import _cli
 
 CACHE_DIR = (Path(__file__).resolve().parents[2] / "data" / "screener")
@@ -186,7 +187,7 @@ def get_universe(name: str) -> Optional[List[str]]:
             _cli(["index", "constituents", "--thscode", code, "--output", str(tmp)], timeout=120)
             data = json.loads(tmp.read_text(encoding="utf-8"))["data"]
             items = data.get("item") if isinstance(data, dict) else data
-            fp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+            save_json_atomic(fp, items)
         finally:
             if tmp.exists():
                 os.remove(tmp)
@@ -205,11 +206,14 @@ def attach_valuation(tickers: Sequence[str], pause: float = 0.15) -> pd.DataFram
     rows: List[dict] = []
     for i in range(0, len(codes), 100):
         batch = ",".join(to_thscode(c) for c in codes[i:i + 100])
+        data = None
         try:
+            # _cli 内部已带 4 次退避重试，外层不再叠层（曾 2×4=8 次子进程调用，失败时延迟放大）
             data = _cli(["valuation", "snapshot", "--thscodes", batch], timeout=90)
-            rows.extend(data.get("item") or [])
         except Exception as e:
             print(f"  [warn] 估值富化批次 {i // 100 + 1} 失败：{e}")
+        if data is not None:
+            rows.extend(data.get("item") or [])
         if i + 100 < len(codes):
             time.sleep(pause)
     if not rows:

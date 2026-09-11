@@ -41,6 +41,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -49,6 +50,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import requests  # noqa: E402
+import fsutil    # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 from http_retry import retry  # noqa: E402
 
 DATA_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(HERE),
@@ -166,16 +168,17 @@ def _safe_get(url: str, timeout: float = 20.0):
                         headers={"User-Agent": "Mozilla/5.0"})
 
 
-# ---------------------------------------------------------------- 落盘（字面量文件名 + write_text）
+# ---------------------------------------------------------------- 落盘（字面量文件名 + 原子写）
 
 def _write_json(fname: str, payload: dict) -> None:
-    """写 data/recap/us_market/ 下的白名单文件（fname 必须是模块内字面量）。"""
+    """写 data/recap/us_market/ 下的白名单文件（fname 必须是模块内字面量）。
+
+    hist_all.json 全库单文件、factors.json 被 server/speculate 随时读——都走
+    backend/fsutil 原子写（临时文件 + os.replace），读者永远不会看到半截。"""
     if fname not in (HIST_FILE, CAL_FILE, FACTOR_FILE):
         raise ValueError(f"非法文件名: {fname!r}")
-    p = DATA_DIR / fname
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                 encoding="utf-8")
+    fsutil.save_json_atomic(DATA_DIR / fname, payload,
+                            separators=(",", ":"))
 
 
 def _read_json(fname: str) -> dict | None:
@@ -240,9 +243,37 @@ def fetch_kline(sym: str, count: int = KLINE_COUNT_BACKFILL) -> list[list]:
     return dedup
 
 
-def fetch_kline_sina(sym_plain: str) -> list[list]:
-    """新浪美股静态页日线（板块 ETF 用，sym 如 'xlk'）。与 fetch_global._us_daily_closes
-    同一解码路径（akshare zh_js_decode + py_mini_racer）。返回 [[date,o,c,h,l,v],...]。"""
+_SINA_JS_LOCK = threading.Lock()
+_SINA_JS = None
+
+
+def _sina_js_decode(payload: str):
+    """新浪静态页 payload → item 列表（zh_js_decode 的 V8 求值）。
+
+    py-mini-racer 的 V8 实例**不是线程安全的**：并发 new MiniRacer()/eval 会直接
+    触发 native 崩溃（access violation，Python 层 try/except 抓不住、整进程死）。
+    故用全局单实例 + 互斥锁串行化：HTTP 抓取照旧并发，只有毫秒级解码排队。
+    （2026-09-10 修复：fetch_global._add_windows_us 的三线程池曾把整轮抓取崩死。）
+    """
+    global _SINA_JS
+    from py_mini_racer import MiniRacer
+    from akshare.stock.stock_us_sina import zh_js_decode
+    with _SINA_JS_LOCK:
+        if _SINA_JS is None:
+            _SINA_JS = MiniRacer()
+            _SINA_JS.eval(zh_js_decode)
+        return _SINA_JS.call("d", payload) or []
+
+
+def fetch_sina_us_daily(sym_plain: str) -> list[dict]:
+    """新浪美股静态页日线原始解码（板块 ETF / 个股通用）。
+
+    与 fetch_global._us_daily_closes 同一 URL 模板 + 同一解码路径
+    （akshare zh_js_decode + py_mini_racer），2026-09-10 收为本模块导出的共享
+    函数（fetch_global 导入使用，不再各留一份拷贝）。返回解码出的原始 item 列表
+    [{date, open, close, high, low, volume}, ...]，不做收盘裁剪/去重——口径由
+    调用方自定（us_market 剔未收盘 bar，fetch_global 只取收盘序列）。
+    """
     s = str(sym_plain)
     if not _SINA_SYM_RE.match(s):
         raise ValueError(f"非法新浪符号: {sym_plain!r}")
@@ -253,12 +284,14 @@ def fetch_kline_sina(sym_plain: str) -> list[list]:
         r.raise_for_status()
         return r.text
     text = retry(_get, tries=2, delay=2.0)
-    from py_mini_racer import MiniRacer
-    from akshare.stock.stock_us_sina import zh_js_decode
     payload = text.split("=", 1)[1].split(";")[0].replace('"', "")
-    js = MiniRacer()
-    js.eval(zh_js_decode)
-    items = js.call("d", payload) or []
+    return _sina_js_decode(payload)
+
+
+def fetch_kline_sina(sym_plain: str) -> list[list]:
+    """新浪美股静态页日线（板块 ETF 用，sym 如 'xlk'）。解码共享自
+    fetch_sina_us_daily；返回 [[date,o,c,h,l,v],...]，已剔未收盘 bar 并去重。"""
+    items = fetch_sina_us_daily(sym_plain)
     out = []
     for it in items:
         try:
@@ -359,15 +392,18 @@ def _close_series(entry: dict | None) -> tuple[list[str], list[float]]:
     return [r[0] for r in rows], [float(r[2]) for r in rows]
 
 
-def _pct_at(dates: list[str], closes: list[float], u: str | None, n: int = 1) -> float | None:
-    """U 日相对前 n 根 bar 的涨跌幅（%）。U 为 None 或无前 bar → None。"""
+def _pct_at(dates_idx: dict, closes: list[float], u: str | None, n: int = 1) -> float | None:
+    """U 日相对前 n 根 bar 的涨跌幅（%）。U 为 None 或无前 bar → None。
+
+    dates_idx 为 date→下标 dict（每符号序列建一次）：旧实现 dates.index(u) 每次
+    O(n)，build_factors 每晚全量重算时是主要常数开销。历史行不变、只追加新日期，
+    增量追加 factors 理论可行，但要处理 us_date 对齐随 IXIC 日历补数而整体位移
+    （T 行的 u 会变），收益/风险比不划算——保持全量重算，只做本处 O(1) 优化。
+    """
     if u is None:
         return None
-    try:
-        i = dates.index(u)
-    except ValueError:
-        return None
-    if i < n or closes[i - n] <= 0:
+    i = dates_idx.get(u)
+    if i is None or i < n or closes[i - n] <= 0:
         return None
     return (closes[i] / closes[i - n] - 1) * 100.0
 
@@ -398,10 +434,13 @@ def build_factors() -> dict:
     series_cache = {}
 
     def pct(sym, u, n=1):
-        if sym not in series_cache:
-            series_cache[sym] = _close_series(symbols.get(sym))
-        ds, cs = series_cache[sym]
-        return _round(_pct_at(ds, cs, u, n))
+        ent = series_cache.get(sym)
+        if ent is None:
+            ds, cs = _close_series(symbols.get(sym))
+            ent = (cs, {d: i for i, d in enumerate(ds)})   # date→index 一次建好
+            series_cache[sym] = ent
+        cs, idx = ent
+        return _round(_pct_at(idx, cs, u, n))
 
     today = _dt.date.today().isoformat()
     ashare = [d for d in load_ashare_dates() if FACTOR_START <= d <= today]
@@ -435,6 +474,50 @@ def build_factors() -> dict:
 def load_factors() -> dict:
     """读取因子（供 speculate.py / strategy-iter 消费）；缺失返回 {}。"""
     return _read_json(FACTOR_FILE) or {}
+
+
+def _session_closed(t_iso: str, now_et: _dt.datetime | None = None) -> bool:
+    """美股 t_iso 场次是否已收盘：美东 16:15 后视为收盘——与 fetch_kline._bar_closed
+    同一规则，保证「守卫判新鲜 ⟺ 此刻重新抓取必能拿到 T 场次 bar」。
+
+    旧版用「factors.updated ≥ T+1 03:00」墙钟判定：收盘是北京 04:00（夏令）/05:00
+    （冬令），03:00–05:15 之间的重建（手动补跑/链早触发）会把未收盘场次误判为终版。
+    时区不可用时保守按未收盘（与 _bar_closed 的保守保留方向相反：守卫宁可拦）。"""
+    try:
+        from zoneinfo import ZoneInfo
+        d = _dt.datetime.strptime(t_iso, "%Y-%m-%d").date()
+        tz = ZoneInfo("America/New_York")
+        close_dt = _dt.datetime(d.year, d.month, d.day, 16, 15, tzinfo=tz)
+        now = now_et or _dt.datetime.now(tz)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=tz)
+        return now >= close_dt
+    except Exception:  # noqa: BLE001 - 时区不可用时保守视为未收盘
+        return False
+
+
+def row_freshness(t_iso: str) -> tuple[dict | None, bool, str]:
+    """T 日备选池的隔夜美股行是否已含完整场次（终版池生成前置守卫，2026-09-10）。
+
+    终版口径：us_date == T（T 日美股场次已收盘且进入本地历史；抓取层 _bar_closed
+    保证入库 bar 均为已收盘场次）。us_date < T 仅当此刻已过 T 场次收盘（美东
+    16:15 = 北京 04:15 夏令 / 05:15 冬令，_session_closed 判定）才视为新鲜——覆盖
+    美股节假日（T 无场次，链照常在 T+1 凌晨重建并落到最近场次）；否则一律视为
+    隔夜未定（17:05 过渡池、链早触发等）。返回 (row, fresh, reason)；
+    reason 仅在 fresh=False 时有意义。"""
+    try:
+        payload = load_factors() or {}
+        row = (payload.get("rows") or {}).get(t_iso)
+    except Exception:  # noqa: BLE001 - 读取异常按未定处理
+        return None, False, "隔夜美股因子暂不可用"
+    if row is None:
+        return None, False, "隔夜美股因子缺失"
+    u = str(row.get("us_date") or "")
+    if u == t_iso:
+        return row, True, ""
+    if u and u < t_iso and _session_closed(t_iso):
+        return row, True, ""
+    return row, False, f"隔夜美股场次未定（当前 us_date={u or '无'}，待 T 日场次收盘）"
 
 
 def _all_syms() -> list[str]:
@@ -473,8 +556,12 @@ def cmd_run(backfill_start: str | None):
             fail += 1
             print(f"[{i+1}/{len(jobs)}] {sym:<12} FAIL {type(e).__name__}: {str(e)[:100]}",
                   file=sys.stderr)
-        save_hist_all(symbols)   # 每符号落一次盘，中断可续
+        # 每 10 个符号落一次盘（45+ 符号每晚逐个整库重写 hist_all.json 纯属浪费）；
+        # 中断最多丢最近 9 个符号的增量，重跑即续上
+        if (i + 1) % 10 == 0:
+            save_hist_all(symbols)
         time.sleep(REQUEST_INTERVAL)
+    save_hist_all(symbols)   # 循环结束统一收尾保存（含不足 10 个的尾段）
     print(f"fetch done: ok={ok} fail={fail}")
     if ok == 0:
         raise SystemExit("全部符号抓取失败，不重建因子（保留旧 factors.json）")

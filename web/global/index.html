@@ -340,13 +340,11 @@ let radarRO = null, heatRO = null;  // 面板行高跟随器（榜单行数变�
 
 /* ================= 2. 世界地图 + 趋势 ================= */
 function shortPct(v) { return v == null ? '' : (v > 0 ? '+' : '') + v.toFixed(2) + '%'; }
-/* 中文日期显示：当年省略年份，如 2026-08-28 → 8月28日；跨年 → 2025年11月3日 */
-function fmtCn(d) {
-  if (!d) return '';
-  const mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
-  if (!mt) return String(d);
-  return (+mt[1] === new Date().getFullYear() ? '' : mt[1] + '年') + (+mt[2]) + '月' + (+mt[3]) + '日';
-}
+/* 中文日期显示：当年省略年份（2026-08-28 → 8月28日；跨年 → 2025年11月3日）。
+   单一来源 /lib/util.js（AK.dates.fmtCn，五页同源）。这里必须用**函数声明**（提升）：
+   本页 tickClocks() 在顶层立即执行、位置早于本行，const 绑定会踩 TDZ
+   （2026-09-10「全球总览打不开」的根因：整页初始化在此中断）。 */
+function fmtCn(d) { return AK.dates.fmtCn(d); }
 
 function mapOption(geoReady) {
   const idx = G.indices || [];
@@ -1005,7 +1003,7 @@ function setPill(cls, txt) {
 }
 async function checkFresh() {
   try {
-    const h = await (await fetch('/api/health')).json();
+    const h = await AK.getJson('/api/health');   // JSON 请求统一走 lib 包装（catch 降级不变）
     const g = h.global || {};
     if (g.fetching) { setPill('warn', '全球数据抓取中…'); return true; }
     if (!g.last_date) { setPill('bad', '全球数据缺失'); return false; }
@@ -1049,13 +1047,16 @@ function showMsg(txt, ok) {
 $('btnRefresh').onclick = () => location.reload();
 /* 顶栏导航：公共组件渲染（五页单一来源；顺序见 appbar.js PAGES，竞价在轮动之前） */
 try { AKBAR.renderNavgroup({ slot: 'navgroupSlot', active: '/global' }); } catch(e){}
-/* 主题切换（晨报⇄夜台）：四张 ECharts 全部按当前数据重画（COL getter 自动取新色） */
-window.addEventListener('akthemechange', () => {
-  if (!mapChart) return;   // 数据未装载过时无需重画，loadData 首绘即新主题
-  renderMap(true);
-  if (selIdx) renderTrend();
-  if (radarChart) renderRadar();
-  if (heatChart) renderHeat();
+/* 主题切换（晨报⇄夜台）：重绘注册制（AKTHEME.onRedraw，2026-09-10 收敛，不再手写
+   akthemechange 监听清单）；四张 ECharts 全部按当前数据重画（COL getter 自动取新色） */
+AKTHEME.onRedraw(() => {
+  AK.safeRender(function () {
+    if (!mapChart) return;   // 数据未装载过时无需重画，loadData 首绘即新主题
+    renderMap(true);
+    if (selIdx) renderTrend();
+    if (radarChart) renderRadar();
+    if (heatChart) renderHeat();
+  }, "global 主题重绘");
 });
 
 /* ================= 数据装载 ================= */
@@ -1106,7 +1107,7 @@ async function loadData() {
   }
   /* 地图 */
   if (!mapChart) {
-    const geo = await (await fetch('/lib/map/world.json')).json();
+    const geo = await AK.getJson('/lib/map/world.json');
     echarts.registerMap('world', geo);
     mapChart = echarts.init($('mapChart'));
     // echarts.init 不清容器子节点：HTML 里的「加载中…」是 absolute 覆盖层，不删会一直透在海洋区上
@@ -1145,11 +1146,8 @@ async function loadData() {
   $('footErr').textContent = errs.length ? `部分数据降级：${errs.join('、')}` : '';
   checkFresh();
 }
-let _rszT = null;
-window.addEventListener('resize', () => {   // 拖拽窗口时 4 个图表连续 resize 很重，防抖 150ms
-  clearTimeout(_rszT);
-  _rszT = setTimeout(() => [mapChart, trendChart, radarChart, heatChart].forEach(c => c && c.resize()), 150);
-});
+/* 拖拽窗口时 4 个图表连续 resize 很重：防抖 resize 统一走 lib AK.onResize（150ms，2026-09-10 收敛） */
+AK.onResize(() => [mapChart, trendChart, radarChart, heatChart].forEach(c => c && c.resize()));
 loadData().catch(e => showMsg('数据加载失败：点「刷新」重试；若持续报错再点「重新抓取」（' + e + '）'));
 </script>
 </body>

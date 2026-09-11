@@ -543,29 +543,22 @@ function errBox(msg) {
 /* 跨页签可见的错误浮层：已收敛 AK.toast（lib/util.js，样式见 tokens.css #akToast）；
    errBox 的伴随提示仍走这里（6 秒自动消失），跨页签也能看到失败原因 */
 function qtoast(msg, type, ms) { AK.toast(msg, type, ms || 6000); }
-function postJson(url, body, timeoutMs) {
-  // timeoutMs：同步长请求的看门狗（auto 取数首次远端回填可能数分钟，但服务 hang 死时按钮不能永远「回测中…」）
-  var ctrl = (typeof AbortController !== "undefined" && timeoutMs) ? new AbortController() : null;
-  var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
-  var finish = function (p) { if (timer) clearTimeout(timer); return p; };
-  return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined })
-    .then(function (r) { return finish(r.json().then(function (j) { return { code: r.status, data: j }; })); })
-    .then(function (x) { if (x.data && x.data.error && x.code >= 400) throw new Error(x.data.error); return x.data; },
-      function (e) { if (timer) clearTimeout(timer); if (e && e.name === "AbortError") throw new Error("请求超时（" + Math.round(timeoutMs / 60000) + " 分钟）"); throw e; });
-}
-function getJson(url) { return fetch(url).then(function (r) { return r.json(); }); }
+/* JSON 请求包装已收敛 lib/util.js（AK.postJson/AK.getJson，2026-09-10）：本页保留同名薄委托，
+   十余处调用点不改；语义与原实现逐字一致（超时看门狗/400+error 抛错）。 */
+function postJson(url, body, timeoutMs) { return AK.postJson(url, body, timeoutMs); }
+function getJson(url) { return AK.getJson(url); }
 
 /* ---------- 顶栏与页签 ---------- */
 /* 顶栏导航：公共组件渲染（五页单一来源；顺序见 appbar.js PAGES，竞价在轮动之前） */
 try { AKBAR.renderNavgroup({ slot: "navgroupSlot", active: "/quant" }); } catch(e){}
-/* 主题切换（晨报⇄夜台）：重画有数据在手的图表；COL getter 会自动取到新主题色 */
-window.addEventListener("akthemechange", function () {
-  try {
-    if (curResult) renderEqChart(curResult);
-    if (BOARD) renderOvFiltered(BOARD);
-    if (lastGridR) renderHeat();
-    if (CMPRES) renderCompare(CMPRES);
-  } catch (e) {}
+/* 主题切换（晨报⇄夜台）：重绘注册制（AKTHEME.onRedraw，2026-09-10 收敛，不再手写
+   akthemechange 监听清单）；重画有数据在手的图表，COL getter 会自动取到新主题色。
+   每块 AK.safeRender 单独隔离：一块重绘失败不再连带其余（原为整块单 try）。 */
+AKTHEME.onRedraw(function () {
+  if (curResult) AK.safeRender(function () { renderEqChart(curResult); }, "renderEqChart");
+  if (BOARD) AK.safeRender(function () { renderOvFiltered(BOARD); }, "renderOvFiltered");
+  if (lastGridR) AK.safeRender(function () { renderHeat(); }, "renderHeat");
+  if (CMPRES) AK.safeRender(function () { renderCompare(CMPRES); }, "renderCompare");
 });
 $("btnRefresh").onclick = function () { location.reload(); };
 var charts = {};
@@ -581,7 +574,8 @@ function showTab(name) {
   if (name === "ov") loadBoard();
 }
 document.querySelectorAll("nav.tabsbar .tabbtn").forEach(function (b) { b.onclick = function () { showTab(b.dataset.tab); }; });
-window.addEventListener("resize", function () { Object.keys(charts).forEach(function (k) { try { charts[k].resize(); } catch (e) {} }); });
+/* 图表 resize 统一走 lib 防抖 AK.onResize（150ms；此前本页无防抖，拖拽窗口时连续 resize 很重） */
+AK.onResize(function () { Object.keys(charts).forEach(function (k) { try { charts[k].resize(); } catch (e) {} }); });
 
 /* ============================================================
    概览（研究流水门户）
@@ -1246,7 +1240,7 @@ function loadStrategies() {
 $("btnStoreReload").onclick = loadStrategies;
 $("btnStoreNew").onclick = function () { showTab("build"); };
 /* ---------- 重置表单为默认 ---------- */
-function todayIso() { var t = new Date(); return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"); }
+/* todayIso 已收敛 /lib/util.js（AK.dates.today10，五页单一来源，2026-09-10） */
 function setSelValue(id, v) {
   var el = $(id);
   for (var i = 0; i < el.options.length; i++) if (el.options[i].value === v) { el.selectedIndex = i; return; }
@@ -1261,7 +1255,7 @@ function resetBuilderForm() {
   $("rTarget").value = 0.95; $("rStop").value = 0; $("rTake").value = 0; $("rTrail").value = 0;
   $("inCodes").value = "510300 510500 159915 512880 588000";
   $("codesN").textContent = "5 只";
-  $("inStart").value = "2023-01-01"; $("inEnd").value = todayIso();
+  $("inStart").value = "2023-01-01"; $("inEnd").value = AK.dates.today10();
   setSelValue("inBench", "000300"); setSelValue("inMode", "local");
   setSelValue("inExec", $("inExec").options.length ? $("inExec").options[0].value : "");
   setSelValue("inSlipM", $("inSlipM").options.length ? $("inSlipM").options[0].value : "");
@@ -1631,7 +1625,7 @@ function boot() {
     $("inExec").innerHTML = m.execution_opts.map(function (o) { return "<option value='" + o.v + "'>" + esc(o.label) + "</option>"; }).join("");
     $("inSlipM").innerHTML = m.slip_opts.map(function (o) { return "<option value='" + o.v + "'>" + esc(o.label) + "</option>"; }).join("");
     renderFresh(m.data_freshness);
-    $("inEnd").value = todayIso(); $("gEnd").value = todayIso();   // 复用上方已有的 todayIso()，不再手写第二份
+    $("inEnd").value = AK.dates.today10(); $("gEnd").value = AK.dates.today10();   // 本地今天（AK.dates 单一来源）
     renderFamWrap("dual_ma");
     renderRuleRows();
     renderScreenerForm();

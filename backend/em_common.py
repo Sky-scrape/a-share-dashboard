@@ -7,9 +7,10 @@ rotation/fetch_day.py、rotation/config.py 四处复制（上游改字段/换主
 约定保留原样不动，仅作口径回溯参考。
 """
 import os
-import time
 
 import requests
+
+import http_retry  # noqa: E402  共享重试（backend/http_retry.py：指数退避+可重试判定）
 
 # 直连东财：坏系统代理会导致请求挂起（与 server/providers 同一约定）
 os.environ.setdefault("HTTP_PROXY", "")
@@ -26,22 +27,35 @@ EM_HOSTS = ["push2his.eastmoney.com", "push2delay.eastmoney.com"]
 
 def em_kline_raw(secid, klt, lmt, tries=3, timeout=12,
                  fields1="f1,f2,f3", fields2="f51,f52,f53,f54,f55,f56,f57"):
-    """东财 K 线原始 data（含 name/klines），轮换主机重试；全部失败返回 None。"""
+    """东财 K 线原始 data（含 name/klines），轮换主机重试；全部失败返回 None。
+
+    重试统一走 backend/http_retry.retry（指数退避 + 网络类判定）；主机轮换放进
+    尝试函数内部（每次尝试换下一台），空 klines 视为可重试（上游瞬时抖动），
+    与旧实现「换主机 + 递增 sleep」语义一致。
+    """
     params = {"secid": secid, "klt": str(klt), "fqt": "0",
               "lmt": str(lmt), "end": "20500101",
               "fields1": fields1, "fields2": fields2}
-    for i in range(tries):
-        host = EM_HOSTS[i % len(EM_HOSTS)]
-        try:
-            r = requests.get(f"https://{host}/api/qt/stock/kline/get",
-                             params=params, headers=EM_HEADERS, timeout=timeout)
-            d = r.json().get("data")
-            if d and d.get("klines"):
-                return d
-        except Exception:  # noqa: BLE001 - 单主机失败换下一个，重试用尽返回 None
-            pass
-        time.sleep(1.5 * (i + 1))
-    return None
+    state = {"i": 0}
+
+    def _attempt():
+        host = EM_HOSTS[state["i"] % len(EM_HOSTS)]
+        state["i"] += 1
+        r = requests.get(f"https://{host}/api/qt/stock/kline/get",
+                         params=params, headers=EM_HEADERS, timeout=timeout)
+        d = r.json().get("data")
+        if d and d.get("klines"):
+            return d
+        raise RuntimeError(f"em klines 空（{host}）")
+
+    def _judge(e):
+        return isinstance(e, RuntimeError) or http_retry.is_retryable(e)
+
+    try:
+        return http_retry.retry(_attempt, tries=tries - 1, delay=1.5,
+                                retry_on=_judge)
+    except Exception:  # noqa: BLE001 - 重试用尽返回 None（调用方按缺失降级）
+        return None
 
 
 def em_kline_rows(secid, klt, lmt, tries=3, timeout=12):

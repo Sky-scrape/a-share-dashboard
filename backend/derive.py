@@ -12,7 +12,6 @@
   python backend/derive.py --force    # 强制全量重算
 """
 import argparse
-from pathlib import Path
 import csv
 import io
 import datetime
@@ -24,8 +23,11 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
+if os.path.join(ROOT, "backend") not in sys.path:
+    sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 import snapio  # noqa: E402
+import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 from modules import cget, fget  # noqa: E402
 
 RECAP_DIR = os.path.join(ROOT, "data", "recap")
@@ -176,13 +178,15 @@ def derive_recap(force=False):
         wcsv.writerows(rows)
         return buf.getvalue()
 
-    Path(sent_out).write_text(
-        _csv_text(["version", "date", "index", "label", "zt",
-                   "dt", "max_lb", "promo_rate", "up_ratio", "zhaban"], sent),
-        encoding="utf-8-sig")
-    Path(promo_out).write_text(
-        _csv_text(["date", "prev_date", "prev_zt", "promo_zt", "promo_rate"], promo),
-        encoding="utf-8-sig")
+    fsutil.save_text_atomic(sent_out,
+                            _csv_text(["version", "date", "index", "label", "zt",
+                                       "dt", "max_lb", "promo_rate", "up_ratio",
+                                       "zhaban"], sent),
+                            encoding="utf-8-sig")
+    fsutil.save_text_atomic(promo_out,
+                            _csv_text(["date", "prev_date", "prev_zt",
+                                       "promo_zt", "promo_rate"], promo),
+                            encoding="utf-8-sig")
     print(f"derive: sentiment {len(sent)} 天 · promotion {len(promo)} 天 -> {PANEL_RECAP}")
     return True
 
@@ -312,18 +316,42 @@ def _persistent_list(win, top_days=PERSIST_TOP_DAYS, cum_min=PERSIST_CUM_MIN,
     return out
 
 
+_rot_day_cache = {}   # date -> {"mtime": float, "feat": {"date","top","bottom","pcts"}}
+
+
+def _rot_day_feat(dstr):
+    """单日轮动特征（Top10/跌TOP5/全板块收盘涨幅），按 (日期, mtime) 进程内缓存。
+
+    compute_rotation_stats 每次刷新全量重读 48 份 daily JSON，而 ths_collect 盘中
+    每分钟都调 derive——与 _sent_day_feat/_matrix_day_feat 同一套 (date, mtime)
+    缓存，只有新增/变更的文件才重新解析。
+    """
+    fp = os.path.join(ROT_DAILY, dstr + ".json")
+    try:
+        m = os.path.getmtime(fp)
+    except OSError:
+        return None
+    ent = _rot_day_cache.get(dstr)
+    if ent and ent["mtime"] == m:
+        return ent["feat"]
+    try:
+        with open(fp, encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        return None
+    feat = {"date": dstr, "top": _day_tops(d), "bottom": _day_bottom(d),
+            "pcts": _board_pcts(d)}
+    _rot_day_cache[dstr] = {"mtime": m, "feat": feat}
+    return feat
+
+
 def compute_rotation_stats(limit=48):
-    """与旧 server.rotation_stats 输出形状保持一致（API 兼容）。"""
+    """与旧 server.rotation_stats 输出形状保持一致（API 兼容）。
+
+    单日解析按 (date, mtime) 缓存（见 _rot_day_feat），增量刷新只重读变更文件。
+    """
     dates = _rot_dates()[-limit:]
-    days = []
-    for dstr in dates:
-        try:
-            with open(os.path.join(ROT_DAILY, dstr + ".json"), encoding="utf-8") as f:
-                d = json.load(f)
-        except Exception:
-            continue
-        days.append({"date": dstr, "top": _day_tops(d), "bottom": _day_bottom(d),
-                     "pcts": _board_pcts(d)})
+    days = [feat for feat in (_rot_day_feat(d) for d in dates) if feat is not None]
     empty = {"dates": [], "speed": [], "top10": {}, "persistent": [],
              "newcomers": [], "leaders_5d": [], "by_date": {}}
     if not days:
@@ -546,12 +574,12 @@ def derive_rotation(force=False):
     changed = False
     if force or _is_stale(stats_out, src_max):
         st = compute_rotation_stats()
-        Path(stats_out).write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        fsutil.save_json_atomic(stats_out, st)
         changed = True
     if force or _is_stale(matrix_out, src_max):
         mx = compute_matrix()
         if mx is not None:
-            Path(matrix_out).write_text(json.dumps(mx, ensure_ascii=False), encoding="utf-8")
+            fsutil.save_json_atomic(matrix_out, mx)
             changed = True
     if changed:
         print(f"derive: rotation panel -> {PANEL_ROT}")

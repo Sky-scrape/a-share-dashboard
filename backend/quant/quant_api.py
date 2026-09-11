@@ -18,7 +18,15 @@ import threading
 import time
 import uuid
 
-from quant_config import QUANT_ROOT, JOBS_DIR, JOBS_KEEP
+_BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
+import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py；任务文件被 server 轮询读）
+
+try:
+    from quant_config import QUANT_ROOT, JOBS_DIR, JOBS_KEEP
+except ModuleNotFoundError:  # 兼容包路径导入（import backend.quant.quant_api）
+    from .quant_config import QUANT_ROOT, JOBS_DIR, JOBS_KEEP
 
 _lock = threading.RLock()   # 2026-09-04 加锁：server 为多线程 HTTP，缓存/任务表此前无锁
 _ready = False
@@ -29,7 +37,8 @@ _jobs = {}   # job_id -> Popen（本进程生命周期内的句柄，跨重启�
 
 # ---------------- 引擎懒加载（server 启动不背 pandas 的锅） ----------------
 
-def _import_engine():
+def import_engine():
+    """导入量化引擎（quant_sim）并确保其在 sys.path 上。公开函数：run_job 子进程同样接线。"""
     global _ready
     if not _ready:
         if QUANT_ROOT not in sys.path:
@@ -41,14 +50,21 @@ def _import_engine():
     return True
 
 
+#: 兼容旧名（历史调用方 `_import_engine()`）
+_import_engine = import_engine
+
+
 def engine_ready():
     return os.path.isdir(os.path.join(QUANT_ROOT, "quant_sim"))
 
 
 # ---------------- JSON 消毒 ----------------
 
-def _jd(v):
-    """任意标量 → JSON 可序列化（NaN/Inf→None，numpy/Timestamp→原生）。"""
+def jd(v):
+    """任意标量 → JSON 可序列化（NaN/Inf→None，numpy/Timestamp→原生）。
+
+    单一实现：run_job 子进程从本模块导入（曾各有一份，行为已经漂移）。
+    """
     if v is None:
         return None
     try:
@@ -71,7 +87,12 @@ def _jd(v):
     return str(v)
 
 
-def _df_records(df, cap=800):
+#: 兼容旧名
+_jd = jd
+
+
+def df_records(df, cap=800):
+    """DataFrame → JSON 可序列化行清单（DatetimeIndex 转 date 列，截前 cap 行）。"""
     import pandas as pd
     if df is None or (hasattr(df, "empty") and df.empty):
         return []
@@ -79,34 +100,14 @@ def _df_records(df, cap=800):
     if isinstance(d.index, pd.DatetimeIndex):
         d.insert(0, "date", d.index.strftime("%Y-%m-%d"))
     recs = d.to_dict("records")
-    return [{k: _jd(v) for k, v in r.items()} for r in recs[:cap]]
+    return [{k: jd(v) for k, v in r.items()} for r in recs[:cap]]
+
+
+#: 兼容旧名
+_df_records = df_records
 
 
 # ---------------- meta：前端表单的单一事实源 ----------------
-
-_FAMILIES = [
-    {"key": "dual_ma", "label": "双均线趋势（单标的）", "params": [
-        {"k": "fast", "label": "快线 EMA/SMA 周期", "type": "int", "default": 20, "min": 3, "max": 120},
-        {"k": "slow", "label": "慢线周期", "type": "int", "default": 60, "min": 5, "max": 250},
-        {"k": "target_weight", "label": "目标仓位", "type": "float", "default": 0.95, "min": 0.05, "max": 1.0, "step": 0.05},
-        {"k": "atr_stop", "label": "ATR 移动止损倍数（0=关）", "type": "float", "default": 0, "min": 0, "max": 10, "step": 0.5},
-    ]},
-    {"key": "momentum", "label": "ETF 动量轮动（多标的）", "params": [
-        {"k": "lookback", "label": "动量回看（日）", "type": "int", "default": 60, "min": 20, "max": 250},
-        {"k": "top_n", "label": "持有前 N 名", "type": "int", "default": 2, "min": 1, "max": 5},
-        {"k": "monthly", "label": "月度调仓（否则每日）", "type": "bool", "default": True},
-        {"k": "abs_momentum", "label": "绝对动量过滤（负动量不持有）", "type": "bool", "default": True},
-        {"k": "weight_per_slot", "label": "每槽仓位", "type": "float", "default": 0.48, "min": 0.05, "max": 1.0, "step": 0.02},
-        {"k": "skip_recent", "label": "跳过最近 N 日（防短期反转）", "type": "int", "default": 0, "min": 0, "max": 20},
-    ]},
-    {"key": "meanrev", "label": "均值回归分批抄底（单标的）", "params": [
-        {"k": "window", "label": "均线窗口", "type": "int", "default": 20, "min": 5, "max": 60},
-        {"k": "num_std", "label": "买入带（N 倍标准差）", "type": "float", "default": 2.0, "min": 0.5, "max": 4, "step": 0.25},
-        {"k": "max_batches", "label": "最大分批数", "type": "int", "default": 4, "min": 1, "max": 6},
-        {"k": "weight_per_batch", "label": "每批仓位", "type": "float", "default": 0.24, "min": 0.05, "max": 1.0, "step": 0.02},
-        {"k": "exit_to_mid", "label": "回到均线即离场", "type": "bool", "default": True},
-    ]},
-]
 
 _BOARDS = ["主板", "创业板", "科创板", "北交所"]
 
@@ -116,8 +117,9 @@ def meta(force=False):
     with _lock:
         if not force and _meta_cache["data"] and now - _meta_cache["ts"] < _META_TTL:
             return _meta_cache["data"]
-    _import_engine()
+    import_engine()
     from quant_sim.strategies import rule_based as rb
+    from quant_sim.strategies.store import BUILTIN_FAMILIES
     from quant_sim.research import screener as sc
     conds = {}
     for key, c in sc.CONDITIONS.items():
@@ -128,10 +130,12 @@ def meta(force=False):
     if os.path.isdir(daily_dir):
         local_syms = sorted({f.split(".")[0] for f in os.listdir(daily_dir)
                              if f.endswith((".parquet", ".csv")) and not f.startswith("_")})
+    families = [{"key": key, "label": reg["label"], "params": reg["params"]}
+                for key, reg in BUILTIN_FAMILIES.items()]   # 单一来源：store.BUILTIN_FAMILIES
     data = {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "quant_root": QUANT_ROOT,
-        "families": _FAMILIES,
+        "families": families,
         "rule": {
             "fields": rb.FIELDS, "ops": rb.OPS, "indicators": rb.INDICATORS,
             "spec_keys": list(rb.SPEC_KEYS),
@@ -170,8 +174,11 @@ def meta(force=False):
 _DATA_DIR_REL = os.path.join("data", "cn_a", "daily")
 
 
-def load_panel_for_api(codes, start=None, end=None, adjust="qfq", mode="auto"):
-    """mode=local 只读本地缓存；mode=auto 缺票时走 hithink 自动导出（个股本地库/ETF远端）。"""
+def load_panel_for_api(codes, start=None, end=None, adjust="qfq", mode="auto", force_refresh=False):
+    """mode=local 只读本地缓存；mode=auto 缺票时走 hithink 自动导出（个股本地库/ETF远端）。
+
+    force_refresh=True 跳过「本地已覆盖则直接读盘」的新鲜度快路，强制重新导出。
+    """
     _import_engine()
     from quant_sim.data import loader
 
@@ -185,7 +192,27 @@ def load_panel_for_api(codes, start=None, end=None, adjust="qfq", mode="auto"):
             raise ValueError(f"本地无这些标的的数据：{missing}；换「自动取数」或先用 CLI 导出（python -m quant_sim.data.hithink export）")
         return panel
     from quant_sim.data.hithink import load_panel as ht_load
-    return ht_load(list(codes), start=start or "2018-01-01", end=end, adjust=adjust, auto=True)
+    return ht_load(list(codes), start=start or "2018-01-01", end=end, adjust=adjust, auto=True,
+                   force_refresh=force_refresh)
+
+
+def tradable_codes(codes, benchmark=None):
+    """用户标的池净化（**公开函数**，run_job 网格/WF 同用）：去重、保序、剔除基准。
+
+    panel.symbols 是 BarPanel._from_frame **排序去重**后的结果且混入了加载用的
+    benchmark——单标策略取 codes[0]、规则策略建可交易池都必须基于用户传入的标的池，
+    否则「用户的第一只」被排序后的第一只顶替、指数被塞进可交易池。
+    panel.symbols 本身不动（基准曲线与其他模块依赖排序后的完整面板）。
+    """
+    bench = (str(benchmark).strip() if benchmark is not None else "")
+    out, seen = [], set()
+    for c in codes or []:
+        c = str(c).strip()
+        if not c or c == bench or c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
 
 
 def panel_warnings(panel):
@@ -203,36 +230,18 @@ def panel_warnings(panel):
 # ---------------- 策略构造 ----------------
 
 def build_strategy_from_desc(desc, codes, allow_exec=False):
-    """desc: {kind: builtin|rule|code, ...}；codes 为默认标的池。"""
+    """desc: {kind: builtin|rule|code, ...}；codes 为默认标的池（应是 tradable_codes() 净化后的用户池）。"""
     _import_engine()
     kind = desc.get("kind", "builtin")
     if kind == "builtin":
-        from quant_sim.strategies.moving_average import DualMAStrategy
-        from quant_sim.strategies.momentum_ranking import MomentumRankingStrategy
-        from quant_sim.strategies.mean_reversion import MeanReversionStrategy
+        # 构建/校验全部收编进 store.BUILTIN_FAMILIES 的 build 钩子（单一来源）：
+        # 表单、存档回放、这里的直连三条路径不再各写一份参数适配。
+        from quant_sim.strategies.store import BUILTIN_FAMILIES
         fam = desc.get("family")
-        params = dict(desc.get("params") or {})
-        if fam == "dual_ma":
-            sym = params.pop("symbol", None) or (codes[0] if codes else None)
-            if not sym:
-                raise ValueError("双均线策略需要标的（标的池第一只或 params.symbol）")
-            fast, slow = int(params.get("fast", 20)), int(params.get("slow", 60))
-            if fast >= slow:
-                raise ValueError(f"fast({fast}) 必须小于 slow({slow})")
-            if not params.get("atr_stop"):
-                params.pop("atr_stop", None)
-            return DualMAStrategy(symbol=sym, **params)
-        if fam == "momentum":
-            uni = params.pop("universe", None) or codes
-            if len(uni) < 2:
-                raise ValueError("动量轮动至少需要 2 只标的池")
-            return MomentumRankingStrategy(universe=list(uni), **params)
-        if fam == "meanrev":
-            sym = params.pop("symbol", None) or (codes[0] if codes else None)
-            if not sym:
-                raise ValueError("均值回归策略需要标的")
-            return MeanReversionStrategy(symbol=sym, **params)
-        raise ValueError(f"未知内置策略族 {fam!r}（可选 dual_ma/momentum/meanrev）")
+        reg = BUILTIN_FAMILIES.get(fam)
+        if reg is None:
+            raise ValueError(f"未知内置策略族 {fam!r}（可选 {list(BUILTIN_FAMILIES)}）")
+        return reg["build"](dict(desc.get("params") or {}), list(codes or []))
     if kind == "rule":
         from quant_sim.strategies.rule_based import GenericRuleStrategy
         spec = dict(desc.get("spec") or {})
@@ -261,21 +270,24 @@ def run_backtest_api(req):
     """req: {strategy:{kind,...}, codes[], start,end, cash, benchmark, execution,
     commission_wp, min_comm, stamp_wp, slip_model, slip_value, participation,
     max_dd_halt, block_limit, liquidate_on_end, warmup_bars, adjust, data_mode,
-    title?, log(bool 是否追加研究流水，默认 true)}"""
+    force_refresh(bool 跳过本地新鲜度快路强制重导), title?, log(bool 是否追加研究流水，默认 true)}"""
     _import_engine()
     from quant_sim import run_backtest
     from quant_sim.research.runner import make_backtest_config
 
-    codes = [str(c).strip() for c in (req.get("codes") or []) if str(c).strip()]
+    benchmark = (req.get("benchmark") or "").strip() or None
+    # 标的池边界净化（去重、保序、剔除基准）：单标策略的 codes[0] 与规则策略的
+    # 可交易池都必须是**用户**池——排序后混入基准的 panel.symbols 不得下传。
+    codes = tradable_codes(req.get("codes") or [], benchmark)
     if not codes:
-        raise ValueError("标的池为空")
+        raise ValueError("标的池为空（或仅含基准指数——指数不可交易）")
     if len(codes) > 30:
         raise ValueError("同步回测限 30 只标的；更大规模请走「参数研究」后台任务")
-    benchmark = (req.get("benchmark") or "").strip() or None
-    load_codes = list(dict.fromkeys(codes + ([benchmark] if benchmark else [])))
+    load_codes = codes + ([benchmark] if benchmark else [])
     panel = load_panel_for_api(load_codes, req.get("start"), req.get("end"),
-                               req.get("adjust", "qfq"), req.get("data_mode", "auto"))
-    strategy = build_strategy_from_desc(req.get("strategy") or {}, panel.symbols)
+                               req.get("adjust", "qfq"), req.get("data_mode", "auto"),
+                               force_refresh=bool(req.get("force_refresh")))
+    strategy = build_strategy_from_desc(req.get("strategy") or {}, codes)
     cfg = make_backtest_config(
         start=req.get("start"), end=req.get("end"),
         cash=float(req.get("cash") or 1_000_000),
@@ -571,12 +583,13 @@ def job_start(kind, params):
         job_id = time.strftime("%H%M%S") + "-" + uuid.uuid4().hex[:6]
         pfile = os.path.join(JOBS_DIR, f"{job_id}.params.json")
         ofile = os.path.join(JOBS_DIR, f"{job_id}.json")
-        with open(pfile, "w", encoding="utf-8") as f:
-            json.dump({"kind": kind, "params": params}, f, ensure_ascii=False)
-        with open(ofile, "w", encoding="utf-8") as f:
-            json.dump({"id": job_id, "kind": kind, "status": "running",
-                       "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-                       "params": {k: v for k, v in params.items() if k != "code"}}, f, ensure_ascii=False)
+        # params/占位 status 均为 server 本进程写、本进程读，仍走原子写与全项目口径一致
+        fsutil.save_json_atomic(pfile, {"kind": kind, "params": params})
+        fsutil.save_json_atomic(
+            ofile,
+            {"id": job_id, "kind": kind, "status": "running",
+             "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+             "params": {k: v for k, v in params.items() if k != "code"}})
         here = os.path.dirname(os.path.abspath(__file__))
         log = open(os.path.join(JOBS_DIR, f"{job_id}.log"), "a", encoding="utf-8")
         proc = subprocess.Popen(

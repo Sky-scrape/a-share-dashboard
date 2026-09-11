@@ -16,6 +16,8 @@ from dataclasses import asdict
 from functools import lru_cache
 from typing import List, Optional, Sequence
 
+from ..core.fsutil import save_json_atomic, save_text_atomic
+
 import numpy as np
 import pandas as pd
 
@@ -110,8 +112,7 @@ def save_result(
             "config": _jsonable(asdict(result.config)),
             "risk_events": [_jsonable(asdict(e)) for e in result.risk_events],
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+        save_json_atomic(path, payload, indent=2, default=str)
         paths.append(path)
 
     if "html" in formats:
@@ -150,8 +151,7 @@ def save_result(
             .replace("__DATA__", json.dumps(data, default=str))
         )
         path = os.path.join(out_dir, f"{name}_report.html")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(html)
+        save_text_atomic(path, html)
         paths.append(path)
     return paths
 

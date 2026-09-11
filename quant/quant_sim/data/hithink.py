@@ -65,20 +65,43 @@ def _is_index_code(raw: str) -> bool:
     return code in KNOWN_INDEX_CODES
 
 
-def _cli(args: Sequence[str], timeout: int = 300) -> dict:
+def _cli(args: Sequence[str], timeout: int = 300, retries: int = 3) -> dict:
+    """执行 hithink-finance CLI 并解析 JSON 输出（末行）。
+
+    旧实现单次 subprocess 失败即抛。现对**超时与非零退出**做指数退避重试
+    （0.5s/1s/2s + 随机抖动，共 1+retries 次尝试）——网络型子命令（fund/index
+    history 等）偶发抖动，重试即可恢复。输出解析失败与业务错误码（ok=false）
+    不重试：参数或数据本身的问题，重试也是同样结果。
+    """
+    import random
+    import time
+
     exe = shutil.which("hithink-finance") or shutil.which("hithink-finance.cmd")
     if exe is None:
         raise RuntimeError("未找到 hithink-finance CLI，请先安装（见 hithink-finance-shared skill）")
-    proc = subprocess.run([exe, *args, "--format", "json"], capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=timeout)
-    try:
-        payload = json.loads((proc.stdout or "").strip().splitlines()[-1])
-    except Exception:
-        raise RuntimeError(f"hithink-finance 输出解析失败:\n{(proc.stdout or '')[:500]}\n{(proc.stderr or '')[:500]}")
-    if not payload.get("ok"):
-        err = payload.get("error", {})
-        raise RuntimeError(f"hithink-finance {err.get('code')}: {err.get('message')}")
-    return payload["data"]
+    last_err: Optional[Exception] = None
+    for attempt in range(retries + 1):
+        if attempt:
+            time.sleep(0.5 * (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))
+        try:
+            proc = subprocess.run([exe, *args, "--format", "json"], capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            last_err = e
+            continue
+        if proc.returncode != 0:
+            last_err = RuntimeError(
+                f"hithink-finance 退出码 {proc.returncode}: {(proc.stderr or '')[:300]}")
+            continue
+        try:
+            payload = json.loads((proc.stdout or "").strip().splitlines()[-1])
+        except Exception:
+            raise RuntimeError(f"hithink-finance 输出解析失败:\n{(proc.stdout or '')[:500]}\n{(proc.stderr or '')[:500]}")
+        if not payload.get("ok"):
+            err = payload.get("error", {})
+            raise RuntimeError(f"hithink-finance {err.get('code')}: {err.get('message')}")
+        return payload["data"]
+    raise RuntimeError(f"hithink-finance 重试 {retries} 次后仍失败: {last_err}")
 
 
 # ------------------------------------------------------------------ 状态
@@ -509,21 +532,79 @@ def export_any(
     return written
 
 
+def _cache_covers(codes: Sequence[str], start: str, end: Optional[str], adjust: str, cache_dir: str,
+                  adjust_dividends: bool = True, outlier_mode: str = "keep") -> bool:
+    """请求区间已被本地已导出数据覆盖时返回 True（load_panel 跳过导出直接读盘）。
+
+    判据（读 manifest 记录，不碰远端）：
+      * 每个代码在 manifest 有记录且 parquet 文件存在；
+      * 请求 start ≥ 记录 first，请求 end ≤ 记录 last（end 缺省视为不设右界）；
+      * 口径一致：
+        - 股票词表（qfq/hfq/raw）与请求 adjust 严格一致；
+        - ETF 的 dividend_reinvested 要求请求开分红复权且 outlier_mode 相同
+          （2026-09-11 收紧：旧判据只比 adjust，非默认参数会静默吃到旧口径 parquet）；
+        - 指数的 none 是链路固有口径，不参与比较；
+      * 旧 manifest 记录缺 adjust 字段 → 视为未覆盖（重导一遍自愈，靠新写入补齐）。
+    中段空洞（first/last 之间缺行）manifest 测不出，仍靠 loader 侧校验兜底。
+    """
+    from .manifest import read_manifest
+
+    man = read_manifest(cache_dir)
+    if not man:
+        return False
+    st = pd.Timestamp(start).normalize()
+    en = pd.Timestamp(end).normalize() if end else None
+    want = str(adjust).lower()
+    for c in codes:
+        meta = man.get(f"{c}.parquet") or {}
+        if not os.path.exists(os.path.join(cache_dir, f"{c}.parquet")):
+            return False
+        got = str(meta.get("adjust", "")).lower()
+        if not got:
+            return False
+        if got in ("qfq", "hfq", "raw"):
+            if got != want:
+                return False
+        elif got == "dividend_reinvested":
+            if not adjust_dividends or str(meta.get("outlier_mode") or "") != str(outlier_mode):
+                return False
+        # got == "none"（指数）：固有口径，不参与比较
+        try:
+            first = pd.Timestamp(str(meta.get("first")))
+            last = pd.Timestamp(str(meta.get("last")))
+        except Exception:
+            return False
+        if st < first or (en is not None and en > last):
+            return False
+    return True
+
+
 def load_panel(symbols: Sequence[str], start: str = "2018-01-01", end: Optional[str] = None,
                adjust: str = "qfq", cache_dir: str = "data/cn_a/daily", auto: bool = False,
-               adjust_dividends: bool = True, outlier_mode: str = "keep"):
-    """导出 + 直接返回 BarPanel（Streamlit/研究脚本用）。auto=True 时自动分流指数/ETF/个股。"""
+               adjust_dividends: bool = True, outlier_mode: str = "keep",
+               force_refresh: bool = False):
+    """导出 + 直接返回 BarPanel（Streamlit/研究脚本用）。auto=True 时自动分流指数/ETF/个股。
+
+    新鲜度快路：manifest 显示请求区间已被本地已导出数据覆盖（start ≥ first、
+    end ≤ last、文件在、口径一致）时**直接读盘跳过导出**——网页回测不再每次全量
+    打远端。end 缺省视为不设右界（本地缓存有什么读到什么，新鲜度见概览胶囊）。
+    force_refresh=True 为逃生口：跳过快路，强制按旧口径重新导出。
+    """
     from .loader import load_panel as _load
 
     codes = [str(s).split(".")[0] for s in symbols]
-    if auto:
-        export_any(list(symbols), start=start, end=end, adjust=adjust, out_dir=cache_dir,
-                   adjust_dividends=adjust_dividends, outlier_mode=outlier_mode)
-    else:
-        export_daily(codes, start=start, end=end, adjust=adjust, out_dir=cache_dir)
+    covered = (not force_refresh) and _cache_covers(codes, start, end, adjust, cache_dir,
+                                                    adjust_dividends=adjust_dividends,
+                                                    outlier_mode=outlier_mode)
+    if not covered:
+        if auto:
+            export_any(list(symbols), start=start, end=end, adjust=adjust, out_dir=cache_dir,
+                       adjust_dividends=adjust_dividends, outlier_mode=outlier_mode)
+        else:
+            export_daily(codes, start=start, end=end, adjust=adjust, out_dir=cache_dir)
     panel = _load(cache_dir, symbols=codes, date_range=(start, end) if end else None,
                   expect_adjust=adjust)
-    panel.metadata["source"] = f"hithink:{'auto' if auto else adjust}"
+    panel.metadata["source"] = f"hithink:{'auto' if auto else adjust}" + ("+cache" if covered else "")
     _os = {k: v for k, v in OUTLIER_STATS.items() if k in codes and v}
     if _os:
         panel.metadata["outlier_stats"] = _os

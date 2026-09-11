@@ -18,6 +18,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install numpy pandas pyarrow scipy pytest requests
+        run: pip install -r requirements.txt
       - name: Run engine regression tests
-        run: python -m pytest quant/tests -q
+        run: python -m pytest quant/tests tests -q

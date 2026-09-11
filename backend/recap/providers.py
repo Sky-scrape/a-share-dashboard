@@ -15,7 +15,6 @@ ETF 快照、估值；akshare（新浪/东财）保留用于大盘指数、两�
 import sys
 import time
 import json
-from pathlib import Path
 import datetime as _dt
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +35,13 @@ import requests
 
 import ht
 import http_retry
+try:
+    import fsutil            # 原子写盘单一来源（backend/fsutil.py）
+except ImportError:          # 经 backfill 等只把 recap/ 入 path 的入口导入时兜底
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import fsutil
+
+import index_hist_cache     # noqa: E402  指数日线增量缓存（boards 与 speculate 共用）
 
 # 2026-09-04 起不再在模块级 reconfigure stdout：本模块会被宿主进程 import
 # （smoke/server 链路），导入即改写宿主输出编码是 auc_collector 踩过的坑。
@@ -99,6 +105,13 @@ _HT_DT_CACHE = {"date": None, "rows": None}
 _HT_ZB_CACHE = {"date": None, "rows": None}
 _HT_HOT_CACHE = {"date": None, "rows": None}
 _HT_LHB_CACHE = {"date": None, "rows": None}
+# 概念指数当日快照（2026-09-10 收进同一扇门）：speculation bundles 与 fetch_all
+# 的 concepts 模块同一天各调一次，此前会再抓一遍 390 概念。
+_HT_CONCEPTS_CACHE = {"date": None, "rows": None}
+
+# 新浪指数 spot（stock_zh_index_spot_sina）按 DATE 进程内 memo：market_indices 与
+# breadth 两处同源各调一次，合并为一次共享（同一时刻口径还更一致）。
+_INDEX_SPOT_CACHE = {"date": None, "df": None}
 
 # 全市场快照缓存：breadth/extra/晋级率共用一次抓取（hithink market.snapshot）
 _MKT_SNAP_CACHE = {"date": None, "rows": None, "by_code": None}
@@ -111,6 +124,12 @@ def _date_cached(cache, fetch):
     rows = fetch()
     cache.update(date=DATE, rows=rows)
     return rows
+
+
+def index_spot_sina():
+    """新浪指数 spot DataFrame（当日一次共享，失败抛异常由调用方降级）。"""
+    require_ak()
+    return _date_cached(_INDEX_SPOT_CACHE, lambda: ak.stock_zh_index_spot_sina())
 
 
 def _round2(x):
@@ -174,8 +193,9 @@ def _get_industry_map():
 
     2026-09-01 口径统一：优先读全站单一来源（竞价采集器维护的
     data/auction/industry_map.json，见 backend/industry_common）；
-    缺失/过旧才退回本模块按成分自建并日落缓存（首次切口径时两边同日重建，
-    内容同源同名，不会出现两套行业名）。"""
+    缺失/过旧才退回兜底自建——该兜底逻辑（含 stock_industry_<DATE>.json 缓存
+    与「保留最近 5 份」日落清理）2026-09-10 下沉到 industry_common.build_ticker_map，
+    与 fetch_global 共用一处，本模块只调它。"""
     try:
         import industry_common
     except ImportError:  # 单独被 import 时 backend 根可能不在 sys.path
@@ -184,34 +204,7 @@ def _get_industry_map():
     shared = industry_common.load_shared_ticker_map()
     if shared:
         return shared
-    cache_file = os.path.join(_cache_dir(), f"stock_industry_{DATE}.json")
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:  # noqa: BLE001
-            pass
-    industries = _get_industries()
-    name_by_code = dict(industries)
-    mapping = {}
-
-    def fetch(code):
-        try:
-            d = ht.ht("index", "constituents", "--thscode", code, timeout=60)
-            return code, [str(x.get("ticker")) for x in (d.get("item") or [])]
-        except Exception:  # noqa: BLE001 - 单行业失败跳过
-            return code, []
-
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for code, tickers in ex.map(fetch, [c for c, _ in industries]):
-            for t in tickers:
-                mapping.setdefault(t, name_by_code.get(code, ""))
-    if not mapping:
-        raise RuntimeError("ValueError: 行业成分映射为空")
-    os.makedirs(_cache_dir(), exist_ok=True)
-    Path(cache_file).write_text(json.dumps(mapping, ensure_ascii=False),
-                                encoding="utf-8")
-    return mapping
+    return industry_common.build_ticker_map(_cache_dir(), DATE)
 
 
 def _get_concepts():
@@ -241,8 +234,22 @@ def _current_report():
 
 
 def _financial_indicators(thscodes):
-    """批量查最新报告期财务指标：{thscode: (加权ROE, 净利同比)}。单股失败跳过。"""
+    """批量查最新报告期财务指标：{thscode: (加权ROE, 净利同比)}。单股失败跳过。
+
+    财务数据季度才变，而 TOP20 每轮全市场刷新都会走到——按 (DATE, 报告期) 做
+    .ht_cache 磁盘缓存（首抓后同日零子进程），键含 DATE 防跨日脏读。
+    """
     report = _current_report()
+    cache_file = os.path.join(_cache_dir(),
+                              f"fin_ind_{DATE}_{report.replace('-', '')}.json")
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, encoding="utf-8") as f:
+                d = json.load(f)
+            if d.get("report") == report:
+                return {k: tuple(v) for k, v in (d.get("map") or {}).items()}
+        except Exception:  # noqa: BLE001 - 缓存坏就重抓
+            pass
 
     def fetch(ths):
         try:
@@ -270,6 +277,10 @@ def _financial_indicators(thscodes):
     with ThreadPoolExecutor(max_workers=5) as ex:
         for ths, roe, yoy in ex.map(fetch, thscodes):
             out[ths] = (roe, yoy)
+    os.makedirs(_cache_dir(), exist_ok=True)
+    fsutil.save_json_atomic(cache_file, {
+        "date": DATE, "report": report,
+        "map": {k: list(v) for k, v in out.items()}})
     return out
 
 
@@ -330,7 +341,7 @@ def _records(df):
 def market_indices():
     """大盘指数：上证/深成/创业板/科创50/沪深300 最新价、涨跌幅、成交额。"""
     try:
-        df = _retry(lambda: ak.stock_zh_index_spot_sina())
+        df = _retry(index_spot_sina)
         targets = {
             "sh000001": "上证指数",
             "sz399001": "深证成指",
@@ -390,7 +401,7 @@ def breadth():
 
         # 两市成交额（沪市 sh000001 + 深市 sz399106）+ 大小盘对比（沪深300 / 中证1000）
         try:
-            spot = _retry(lambda: ak.stock_zh_index_spot_sina())
+            spot = _retry(index_spot_sina)   # 与 market_indices 共享当日一次抓取
             spot_map = {str(r["代码"]): r for _, r in spot.iterrows()}
             sh = spot_map.get("sh000001")
             sz = spot_map.get("sz399106")
@@ -495,26 +506,21 @@ def limit_break_pool():
 def boards():
     """行业板块：同花顺一级行业 90 个（hithink index）。
 
-    近 5 日 = index.history（含当天，彻底解决滞后 1 天问题）；
-    当日涨跌幅优先取自历史日线当天（支持历史日期回补），index.snapshot 仅兑底。
+    近 5 日 = index.history（2026-09-10 起走 index_hist_cache 增量缓存，与
+    speculate.industry_series 共用同一份 .ht_cache 文件：首次全量回溯 1500 天、
+    之后每日只补尾段，不再每天 90 次全量 10 日子进程）；
+    当日涨跌幅优先取自历史日线当天（支持历史日期回补），index.snapshot 仅兜底。
     输出结构与旧版一致：{名称, 涨跌幅, history: [{日期, 收盘价, 涨跌幅}]}。
     """
     try:
         industries = _get_industries()
         codes = [c for c, _ in industries]
         snap = ht.index_snapshot_batches(codes)
-        end_dt = datetime.strptime(DATE, "%Y%m%d")
-        start_s = (end_dt - timedelta(days=10)).strftime("%Y%m%d")
-        today_s = end_dt.strftime("%Y-%m-%d")
-        start_ms = ht.date_ms(start_s)
-        end_ms = ht.date_ms(DATE) + 86400 * 1000  # 含当天
+        today_s = datetime.strptime(DATE, "%Y%m%d").strftime("%Y-%m-%d")
 
         def fetch_hist(code):
             try:
-                d = ht.ht("index", "history", "--thscode", code,
-                          "--start-ms", str(start_ms), "--end-ms", str(end_ms),
-                          timeout=60)
-                return code, (d.get("item") or [])
+                return code, index_hist_cache.series(code + ".TI", DATE)
             except Exception:  # noqa: BLE001 - 单行业历史失败跳过
                 return code, []
 
@@ -526,19 +532,19 @@ def boards():
             row = snap.get(code)
             if row is None:
                 continue
-            hist_raw = hists.get(code) or []
+            # 只看 ≤DATE 的历史（缓存可能已被别的调用补到更新日期）
+            hist_raw = [r for r in (hists.get(code) or []) if r[0] <= today_s]
+            hist_raw = hist_raw[-10:]   # 与旧实现同窗（近 10 日，输出取尾 5）
             hist = []
             for i, hrow in enumerate(hist_raw):
-                close = hrow.get("close_price")
-                prev_close = hist_raw[i - 1].get("close_price") if i > 0 else None
-                dstr = datetime.fromtimestamp(
-                    hrow["date_ms"] / 1000).strftime("%Y-%m-%d")
+                close = hrow[1]
+                prev_close = hist_raw[i - 1][1] if i > 0 else None
                 hist.append({
-                    "日期": dstr, "收盘价": _round2(close),
+                    "日期": hrow[0], "收盘价": _round2(close),
                     "涨跌幅": None if not prev_close else _round2(
                         (close - prev_close) / prev_close * 100.0),
                 })
-            # 涨跌幅优先取自历史日线当天（支持历史日期回补），快照仅兑底
+            # 涨跌幅优先取自历史日线当天（支持历史日期回补），快照仅兜底
             pct = None
             if hist and hist[-1]["日期"] == today_s:
                 pct = hist[-1]["涨跌幅"]
@@ -593,27 +599,32 @@ def concepts():
     """概念板块：同花顺概念指数当日快照（hithink，批量秒级）。
 
     输出：概念 / 涨跌幅 / 成交额(亿) / 涨幅排名。
+    按 DATE 进程内缓存（2026-09-10）：fetch_all 的 concepts 模块与 speculation
+    bundles 同日各取一次，不再重复抓 390 概念。
     （旧版 info_ths 的资金净流入/涨跌家数同花顺批量接口不再提供，已移除）
     """
     try:
-        cat = _get_concepts()
-        snap = ht.index_snapshot_batches([c for c, _ in cat])
-        rows = []
-        for code, name in cat:
-            r = snap.get(code)
-            if r is None:
-                continue
-            rows.append({
-                "概念": name,
-                "涨跌幅": _round2(r.get("price_change_ratio_pct")),
-                "成交额(亿)": _round2((r.get("turnover") or 0) / 1e8),
-            })
-        if not rows:
-            return {"status": "error", "error": "ValueError: 概念数据为空"}
-        rows.sort(key=lambda x: x["涨跌幅"] if x["涨跌幅"] is not None else -999,
-                  reverse=True)
-        for i, r in enumerate(rows, 1):
-            r["涨幅排名"] = i
+        def _fetch():
+            cat = _get_concepts()
+            snap = ht.index_snapshot_batches([c for c, _ in cat])
+            rows = []
+            for code, name in cat:
+                r = snap.get(code)
+                if r is None:
+                    continue
+                rows.append({
+                    "概念": name,
+                    "涨跌幅": _round2(r.get("price_change_ratio_pct")),
+                    "成交额(亿)": _round2((r.get("turnover") or 0) / 1e8),
+                })
+            if not rows:
+                raise RuntimeError("ValueError: 概念数据为空")
+            rows.sort(key=lambda x: x["涨跌幅"] if x["涨跌幅"] is not None else -999,
+                      reverse=True)
+            for i, r in enumerate(rows, 1):
+                r["涨幅排名"] = i
+            return rows
+        rows = _date_cached(_HT_CONCEPTS_CACHE, _fetch)
         return {"status": "ok", "data": rows}
     except Exception as e:
         return _err(e)

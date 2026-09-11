@@ -49,8 +49,34 @@ def peer_is_our_service(port):
     旧版只看端口通不通就开浏览器：若 8000 被别的程序占用，用户会看到那个程序的
     404/报错页还以为是看板坏了。返回 True=本服务（可能是已在跑的旧实例）、
     False=别的程序、None=探测失败（按未知处理）。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    if not (1024 <= port <= 65535):
+        return None
+    url = f"http://127.0.0.1:{port}/api/health"   # 只探测本机回环（SSRF 白名单口径）
+    parts = urlsplit(url)
+    if parts.scheme != "http" or parts.hostname != "127.0.0.1":
+        return None
+    try:
+        for info in socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP):
+            ip = ipaddress.ip_address(info[4][0])
+            if not ip.is_loopback:
+                return None   # 解析到非环回地址：拒绝探测
+    except (OSError, ValueError):
+        return None
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(url, timeout=3) as r:
             return (json_marker(r.read())) == "ak-dashboard"
     except Exception:  # noqa: BLE001
         return None

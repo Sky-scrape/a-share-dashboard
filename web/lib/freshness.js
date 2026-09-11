@@ -9,14 +9,10 @@ function renderFreshness(slotId) {
   if (!slot) return;
   var pop = null;
 
-  function localDate8() {
-    var d = new Date();
-    return "" + d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
-  }
-  function localDate10() {
-    var d = new Date();
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-  }
+  /* 本地日期已收敛 lib/util.js（AK.dates，2026-09-10）：本文件此前自带 localDate8/
+     localDate10 副本，与五个页面各写一份口径重复。加载顺序：宿主页先 util.js 后本文件。 */
+  function localDate8() { return AK.dates.today8(); }
+  function localDate10() { return AK.dates.today10(); }
   function grade(seg, todayStr) {
     if (!seg || !seg.last_date) return { c: "bad", t: "无数据" };
     var fresh = seg.last_date === todayStr;

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from quant_sim import paths as _paths
+from quant_sim.core.fsutil import save_text_atomic
 
 if __name__ == "__main__" and __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -158,8 +159,7 @@ def run_signal_for_name(name: str, codes: Optional[List[str]] = None, start: str
     d = pd.Timestamp(sig["date"]).strftime("%Y-%m-%d")
     safe = "".join(ch for ch in saved.name if ch.isalnum() or ch in "_-\u4e00-\u9fff")[:40]
     path = os.path.join(out_dir, f"{d}_{safe}.md")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(report)
+    save_text_atomic(path, report)
     print(report)
     print(f"\n已保存 → {path}")
     return report

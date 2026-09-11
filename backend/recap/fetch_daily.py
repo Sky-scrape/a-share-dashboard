@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import providers
 import ht
 import snapio
+import fsutil
 import lockutil
 import logutil
 
@@ -100,6 +102,24 @@ def _run(args, date):
     LOG.info(f"== 抓取 {date} 全套数据 ==")
     results = providers.fetch_all()
 
+    # 失败模块重试（2026-09-11，09-10 上游抖动致 4 模块静默失败的补救）：
+    # 只重抓失败模块，间隔递增；重试后仍失败则快照照常落盘但进程以非零码退出
+    retry_rounds = (30, 60)   # 重试前等待秒数（上游抖动通常分钟级恢复）
+    failed = [n for n in providers.MODULES if results[n].get("status") != "ok"]
+    for attempt, delay in enumerate(retry_rounds, 1):
+        if not failed:
+            break
+        LOG.warning(f"  {len(failed)} 个模块失败，{delay}s 后重试"
+                    f"（第 {attempt}/{len(retry_rounds)} 轮）: " + "、".join(failed))
+        time.sleep(delay)
+        for name in list(failed):
+            try:
+                results[name] = getattr(providers, name)()
+            except Exception as e:  # noqa: BLE001
+                results[name] = {"status": "error",
+                                 "error": f"{type(e).__name__}: {str(e)[:160]}"}
+        failed = [n for n in providers.MODULES if results[n].get("status") != "ok"]
+
     for name in providers.MODULES:
         st = results[name]["status"]
         extra = ""
@@ -111,7 +131,11 @@ def _run(args, date):
         LOG.info(f"  {name}: {st}{extra}")
 
     ok_count = sum(1 for r in results.values() if r["status"] == "ok")
-    LOG.info(f"== 完成：{ok_count}/{len(results)} 模块 ok ==")
+    if failed:
+        LOG.error(f"== 采集不完整：{ok_count}/{len(results)} ok，"
+                  f"重试 {len(retry_rounds)} 轮后仍失败: " + "、".join(failed) + " ==")
+    else:
+        LOG.info(f"== 完成：{ok_count}/{len(results)} 模块 ok ==")
 
     # 昨日两市成交额对比（读 data/recap/ 下最近的历史快照，兼容 gzip）
     if results.get("breadth", {}).get("status") == "ok":
@@ -158,11 +182,7 @@ def _run(args, date):
     if args.out:
         if ".." in args.out or not re.fullmatch(r"[\w\/:.\-]+\.json", args.out):
             raise SystemExit(f"非法输出路径: {args.out}")
-        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-        tmp = args.out + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(snapshot, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, args.out)
+        fsutil.save_json_atomic(args.out, snapshot, indent=2)   # 原子写
         LOG.info(f"已写入 {args.out}")
     else:
         out = snapio.save(date, snapshot, DATA_DIR)
@@ -171,13 +191,13 @@ def _run(args, date):
     # 任务状态：供 /api/health 数据管家展示（失败不影响主流程）+ 触发派生层重算
     try:
         st_dir = os.path.join(PROJECT_ROOT, ".status")
-        os.makedirs(st_dir, exist_ok=True)
-        json.dump({
+        fsutil.save_json_atomic(os.path.join(st_dir, "recap.json"), {
             "last_run": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": date,
             "modules": {k: v.get("status", "?") for k, v in results.items()},
-            "exit": 0,
-        }, open(os.path.join(st_dir, "recap.json"), "w", encoding="utf-8"), ensure_ascii=False)
+            "failed": failed,
+            "exit": 1 if failed else 0,
+        })
     except Exception as e:
         LOG.info(f"  状态写入失败: {e}")
     if not args.out:
@@ -188,7 +208,7 @@ def _run(args, date):
             LOG.warning(f"  派生层重算失败（忽略，server 会懒重算）: {type(e).__name__}")
 
 
-    # 数据保留：只保留最近 N 天快照（默认 120 天），避免磁盘无限膨胀
+    # 数据保留：只保留最近 N 天快照（默认 400 天，见 --keep-days），避免磁盘无限膨胀
     keep_days = args.keep_days
     data_dir = DATA_DIR
     cutoff = datetime.datetime.now() - datetime.timedelta(days=keep_days)
@@ -208,6 +228,10 @@ def _run(args, date):
         if d < cutoff:
             os.remove(os.path.join(data_dir, fn))
             LOG.info(f"  已清理旧数据 {fn}（超 {keep_days} 天）")
+
+    # 非零退出码：快照已落盘（部分数据好过没有），但让计划任务/日志可见本次不完整
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

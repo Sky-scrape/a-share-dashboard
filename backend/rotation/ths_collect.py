@@ -30,7 +30,6 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
@@ -41,6 +40,8 @@ import ht          # noqa: E402  hithink CLI 封装（与复盘/竞价共用同�
 import lockutil    # noqa: E402
 import trade_cal   # noqa: E402  交易日历判定单一来源（backend/trade_cal.py）
 import logutil     # noqa: E402  统一 logging（时间戳/级别）
+import fsutil      # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import http_retry  # noqa: E402  共享重试（backend/http_retry.py）
 
 LOG = logutil.get_logger("ak.rotation")
 
@@ -100,11 +101,10 @@ def load_board_pool(refresh=False):
         if len(pool) < 80:
             raise RuntimeError(f"目录一级行业仅 {len(pool)} 个（预期约 90），上游结构可能变了")
         os.makedirs(DATA_DIR, exist_ok=True)
-        Path(BOARDS_FILE).write_text(
-            json.dumps({"src": "ths", "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "industry": [{"code": c, "name": n} for c, n in pool],
-                        "concept": []}, ensure_ascii=False),
-            encoding="utf-8")
+        fsutil.save_json_atomic(BOARDS_FILE, {
+            "src": "ths", "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "industry": [{"code": c, "name": n} for c, n in pool],
+            "concept": []})
         return pool
     except Exception as e:  # noqa: BLE001
         saved = _read_saved()
@@ -129,9 +129,8 @@ def load_raw(date_s):
 
 
 def save_raw(raw):
-    os.makedirs(RAW_DIR, exist_ok=True)
-    Path(raw_path(raw["date"])).write_text(json.dumps(raw, ensure_ascii=False),
-                                           encoding="utf-8")
+    # 原子写：盘中每分钟覆盖写，derive/server 随时在读，防读到半截文件
+    fsutil.save_json_atomic(raw_path(raw["date"]), raw)
 
 
 def sample_round(pool, raw, stamp_hm, in_window):
@@ -247,24 +246,20 @@ def build_daily(pool, raw, note_extra=None):
 
 
 def write_daily(out):
-    os.makedirs(DAILY_DIR, exist_ok=True)
-    path = os.path.join(DAILY_DIR, f"{out['date']}.json")
-    path = Path(path)
-    path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    return str(path)
+    # 原子写（backend/fsutil.py）：分时文件被 server/derive 随时读
+    return fsutil.save_json_atomic(os.path.join(DAILY_DIR, f"{out['date']}.json"), out)
 
 
 def write_status(out, failed):
     try:
-        os.makedirs(os.path.dirname(STATUS_PATH), exist_ok=True)
-        Path(STATUS_PATH).write_text(json.dumps({
+        fsutil.save_json_atomic(STATUS_PATH, {
             "last_run": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": out["date"], "src": "ths",
             "boards": len(out.get("boards") or []),
             "times": len(out.get("times") or []),
             "failed": [[f_.get("code"), f_.get("error")] for f_ in (failed or [])][:20],
             "exit": 0,
-        }, ensure_ascii=False), encoding="utf-8")
+        })
     except Exception as e:  # noqa: BLE001
         LOG.info(f"  状态写入失败: {e}")
 
@@ -362,18 +357,27 @@ def _run(args, lock):
         if raw["rounds"] and raw["rounds"][-1]["t"] == stamp:
             raw["rounds"][-1] = {**raw["rounds"][-1], "w": bool(in_window)}
             stamp = (now + datetime.timedelta(seconds=1)).strftime("%H:%M")
-        ok_codes, failed = [], []
-        for attempt in (1, 2):
-            try:
-                ok_codes, failed = sample_round(pool, raw, stamp, in_window)
-                if ok_codes:
-                    break
-                if attempt == 1:
-                    # 整轮空=上游瞬时抖动：同一分钟内重试一次，别把抖动留成永久分钟洞
-                    time.sleep(5)
-            except Exception as e:  # noqa: BLE001 - 整轮失败：不写假点，如实记录
-                LOG.warning(f"[{stamp}] 轮次失败（第 {attempt} 次）: {e}")
-        if not ok_codes:
+
+        # 整轮失败/空轮重试收编 http_retry（backend/http_retry.py）：指数退避 +
+        # 可重试判定；空轮（上游瞬时抖动）视同可重试，同一分钟内不把抖动留成永久洞
+        class _EmptyRound(Exception):
+            """整轮采样成功但一个板块都没拿到（上游瞬时抖动）。"""
+
+        def _sample():
+            ok_codes, failed = sample_round(pool, raw, stamp, in_window)
+            if not ok_codes:
+                raise _EmptyRound(stamp)
+            return ok_codes, failed
+
+        def _judge(e):
+            return isinstance(e, _EmptyRound) or http_retry.is_retryable(e)
+
+        try:
+            ok_codes, failed = http_retry.retry(
+                _sample, tries=1, delay=5, retry_on=_judge,
+                on_retry=lambda _i, e: LOG.warning(f"[{stamp}] 轮次失败（重试中）: {e}"))
+        except Exception as e:  # noqa: BLE001 - 整轮失败：不写假点，如实记录
+            LOG.warning(f"[{stamp}] 轮次失败（重试用尽）: {e}")
             return None
         raw["last_failed"] = [f for f in failed]
         out = build_daily(pool, raw)

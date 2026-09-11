@@ -17,6 +17,11 @@ from .types import Fill, Lot, Position, Side, Trade
 
 __all__ = ["Account"]
 
+#: 空仓查询的共享哨兵：主循环每天对全部符号做持仓快照/投影查询（绝大多数无持仓），
+#: 旧实现每次调用都新分配一个 Position 对象。查询方只读 quantity/available/avg_cost，
+#: 只读语义下共享一个空 Position 安全；**请勿修改返回对象**（有持仓时返回真实 Position）。
+_EMPTY_POSITION = Position(symbol="")
+
 
 @dataclass
 class Account:
@@ -40,7 +45,9 @@ class Account:
 
     # ------------------------------------------------------------------ 查询
     def position(self, symbol: str) -> Position:
-        return self.positions.get(symbol) or Position(symbol=symbol)
+        """查询持仓；无持仓返回共享空 Position（数量/可卖/成本均为 0，语义同旧实现）。"""
+        pos = self.positions.get(symbol)
+        return pos if (pos is not None and pos.quantity > 0) else _EMPTY_POSITION
 
     def has_position(self, symbol: str) -> bool:
         pos = self.positions.get(symbol)

@@ -30,6 +30,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend", "recap"))
 
+import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+
 import ht  # noqa: E402
 import ths_collect  # noqa: E402  板块池单一来源（boards.json / index catalog）
 
@@ -138,10 +140,7 @@ def main():
                             "source": "同花顺指数日线回填（index.history，仅开盘/收盘两点）",
                             "note": "历史日K回填：非盘中逐分钟数据，中间走势未采样，不虚构"}}
         os.makedirs(DAILY_DIR, exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=False)
-        os.replace(tmp, path)
+        fsutil.save_json_atomic(path, out)
         written += 1
         if written % 10 == 0:
             print(f"  写入 {written}/{len(days)} …", flush=True)

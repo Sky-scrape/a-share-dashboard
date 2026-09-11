@@ -22,6 +22,7 @@ import argparse
 import datetime
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import ht
 import em_common  # 东财直连共享封装（backend/em_common.py）
+import fsutil     # 原子写盘单一来源（backend/fsutil.py）
 import providers  # 复用 _get_concepts / ETF_LIST / _round2 / PCT_BINS
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -336,10 +338,7 @@ def main():
             if rows:
                 prev["today"] = {"status": "ok", "data": rows}
 
-        tmp = os.path.join(DATA_DIR, date + ".json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(snap, f, ensure_ascii=False)
-        os.replace(tmp, os.path.join(DATA_DIR, date + ".json"))
+        fsutil.save_json_atomic(os.path.join(DATA_DIR, date + ".json"), snap)
         written += 1
         if written % 20 == 0:
             print(f"    已写 {written}/{len(targets)}")

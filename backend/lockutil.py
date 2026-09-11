@@ -13,24 +13,34 @@ DEFAULT_STALE_MIN = 40
 
 
 def acquire(lock_path, stale_min=DEFAULT_STALE_MIN):
+    """拿锁：O_EXCL 原子创建；被持有且未过期返回 None；过期锁先删后重夺。
+
+    2026-09-10 修 TOCTOU：旧实现「查 mtime 过期 -> write_text 覆盖」两步之间
+    另一进程同样判定过期并覆盖，两进程同时持有锁。现在接管也必须走 O_EXCL
+    （删除后重建仍用原子创建），两进程同时接管时只有一个 os.open 成功。
+    """
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-    payload = json.dumps({"pid": os.getpid(), "at": time.time()})
-    try:
-        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w") as f:
-            f.write(payload)
-        return lock_path
-    except FileExistsError:
+    for _ in range(3):
+        payload = json.dumps({"pid": os.getpid(), "at": time.time()})
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            return lock_path
+        except FileExistsError:
+            pass
         try:
             age_min = (time.time() - os.path.getmtime(lock_path)) / 60
-            if age_min > stale_min:
-                # 过期锁：接管（写进程崩溃/被杀后残留）
-                with open(lock_path, "w") as f:
-                    f.write(payload + " (stolen after %.0f min)" % age_min)
-                return lock_path
+        except OSError:
+            continue   # 锁文件刚好被释放：回头再走一轮 O_EXCL
+        if age_min <= stale_min:
             return None  # 仍被持有
-        except Exception:
-            return None
+        # 过期锁（写进程崩溃/被杀后残留）：先删，下一轮 O_EXCL 原子重夺
+        try:
+            os.remove(lock_path)
+        except OSError:
+            return None  # 删除失败=他人正在接管/释放，按被持有处理
+    return None
 
 
 def held_info(lock_path):

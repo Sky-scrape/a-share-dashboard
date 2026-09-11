@@ -66,10 +66,6 @@ class Context:
         bar = self._bars.get(symbol)
         return getattr(bar, field_) if bar is not None else None
 
-    def prev_close(self, symbol: str) -> Optional[float]:
-        bar = self._bars.get(symbol)
-        return bar.pre_close if bar else None
-
     def history(self, symbol: str, length: Optional[int] = None, to_date=None) -> Optional[pd.DataFrame]:
         """截至 `to_date`（默认为**昨日收盘**，即不含当日未完成的行情）的历史 bar。
 
@@ -80,9 +76,6 @@ class Context:
         if end is None:
             return None
         return self._e.panel.history(symbol, end, length)
-
-    def history_include_today(self, symbol: str, length: Optional[int] = None) -> Optional[pd.DataFrame]:
-        return self._e.panel.history(symbol, self.date, length)
 
     # ---------------------------------------------------------------- 账户
     @property
@@ -117,11 +110,6 @@ class Context:
     @property
     def fills(self) -> List[Fill]:
         return self._e.account.fills
-
-    def weight(self, symbol: str) -> float:
-        pos = self._e.account.position(symbol)
-        eq = self.equity
-        return (pos.quantity * (self.price(symbol) or pos.avg_cost)) / eq if eq else 0.0
 
     # ---------------------------------------------------------------- 下单
     def buy(self, symbol: str, quantity: float = 0, percent: float = 0.0, limit: Optional[float] = None, reason: str = "") -> Order:
@@ -158,19 +146,6 @@ class Context:
         if every_n_bars <= 1:
             return True
         return (idx % every_n_bars) == 0
-
-    def is_first_trading_day_of_month(self) -> bool:
-        idx = self.last_bar_index
-        if idx == 0:
-            return True
-        return self._e.dates[idx].month != self._e.dates[idx - 1].month
-
-    def indicator(self, symbol: str, func, length: int = 260):
-        """便捷指标：func(history_df) -> 数值（默认看到截至昨日的历史）。"""
-        df = self.history(symbol, length)
-        if df is None or df.empty:
-            return None
-        return func(df)
 
     def log(self, message: str) -> None:
         self._e.logs.append(f"[{self.date.date()}] {message}")
@@ -242,6 +217,15 @@ class BacktestEngine:
             max_participation_rate=self.config.risk.max_participation_rate,
             block_limit_move=self.config.block_limit_move,
         )
+        # 期末强平专用撮合器：复用撮合语义（滑点/涨跌停/参与率），但价格锚点固定为
+        # 收盘=最后价——期末已无「次日开盘」，next_open 模式的主撮合器会错锚到末日开盘。
+        self._close_matcher = MatchingEngine(
+            self.cost_model,
+            self.contract,
+            execution="close",
+            max_participation_rate=self.config.risk.max_participation_rate,
+            block_limit_move=self.config.block_limit_move,
+        )
 
     # ------------------------------------------------------------------ 入口
     def run(
@@ -277,6 +261,10 @@ class BacktestEngine:
         self._buy_forbidden = False
         self._day_start_equity = self.config.initial_cash
         self._peak_equity = self.config.initial_cash
+        # 同根 bar 下单批次内的投影缓存（_pending_projection 首扫 + submit_order 增量维护）
+        self._proj: Optional[List] = None
+        self._holdings_total: Optional[float] = None
+        self._holdings_parts: Dict[str, float] = {}
 
         rows: List[dict] = []
         pos_rows: List[Dict[str, int]] = []
@@ -288,6 +276,9 @@ class BacktestEngine:
             self.current_date = date
             self.current_bars = bars
             self._update_last_prices(bars)
+            # 新的一根 bar：上一批次（同 bar 提交）的投影缓存全部失效
+            self._proj = None
+            self._holdings_total = None
 
             # 1) T+1 解锁：仅在**日历交易日变更**时触发（不是每根 bar）。
             #    日线面板每天变更，行为与旧版完全一致；将来支持日内后，
@@ -329,8 +320,9 @@ class BacktestEngine:
             self._peak_equity = max(self._peak_equity, eq)
             holdings = self.account.holdings_value(price_map)
             rows.append({"date": date, "cash": self.account.cash, "holdings_value": holdings, "equity": eq})
-            snap = {s: self.account.position(s).quantity for s in symbols}
-            pos_rows.append(snap)
+            if not lite:
+                # lite（网格/WF 批量）最终丢弃 T×S 持仓表：跳过全符号逐只查询，省 O(S)/bar
+                pos_rows.append({s: self.account.position(s).quantity for s in symbols})
             self._day_start_equity = eq
             if self._buy_forbidden:
                 self._buy_forbidden = False  # 仅当日有效
@@ -340,8 +332,10 @@ class BacktestEngine:
         force = self._force_liquidate(dates[-1], panel) if self.config.liquidate_on_end else False
         frame_full = pd.DataFrame(rows).set_index("date")
         if force:
+            # 期末仍有未平仓持仓（跌停封板/停牌/T+1 当日买入）时按最后价实估，
+            # 不再无条件把 holdings_value 拍成 0（净值与持仓保持会计一致）。
             frame_full.loc[frame_full.index[-1], "cash"] = self.account.cash
-            frame_full.loc[frame_full.index[-1], "holdings_value"] = 0.0
+            frame_full.loc[frame_full.index[-1], "holdings_value"] = self.account.holdings_value(self._last_prices)
             frame_full.loc[frame_full.index[-1], "equity"] = self.account.equity(self._last_prices)
         # 评估窗切分：预热段连续运行（建立仓位），但曲线/成交/指标只统计 [start, end]。
         emask = frame_full.index >= eval_dates[0]
@@ -438,6 +432,10 @@ class BacktestEngine:
         warmup_bars>0 时数据窗从 start_date 往前多推 N 根：策略在预热段真实运行
         （积累历史、建立初始仓位），但净值曲线/成交/指标只统计评估窗——消除
         walk-forward「长回看参数在窗口头部被饿死、折首段强制空仓拍平」的结构性偏差。
+
+        切窗缓存挂在 panel.metadata（键 "_slice_cache"）：网格/WF 的全部变体共享
+        同一份 panel 而引擎每变体新建，同 (start,end,warmup) 的整块字段矩阵复制
+        只做一次。panel 存活即缓存存活，不跨 panel 泄漏。
         """
         all_dates = panel.dates
         eval_dates = all_dates
@@ -448,6 +446,11 @@ class BacktestEngine:
         if len(eval_dates) < 2:
             raise ValueError("回测区间内交易日不足 2 天，请检查 start_date/end_date 与数据范围")
         warm = int(getattr(self.config, "warmup_bars", 0) or 0)
+        cache = panel.metadata.setdefault("_slice_cache", {})
+        key = (eval_dates[0], eval_dates[-1], len(eval_dates), warm)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
         data_dates = eval_dates
         if warm > 0:
             i0 = int(all_dates.searchsorted(eval_dates[0]))
@@ -456,8 +459,14 @@ class BacktestEngine:
             i1 = i0 + len(eval_dates)
             data_dates = all_dates[max(0, i0 - warm):i1]
         keep = np.isin(panel.dates, data_dates)
-        meta = {k: v for k, v in panel.metadata.items() if k != "_active"}
+        meta = {k: v for k, v in panel.metadata.items() if k not in ("_active", "_slice_cache")}
         sub = BarPanel(data_dates, panel.symbols, {k: v[keep] for k, v in panel.arrays.items()}, meta)
+        cache[key] = (sub, data_dates, eval_dates)
+        # 封顶防膨胀：walk-forward 每折窗口不同，折数多时每折各挂一份字段矩阵拷贝
+        # （挂在共享 panel.metadata 上，panel 存活即不释放）。32 份远超网格变体的
+        # key 数；超限淘汰最早写入的窗口（WF 折序单调，不会再回访）。
+        while len(cache) > 32:
+            cache.pop(next(iter(cache)))
         return sub, data_dates, eval_dates
 
     def _ctx(self, date, bars) -> Context:
@@ -485,6 +494,17 @@ class BacktestEngine:
         return int(self.dates.searchsorted(pd.Timestamp(date)))
 
     # ------------------------------------------------------------- 下单流程
+    def _ref_price(self, symbol: str) -> float:
+        """下单/投影共用的参考价：当日收盘有效用收盘，否则退最近价（无则 0）。"""
+        bar = self.current_bars.get(symbol)
+        return (bar.close if bar is not None and bar.is_valid else None) or self.last_price(symbol) or 0.0
+
+    def _invalidate_projection(self) -> None:
+        """投影缓存失效：新 bar 开始、或成交改变持仓后调用（现金实时读，不缓存）。"""
+        self._proj = None
+        self._holdings_total = None
+        self._holdings_parts = {}
+
     def _pending_projection(self) -> tuple:
         """同日待撮合挂单的资金投影（挂单预留层）。
 
@@ -496,14 +516,19 @@ class BacktestEngine:
             保守口径；close 模式下同一收盘价估回款则基本无差）；
           * sell_qty：各标的已挂待卖量，用于净持仓/净仓位额度。
         投影只影响事前审批的缩量；真实成交仍由 account.can_apply 兜底。
+
+        批次优化：同一根 bar 内第一次调用做全量扫描并缓存，此后由 submit_order
+        在挂单入队时**增量维护**（rebalance_to 一次提交 2N 单不再 O(N²) 重扫）；
+        每根 bar 开始与成交发生后缓存失效重扫。增量口径与全量扫描逐项一致。
         """
+        if self._proj is not None:
+            return self._proj[0], self._proj[1], self._proj[2]
         reserved = 0.0
         inflow = 0.0
         sell_qty: Dict[str, int] = {}
         buffer = max(1.0, float(self.config.cash_demand_pct))
         for o in self.pending:
-            bar = self.current_bars.get(o.symbol)
-            px = (bar.close if bar and bar.is_valid else None) or self.last_price(o.symbol)
+            px = self._ref_price(o.symbol)
             if not px:
                 continue
             rate = self.cost_model.estimated_cost_pct(o.symbol, o.side)
@@ -512,7 +537,40 @@ class BacktestEngine:
             else:
                 inflow += o.quantity * px * (1 - rate) / buffer
                 sell_qty[o.symbol] = sell_qty.get(o.symbol, 0) + int(o.quantity)
+        self._proj = [reserved, inflow, sell_qty]
         return reserved, inflow, sell_qty
+
+    def _holdings_projection(self, pending_sells: Dict[str, int]) -> float:
+        """持仓市值投影（扣同日待卖量）。首批 O(S) 扫描后缓存；此后每笔新挂卖单
+        只重算该标的的贡献项（见 _proj_note_submit），大批次调仓不再每单全扫。"""
+        if self._holdings_total is not None:
+            return self._holdings_total
+        total = 0.0
+        for s, p in self.account.positions.items():
+            part = max(0, p.quantity - pending_sells.get(s, 0)) * (self._last_prices.get(s) or p.avg_cost)
+            self._holdings_parts[s] = part
+            total += part
+        self._holdings_total = total
+        return total
+
+    def _proj_note_submit(self, order: Order, price: float) -> None:
+        """挂单入队后增量维护投影缓存（与全量重扫严格同口径，见 _pending_projection）。"""
+        if self._proj is None or self._holdings_total is None or not price:
+            return
+        rate = self.cost_model.estimated_cost_pct(order.symbol, order.side)
+        buffer = max(1.0, float(self.config.cash_demand_pct))
+        if order.side is Side.BUY:
+            self._proj[0] += order.quantity * price * (1 + rate) * buffer
+        else:
+            self._proj[1] += order.quantity * price * (1 - rate) / buffer
+            sell_qty = self._proj[2]
+            sell_qty[order.symbol] = sell_qty.get(order.symbol, 0) + int(order.quantity)
+            # 持仓投影：该标的净量下降只影响它自己的贡献项
+            p = self.account.positions.get(order.symbol)
+            if p is not None:
+                new_part = max(0, p.quantity - sell_qty[order.symbol]) * (self._last_prices.get(order.symbol) or p.avg_cost)
+                self._holdings_total += new_part - self._holdings_parts.get(order.symbol, 0.0)
+                self._holdings_parts[order.symbol] = new_part
 
     def submit_order(self, order: Order) -> Order:
         self._order_seq += 1
@@ -520,17 +578,12 @@ class BacktestEngine:
         order.created_date = self.current_date
         bar = self.current_bars.get(order.symbol)
         pos = self.account.position(order.symbol)
-        price = (bar.close if bar and bar.is_valid else self.last_price(order.symbol)) or 0.0
+        price = self._ref_price(order.symbol)
         reserved, inflow, pending_sells = self._pending_projection()
         # 投影后的可用现金/净持仓/净总仓位：同日先卖后买的组合调仓不再被旧现金额卡死，
         # 多标的满仓买单也不会全部通过后再静默拒单。
         cash_proj = self.account.cash - reserved + inflow
-        holdings_proj = 0.0
-        for s, p in self.account.positions.items():
-            net_qty = max(0, p.quantity - pending_sells.get(s, 0))
-            if net_qty <= 0:
-                continue
-            holdings_proj += net_qty * (self._last_prices.get(s) or p.avg_cost)
+        holdings_proj = self._holdings_projection(pending_sells)
         pos_net_qty = max(0, pos.quantity - pending_sells.get(order.symbol, 0))
         equity_proj = max(0.0, cash_proj) + holdings_proj
         verdict = self.risk.approve(
@@ -561,6 +614,7 @@ class BacktestEngine:
         order.status = OrderStatus.PENDING
         self._record_order(order)
         self.pending.append(order)
+        self._proj_note_submit(order, price)
         return order
 
     def _record_order(self, order: Order) -> None:
@@ -610,6 +664,8 @@ class BacktestEngine:
                     order.reject_reason = ""
                     keep.append(order)
         self.pending = keep
+        # 成交改变现金与持仓：下一批次（若有）的投影缓存必须重建
+        self._invalidate_projection()
 
     # ------------------------------------------------------------- 调仓工具
     def rebalance_to(self, ctx: Context, targets: Mapping[str, float], reason: str = "") -> List[Order]:
@@ -640,34 +696,29 @@ class BacktestEngine:
 
     # ------------------------------------------------------------- 收尾
     def _force_liquidate(self, date, panel: BarPanel) -> bool:
+        """期末强制平仓：复用撮合层的卖出语义（滑点、参与率、跌停封板检查）。
+
+        与正常撮合的唯一差别是价格锚点固定为最后收盘（_close_matcher，execution=close）：
+        期末已无「次日开盘」。跌停封板/停牌/无行情的标的**保留持仓按最后价估值**，
+        与正常撮合口径一致——不再无条件按原价硬平、不把滑点记成 0。
+        """
         if not self.account.positions:
             return False
         any_sold = False
+        bars = panel.bars_view(self.date_index(date))
         for symbol, pos in list(self.account.positions.items()):
             if pos.quantity <= 0 or pos.available <= 0:
+                continue  # 无持仓或 T+1 当日买入份额本就不可卖
+            bar = bars.get(symbol)
+            if bar is None or not bar.is_valid:
+                continue  # 停牌/无行情：保留持仓，按最后价估值
+            order = Order(symbol=symbol, side=Side.SELL, quantity=pos.available,
+                          reason="期末强制平仓（便于业绩归因）")
+            fill, status, _message = self._close_matcher.match_one(order, bar, date)
+            if fill is None or status is OrderStatus.REJECTED:
+                continue  # 跌停封板等：卖不出去，保留持仓
+            if self.account.can_apply(fill):
                 continue
-            price = self._last_prices.get(symbol) or panel.price_at(self.date_index(date), symbol, "close")
-            if not price:
-                continue
-            gross = pos.available * price
-            breakdown = self.cost_model.costs(symbol, Side.SELL, pos.available, price)
-            fill = Fill(
-                order_id=-1,
-                symbol=symbol,
-                side=Side.SELL,
-                date=date,
-                quantity=pos.available,
-                price=price,
-                raw_price=price,
-                gross_amount=gross,
-                commission=breakdown.commission,
-                stamp_tax=breakdown.stamp_tax,
-                transfer_fee=breakdown.transfer_fee,
-                other_fee=breakdown.other_fee,
-                slippage_cost=0.0,
-                cash_flow=gross - breakdown.total,
-                reason="期末强制平仓（便于业绩归因）",
-            )
             self.account.apply_fill(fill)
             any_sold = True
         return any_sold
