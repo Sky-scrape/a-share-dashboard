@@ -673,7 +673,8 @@ def test_fsutil_newline_param_and_tmp_cleanup(tmp_path):
     # 写入中途异常（不可编码字符）→ 临时文件被清理、目标不出现
     with pytest.raises(UnicodeEncodeError):
         fsutil.save_text_atomic(tmp_path / "bad.txt", "中文\ud800surrogate")
-    assert list(tmp_path.iterdir()) == [lf, native]
+    # iterdir() 顺序文件系统相关（NTFS 创建序 / tmpfs 另序），按名字集合断言
+    assert {p.name for p in tmp_path.iterdir()} == {"lf.md", "native.txt"}
 
 
 if __name__ == "__main__":
