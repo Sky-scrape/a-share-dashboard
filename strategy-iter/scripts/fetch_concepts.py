@@ -40,7 +40,9 @@ def update_tail(p: Path, code, ms2):
         fetch_full(code, ms_at(START), ms2)
         return "refilled"
     last_ms = max(i["date_ms"] for i in items)
-    if last_ms >= ms_at(END, 23, 59):
+    # 已含 END 当日（日末 23:59 判定）：date_ms 是北京午夜，含 END 的文件最大也 < 23:59，
+    # 按「END 午夜之后」判 fresh 才会命中（否则每次 --update 都白发一次空查询）
+    if last_ms > ms_at(END):   # > END 当日 00:00 即已含 END bar
         return "fresh"
     env = run_cli(["index", "history", "--thscode", code,
                    "--start-ms", str(last_ms + 1), "--end-ms", str(ms2)])

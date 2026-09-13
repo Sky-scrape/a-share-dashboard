@@ -37,7 +37,8 @@ def _update_hist(p: Path, code, ms1, ms2):
         save_json(p, env.get("data"))
         return "refilled"
     last_ms = max(i["date_ms"] for i in items)
-    if last_ms >= ms_at(END, 23, 59):
+    # 已含 END 当日（> END 00:00 即含 END bar；23:59 判定永不命中会白发空查询）
+    if last_ms > ms_at(END):
         return "fresh"
     env = run_cli(["index", "history", "--thscode", code,
                    "--start-ms", str(last_ms + 1), "--end-ms", str(ms2)])

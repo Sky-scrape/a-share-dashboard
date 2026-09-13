@@ -49,7 +49,9 @@ def run_round(version: str, out_dir: Path, store=None, pre=None) -> dict:
     # 曾因此丢 21 票且 strong_concept_rate=null 只能事后发现。研究审计不允许静默。
     cfg_con_on = ("concept" in cfg.get("lu_group", {}).get("weights", {})
                   or "concept" in cfg.get("nlu_group", {}).get("weights", {})
-                  or cfg.get("lu_group", {}).get("exclude_concept_lonewolf"))
+                  or cfg.get("lu_group", {}).get("exclude_concept_lonewolf")
+                  or cfg.get("nlu_group", {}).get("recog_concept_first")
+                  or cfg.get("nlu_group", {}).get("concept_recede_gate"))
     if cfg_con_on and not store.con_membership:
         raise RuntimeError(
             "概念归属映射为空（concept_map.json 缺失或 >7 天未更新）："
