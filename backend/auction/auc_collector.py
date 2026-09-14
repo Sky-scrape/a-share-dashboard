@@ -25,6 +25,7 @@ import datetime
 import os
 import sys
 import time
+import traceback
 
 # 注意：不在模块级 reconfigure stdout。本文件会被 tests/smoke.py 导入做单元校验，
 # 模块级改写会把宿主进程的输出编码一并发，日志变成 GBK/UTF-8 混排。
@@ -304,11 +305,17 @@ def _timeline(date8):
         if time.time() - b > C.MISS_GRACE:
             continue
         label = time.strftime("%H:%M:%S", time.localtime(b))
-        rnd = collect_round(codes, "live", label)
-        n_live += 1
-        append_series(date8, rnd)
-        C.save_json("live.json", {"date": date8, "updated_at": _now(),
-                                  "round": rnd, "codes_total": len(codes)})
+        # 单轮意外异常只跳过该轮，不拖垮整个时间线（ht 已把 CLI 失败归一 RuntimeError，
+        # 这里兜的是残余的意外 bug——否则 live 循环带崩进程，09:25 终态也一起丢）
+        try:
+            rnd = collect_round(codes, "live", label)
+            n_live += 1
+            append_series(date8, rnd)
+            C.save_json("live.json", {"date": date8, "updated_at": _now(),
+                                      "round": rnd, "codes_total": len(codes)})
+        except Exception as e:  # noqa: BLE001
+            LOG.info(f"[warn] {label} 轮意外失败，跳过: {type(e).__name__}: {str(e)[:120]}")
+            continue
     C.save_status({"last_run": _now(), "date": date8, "rounds": n_live, "mode": "timeline",
                    "ok": n_live > 0,
                    **({"note": "窗口内 0 轮：启动晚于 09:15 或全程超窗（只有定盘快照，画不出竞价过程）"}
@@ -322,14 +329,26 @@ def _timeline(date8):
     if time.time() < final_at:
         time.sleep(final_at - time.time())
     fin_label = "manual" if late_final else "09:25:10"
-    rnd = collect_round(codes, "final", fin_label)
+    try:
+        rnd = collect_round(codes, "final", fin_label)
+    except Exception as e:  # noqa: BLE001
+        # 终态抓不到也要把状态写清楚（ok=False + 原因），页面与体检面板才有据可查
+        LOG.info(f"[fail] 终态抓取意外失败: {type(e).__name__}: {str(e)[:150]}")
+        C.save_status({"last_run": _now(), "date": date8, "rounds": n_live + 1,
+                       "mode": "timeline", "ok": False,
+                       "note": f"终态抓取异常({type(e).__name__})，无 09:25 定盘"})
+        return
     provisional = (rnd.get("data_status") or "") != "final"
     rnd.pop("label", None)
     C.save_json("final.json", {"date": date8, "fetched_at": _now(),
                                "mode": "timeline", "provisional": provisional, "round": rnd})
     append_series(date8, dict(rnd, label=fin_label))
-    fetch_benchmark()
-    AUI.maybe_refresh()   # 同上：终态路径顺带维护行业映射
+    try:
+        fetch_benchmark()
+        AUI.maybe_refresh()   # 同上：终态路径顺带维护行业映射
+    except Exception as e:  # noqa: BLE001
+        LOG.info(f"[warn] 基准/行业映射维护异常（终态已落盘不受影响）: "
+                 f"{type(e).__name__}: {str(e)[:120]}")
     _notes = []
     if late_final:
         _notes.append("终态为窗口外补跑快照（不在 09:25:10 时点）")
@@ -355,6 +374,11 @@ def run_timeline(once=False):
             run_once(date8)
         else:
             _timeline(date8)
+    except Exception:
+        # 内层兜底拦剩的意外 bug：留全栈 traceback 后以非零码退出，
+        # 让任务历史/链路日志看到真失败，而不是静默无终态
+        LOG.info("竞价采集主流程意外异常:\n" + traceback.format_exc())
+        raise
     finally:
         lockutil.release(lock)
 

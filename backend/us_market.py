@@ -546,6 +546,7 @@ def cmd_run(backfill_start: str | None):
     symbols = load_hist_all()
     jobs = _job_list()
     ok = fail = 0
+    failed_syms = []
     for i, (sym, name, kind) in enumerate(jobs):
         try:
             st = update_symbol(symbols, sym, name, kind, backfill_start)
@@ -554,6 +555,7 @@ def cmd_run(backfill_start: str | None):
                   f"{st['first']}..{st['last']}")
         except Exception as e:  # noqa: BLE001 - 单符号失败不连坐，因子侧诚实缺失
             fail += 1
+            failed_syms.append(sym)
             print(f"[{i+1}/{len(jobs)}] {sym:<12} FAIL {type(e).__name__}: {str(e)[:100]}",
                   file=sys.stderr)
         # 每 10 个符号落一次盘（45+ 符号每晚逐个整库重写 hist_all.json 纯属浪费）；
@@ -566,6 +568,13 @@ def cmd_run(backfill_start: str | None):
     if ok == 0:
         raise SystemExit("全部符号抓取失败，不重建因子（保留旧 factors.json）")
     payload = build_factors()
+    if failed_syms:
+        # 部分失败不静默：失败清单写进 factors.json（server health 直接读），
+        # 链路日志再 warn 一声——否则缺失因子全 None 却看着像正常重建
+        payload["failed"] = failed_syms
+        _write_json(FACTOR_FILE, payload)
+        print(f"[warn] factors rebuilt with {len(failed_syms)} failed symbol(s): "
+              + ",".join(failed_syms), file=sys.stderr)
     ks = sorted(payload["rows"])
     print(f"factors rebuilt: {len(ks)} days {ks[0]}..{ks[-1]}")
 

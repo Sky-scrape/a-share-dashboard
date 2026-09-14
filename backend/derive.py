@@ -91,6 +91,12 @@ def _sent_day_feat(d):
     if snap is None:
         return None
     mod = snap.get("modules") or {}
+    # 模块级失败闸（2026-09-14 审查）：核心模块 status=error 时该日返回 None（跳过，
+    # 不进情绪序列）——否则异常会被当 0 处理，把假 0 静默算进情绪指数/晋级率。
+    for need in ("limit_up_pool", "limit_down_pool", "breadth"):
+        m = mod.get(need)
+        if m is not None and str(m.get("status") or "") not in ("", "ok"):
+            return None
     zt_rows = (mod.get("limit_up_pool") or {}).get("data") or []
     max_lb = 0
     for r in zt_rows:

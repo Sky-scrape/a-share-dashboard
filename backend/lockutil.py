@@ -59,9 +59,23 @@ def held_info(lock_path):
         return None
 
 
-def release(lock_path):
+def release(lock_path, force=False):
+    """释放锁。默认只删内容 PID 等于本进程的锁：40 分钟过期被接管后，原持有者
+    的 finally 不再误删接管者的锁（2026-09-14 修；此前 release 是无差别 remove）。
+    force=True 供 server 轮动自愈「摘死锁」这类刻意的跨进程接管场景。锁内容
+    读不出来（残缺/手建）时按他人锁处理——宁可不删（有过期接管兜底）也不误删。
+    """
     try:
-        if lock_path and os.path.isfile(lock_path):
-            os.remove(lock_path)
+        if not (lock_path and os.path.isfile(lock_path)):
+            return
+        if not force:
+            try:
+                with open(lock_path, encoding="utf-8") as f:
+                    pid = json.loads(f.read().split(" (stolen")[0]).get("pid")
+            except Exception:
+                return
+            if pid != os.getpid():
+                return
+        os.remove(lock_path)
     except Exception:
         pass

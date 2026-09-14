@@ -153,12 +153,18 @@ def main():
               'for stamp in ("11:30", "15:00"):' in _tcs and "used = sorted(used + [frz[-1]]" in _tcs)
         check("轮动整轮空重试（上游抖动不留永久分钟洞）",
               "_EmptyRound" in _tcs and "retry_on=_judge" in _tcs and "tries=1" in _tcs)
-        check("rotation 断流自愈：stall+锁心跳断 6 分钟摘死锁拉起常驻循环（交易时段+日历 fail-closed）",
+        check("rotation 断流自愈：stall+锁心跳断 6 分钟摘死锁拉起常驻循环（交易时段含午休豁免+日历 fail-closed）",
               "_maybe_auto_rotation_revive" in _srv2 and "lock_age < 360" in _srv2
-              and '("09:36" <= hm <= "14:55")' in _srv2
+              and '"09:36" <= hm <= "11:30" or "13:05" <= hm <= "14:55"' in _srv2
               and _srv2.count("self._maybe_auto_rotation_revive()") >= 2)
+        check("rotation_stall 午休豁免（11:30–13:00 停采正常，不误报断流/诱发摘活锁）",
+              "午间休市" in _srv2 and "11 * 60 + 30 < hm < 13 * 60 + 5" in _srv2)
         check("health.global 字段齐", all(k in (h.get("global") or {}) for k in
               ("last_date", "fetched_at", "age_hours", "errors", "fetching")), str(list(h.get("global") or {})))
+        _umh = h.get("us_market") or {}
+        check("health.us_market 字段齐（隔夜美股因子直接监控）",
+              _umh.get("present") is True and all(k in _umh for k in
+              ("updated_at", "age_hours", "last_t", "last_us_date", "failed")), str(_umh)[:100])
 
         st, gl = get(base, "/api/global")
         check("/api/global 200", st == 200, str(gl)[:80])

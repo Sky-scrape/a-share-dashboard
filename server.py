@@ -216,6 +216,12 @@ def rotation_stall():
     hm = now.tm_hour * 60 + now.tm_min
     if not (9 * 60 + 35 <= hm <= 15 * 60 + 5):
         return None
+    # 午休豁免（11:30–13:00 停采是正常的，采集器心跳/落盘都停，见 ths_collect 的
+    # AM_CLOSE/PM_OPEN 常量）：不豁免会把午休误报成断流，页面假警 + 诱发自愈摘活锁。
+    # PM 侧 +5 分钟宽限 = 停滞阈值本身（13:00 恢复采样的头几分钟 raw 还停在 11:30）。
+    if 11 * 60 + 30 < hm < 13 * 60 + 5:
+        return {"stalled": False, "age_minutes": None,
+                "note": "午间休市（11:30–13:00 停采为正常）"}
     auc_st = load_status("auction.json") or {}
     if str(auc_st.get("date") or "") == time.strftime("%Y%m%d") \
             and "non-trade-day" in str(auc_st.get("note") or ""):
@@ -253,6 +259,12 @@ def _read_panel(path, parser):
     try:
         obj = parser(path)
     except Exception:
+        # 解析失败回退旧缓存要诚实标注：让消费方知道这是上一份好面板，
+        # 而不是当前文件的真实内容（数据边界诚实原则，同 fetch_global._keep）。
+        if ent is not None and isinstance(ent[1], dict):
+            prev = dict(ent[1])
+            prev["stale"] = True
+            return prev
         return ent[1] if ent else None
     with _CACHE_LOCK:
         _panel_cache[path] = (mtime, obj)
@@ -451,6 +463,33 @@ def _recap_errors_cached(cap_path):
     return errors
 
 
+def _us_market_health():
+    """隔夜美股因子健康（data/recap/us_market/factors.json，只读不 import 模块）。
+
+    2026-09-14 前该链路无任何直接监控：夜间抓取失败只能靠 speculate 备选池守卫
+    文案间接暴露。这里给出覆盖末端 T、对齐的 us_date、updated 年龄与失败符号清单
+    （us_market 抓取部分失败时会把 failed 清单写进 factors.json）。"""
+    p = os.path.join(RECAP_DATA, "us_market", "factors.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            fac = json.load(f)
+    except FileNotFoundError:
+        return {"present": False}
+    except Exception:
+        return {"present": True, "error": "factors.json 解析失败"}
+    rows = fac.get("rows") or {}
+    ks = sorted(rows)
+    last_row = (rows.get(ks[-1]) or {}) if ks else {}
+    return {
+        "present": True,
+        "updated_at": fac.get("updated"),
+        "age_hours": _hours_since(fac.get("updated")),
+        "last_t": ks[-1] if ks else None,
+        "last_us_date": last_row.get("us_date"),
+        "failed": list(fac.get("failed") or []),
+    }
+
+
 def health_payload():
     rd, cd = rot_dates(), recap_dates()
     rot_path = os.path.join(ROT_DAILY, rd[-1] + ".json") if rd else None
@@ -466,6 +505,8 @@ def health_payload():
     glob_d = _read_json_file(GLOBAL_JSON) if os.path.exists(GLOBAL_JSON) else None
     glob_ft = (glob_d or {}).get("fetched_at") or ""
     glob_errors = list((glob_d or {}).get("errors") or {})
+    glob_stale = sorted(k for k, v in ((glob_d or {}).items())
+                        if isinstance(v, dict) and v.get("stale"))
     with _PROC_LOCK:
         gp_proc = _fetch_procs.get("global")
     auc_st = load_status("auction.json")
@@ -498,9 +539,11 @@ def health_payload():
             "fetched_at": glob_ft,
             "age_hours": _hours_since(glob_ft),
             "errors": glob_errors,
+            "stale_blocks": glob_stale,   # 沿用上一份的块（_keep），非本次实抓
             "fetching": (lockutil.held_info(LOCK_GLOBAL) is not None
                          or (gp_proc is not None and gp_proc.poll() is None)),
         },
+        "us_market": _us_market_health(),
         "auction": {
             "last_run": (auc_st or {}).get("last_run"),
             "date": (auc_st or {}).get("date"),
@@ -1137,14 +1180,16 @@ class Handler(SimpleHTTPRequestHandler):
         页面轮询 /api/rotation-* 时顺手检查：stalled 且采集锁心跳也断 >6 分钟
         （活循环每轮 utime 心跳，断 6 分钟=持有者必死）→ 摘死锁、后台拉起常驻
         循环（循环模式自动补采至 15:00 收盘定格后自退出）。闸门按成本从低到高：
-        10 分钟节流 → 交易时段 09:36–14:55（之后尾部由定格任务+定格并入兜底）→
+        10 分钟节流 → 交易时段 09:36–11:30 与 13:05–14:55（午休 11:30–13:00 心跳
+        本来就停，摘锁会误伤活进程；13:05 后留 5 分钟给恢复采样的头几个点位；
+        之后尾部由定格任务+定格并入兜底）→
         stall 确认 → 锁心跳确认死 → 交易日历 fail-closed（子进程最贵，日历不可用
         宁可跳过——绝不在非交易日拉起采集）。机器关机与上游长时间故障仍属物理缺口。"""
         now = time.time()
         if now - _auto_rot_ts[0] < 600:
             return
         hm = time.strftime("%H:%M")
-        if not ("09:36" <= hm <= "14:55"):
+        if not ("09:36" <= hm <= "11:30" or "13:05" <= hm <= "14:55"):
             return
         st = rotation_stall()
         if not (st and st.get("stalled")):
@@ -1162,7 +1207,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return   # False=非交易日 / None=日历不可用：一律 fail-closed
         except Exception:
             return
-        lockutil.release(LOCK_ROT)   # 摘死锁（活持有者不可能出现：心跳断 6 分钟必死）
+        lockutil.release(LOCK_ROT, force=True)   # 摘死锁（活持有者不可能出现：心跳断 6 分钟必死）
         self._spawn_fetch(
             ROT_FETCH_SCRIPT, ROT_FETCH_CWD,
             os.path.join(LOG_DIR, "fetch-rotation.log"), LOCK_ROT,

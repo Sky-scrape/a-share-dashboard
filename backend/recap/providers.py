@@ -414,8 +414,11 @@ def breadth():
                     "大盘": {"名称": "沪深300", "涨跌幅": _native(hs["涨跌幅"])},
                     "小盘": {"名称": "中证1000", "涨跌幅": _native(zz["涨跌幅"])},
                 }
-        except Exception:  # noqa: BLE001 - 指数补充失败不影响情绪主数据
-            pass
+        except Exception as e:  # noqa: BLE001 - 指数补充失败不影响情绪主数据
+            # 但也不能全静默（2026-09-14 审查：缺两市成交额无人知晓）；stdout 走
+            # fetch_daily 日志（logutil 与 .bat 重定向都落 stdout）
+            print(f"[warn] breadth 指数补充失败（两市成交额/大小盘缺）: "
+                  f"{type(e).__name__}: {str(e)[:120]}")
 
         return {"status": "ok", "data": data}
     except Exception as e:

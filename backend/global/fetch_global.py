@@ -672,6 +672,7 @@ def _run():
     except Exception as e:  # noqa: BLE001
         errors["indices"] = f"{type(e).__name__}: {str(e)[:150]}"
         LOG.info(f"[fail] indices: {errors['indices']}")
+        _keep("indices")   # 沿用上一份，防止整体失败把昨日好文件冲成无指数空面板
 
     try:
         radar, e = fetch_radar(payload.get("indices") or [], board_daily)
@@ -683,6 +684,7 @@ def _run():
     except Exception as e:  # noqa: BLE001
         errors["radar"] = f"{type(e).__name__}: {str(e)[:150]}"
         LOG.info(f"[fail] radar: {errors['radar']}")
+        _keep("radar")
 
     try:
         payload["heatmap_us"] = fetch_heat_us()
