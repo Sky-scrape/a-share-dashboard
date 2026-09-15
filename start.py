@@ -3,6 +3,7 @@
 
 用法:
     python start.py
+    python start.py --no-browser   # 不自动开浏览器（开机自启计划任务用，2026-09-15）
 """
 import os
 import socket
@@ -58,7 +59,8 @@ def peer_is_our_service(port):
         return None
     if not (1024 <= port <= 65535):
         return None
-    url = f"http://127.0.0.1:{port}/api/health"   # 只探测本机回环（SSRF 白名单口径）
+    url = "http://127.0.0.1:%d/api/health" % port   # 只探测本机回环（SSRF 白名单口径，
+    # 与 backend/watchdog._probe 同款：端口显式校验 + 字面量主机 + 解析 IP 全环回 + 禁重定向）
     parts = urlsplit(url)
     if parts.scheme != "http" or parts.hostname != "127.0.0.1":
         return None
@@ -172,13 +174,16 @@ def main():
 
     url = f"http://127.0.0.1:{PORT}{landing}"
     print(f"看板已启动: {url}")
-    if landing == "/auction":
+    if "--no-browser" in sys.argv:
+        print("[看板] --no-browser：不自动打开浏览器（开机自启模式）")
+    elif landing == "/auction":
         print("[看板] 现在是集合竞价时段，先打开实时竞价页；其他板块顶栏可切，"
               f"轮动页直接访问 http://127.0.0.1:{PORT}/")
     _lan = lan_ip()
     if _lan:
         print(f"[看板] 手机访问: http://{_lan}:{PORT}/ （同一 Wi-Fi）或 Tailscale 100.x 地址（任意网络）")
-    webbrowser.open(url)
+    if "--no-browser" not in sys.argv:
+        webbrowser.open(url)
     print("服务在后台运行。关闭本窗口不影响服务；")
     if proc is not None:
         print("[看板] 监护已启用：服务进程若退出将自动重启（2026-09-03）")

@@ -30,5 +30,6 @@ rem 非阻塞，失败只记 [warn]（盘前/非交易日快照为空属预期�
 python backend\global\fetch_global.py >> .status\logs\fetch-global.log 2>&1
 if errorlevel 1 echo [warn] global afterclose refresh failed (non-blocking) >> .status\logs\fetch-recap.log
 echo [%date% %time%] ==== fetch end (fetch=%RC_FETCH%) ==== >> .status\logs\fetch-recap.log
+if not "%RC_FETCH%"=="0" python backend\notify_once.py recap-failed >> .status\logs\fetch-recap.log 2>&1
 if not "%RC_FETCH%"=="0" exit /b %RC_FETCH%
 exit /b 0

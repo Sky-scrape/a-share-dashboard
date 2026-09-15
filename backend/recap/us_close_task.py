@@ -113,6 +113,16 @@ def run_step(cmd: list[str]) -> bool:
     return r.returncode == 0
 
 
+def _notify(title, text, key, min_hours=12):
+    """链路失败推送（0915 起）：尽力而为，绝不反过来打断链路。key 节流防重复。"""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "backend"))
+        import notify  # noqa: PLC0415
+        notify.send(title, text, key=key, min_interval_hours=min_hours)
+    except Exception as e:  # noqa: BLE001
+        _log(f"[warn] notify failed: {type(e).__name__}: {str(e)[:120]}")
+
+
 def main():
     _log("==== us-close recap chain start ====")
     sync_research_db()   # 先补研究库（利用等待窗口），T 日线是后面池/验证的硬依赖
@@ -121,17 +131,27 @@ def main():
     ok_us = run_step([sys.executable, os.path.join("backend", "us_market.py")])
     if not ok_us:
         _log("[warn] us_market fetch failed; proceed with existing factors.json")
+        _notify("隔夜美股抓取失败",
+                "us_close_task 中 us_market.py 失败，factors.json 沿用旧值——"
+                "环境闸门可能用到过期数据。白天可在看板手动重抓。",
+                key="chain:us-failed")
 
     t_iso = prev_ashare_trade_date()
     if not t_iso:
         _log("[abort] 无法确定上一个 A 股交易日（日历缺失）")
+        _notify("复盘完成链中止", "无法确定上一个 A 股交易日（日历缺失）。",
+                key="chain:abort")
         return 1
     t8 = t_iso.replace("-", "")
     snap = os.path.join(ROOT, "data", "recap", f"{t8}.json")
     snap_gz = snap + ".gz"
     if not (os.path.exists(snap) or os.path.exists(snap_gz)):
-        # 无快照 = 17:05 采集链失败（或长假日无 T 日行情）：美股已更新，复盘跳过
-        _log(f"[skip] {t8} 无复盘快照（17:05 采集失败或非交易日链路），仅完成美股更新")
+        # 无快照 = 17:05 采集链失败：美股已更新，复盘跳过。t8 取自交易日历
+        # （prev_ashare_trade_date），按定义是交易日——快照缺失即真失败，推送。
+        _log(f"[skip] {t8} 无复盘快照（17:05 采集链失败），仅完成美股更新")
+        _notify("复盘完成链跳过",
+                f"{t8} 无复盘快照——17:05 采集链很可能失败了，白天请人工补抓。",
+                key="chain:snap-missing")
         return 0 if ok_us else 1
 
     steps = [
@@ -141,6 +161,11 @@ def main():
     ]
     rcs = [run_step(c) for c in steps]
     _log(f"==== us-close recap chain end (us={ok_us} steps={rcs}) ====")
+    if not all(rcs):
+        bad = [os.path.basename(c[-1]) for c, rc in zip(steps, rcs) if not rc]
+        _notify("复盘完成链步骤失败",
+                f"{t8} 链中失败步骤：{', '.join(bad)}（明细见 .status/logs/usclose.log）",
+                key="chain:steps-failed")
     return 0 if all(rcs) else 1
 
 

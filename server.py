@@ -89,6 +89,7 @@ import derive          # noqa: E402  派生层（面板文件产出方）
 import lockutil        # noqa: E402
 import snapio          # noqa: E402
 import fsutil          # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import notify          # noqa: E402  告警推送单一出口（backend/notify.py）
 import collector as quant_collector  # noqa: E402  量化平台只读采集层（backend/quant）
 import quant_api                     # noqa: E402  量化引擎接线 API（回测/选股/信号/研究）
 import auc_config                    # noqa: E402  竞价板块配置（观察池/自选单一来源）
@@ -130,6 +131,9 @@ LOCK_ROT = os.path.join(STATUS_DIR, "fetch-rotation.lock")
 LOCK_GLOBAL = os.path.join(STATUS_DIR, "fetch-global.lock")
 
 WRITE_TOKEN_ENV = "AK_WRITE_TOKEN"   # 配置后非本机写请求必须携带 X-AK-Token
+READ_TOKEN_ENV = "AK_READ_TOKEN"     # 配置后非本机对 /api、/data、/quant-results 的
+                                     # 全部请求（读+写）都必须携带 X-AK-Token（或 ?token=）；
+                                     # 本机与页面静态资源不受影响。远程暴露场景才需要。
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DATE8_RE = re.compile(r"\d{8}")
@@ -509,6 +513,24 @@ def _duckdb_health():
             "stale": not st.get("ok", True)}
 
 
+def _backup_health():
+    """数据备份状态（.status/backup_state.json，backend/backup.py 落盘）。
+
+    2026-09-15 前该资产零备份零监控：data/ 与 strategy-iter 研究库全在
+    .gitignore 里，丢失不可再生。ok=False 或超 3 天没成功备份时给 stale=True
+    （看门狗巡检据此推送，健康面板同步亮牌）。"""
+    st = load_status("backup_state.json")
+    if not st:
+        return {"present": False, "note": "尚未运行过备份（python backend/backup.py）"}
+    age_h = _hours_since(st.get("at"))
+    stale = (st.get("ok") is False) or (age_h is not None and age_h > 72)
+    return {"present": True, "ok": bool(st.get("ok")), "at": st.get("at"),
+            "age_hours": age_h, "size_mb": st.get("size_mb"),
+            "files": st.get("files"), "dest": st.get("dest"),
+            "kept": st.get("kept"), "last_zip": st.get("last_zip"),
+            "error": st.get("error"), "stale": stale}
+
+
 def health_payload():
     rd, cd = rot_dates(), recap_dates()
     rot_path = os.path.join(ROT_DAILY, rd[-1] + ".json") if rd else None
@@ -564,6 +586,8 @@ def health_payload():
         },
         "us_market": _us_market_health(),
         "duckdb": _duckdb_health(),
+        "notify": notify.status(),
+        "backup": _backup_health(),
         "auction": {
             "last_run": (auc_st or {}).get("last_run"),
             "date": (auc_st or {}).get("date"),
@@ -573,6 +597,86 @@ def health_payload():
             "fetching": lockutil.held_info(auc_config.LOCK_PATH) is not None,
         },
     }
+
+
+# ---------------- health 巡检推送（2026-09-15） ----------------
+# 动机（0914 事故复盘）：告警此前只活在看板页面上，凌晨/盘后链路失败时没人看着
+# 页面。守护线程每 10 分钟扫一次 health payload，把新出现的告警推到手机
+# （backend/notify.py，key 级 6h 节流防轰炸）；服务本身死亡的场景由
+# arecap-watchdog 计划任务（backend/watchdog.py）兜底——死人不能喊救命。
+
+_HEALTH_SCAN_INTERVAL = 600
+
+
+def _health_alerts(h):
+    """health payload → [(key, 描述)]。判定全部复用各健康段的现成字段，
+    不另立第二套口径；无告警返回空表。"""
+    out = []
+    stall = ((h.get("rotation") or {}).get("stall") or {})
+    if stall.get("stalled"):
+        out.append(("rotation.stall",
+                    "盘中轮动采集停滞：" + str(stall.get("note") or "超过 5 分钟无新数据点")))
+    ddb = h.get("duckdb") or {}
+    if ddb.get("present") and ddb.get("stale"):
+        out.append(("duckdb.stale",
+                    f"研究库日线层缺失/异常（{ddb.get('note') or ddb.get('db_error') or '探测层为空'}），"
+                    "腾讯备源兜底中——次日复盘可能部分降级"))
+    um = h.get("us_market") or {}
+    if um.get("present") and (um.get("age_hours") or 0) > 30:
+        out.append(("us_market.stale",
+                    f"隔夜美股因子过期 {um.get('age_hours')}h（updated {um.get('updated_at') or '-'}），"
+                    "环境闸门可能用到旧值"))
+    gsb = (h.get("global") or {}).get("stale_blocks") or []
+    if gsb:
+        out.append(("global.stale",
+                    "全球总览部分块沿用旧值：" + ", ".join(str(x) for x in gsb[:8])))
+    bk = h.get("backup") or {}
+    if bk.get("present") and bk.get("stale"):
+        out.append(("backup.stale",
+                    f"数据备份异常或超期（最近 {bk.get('at') or '无'}，"
+                    f"error={bk.get('error') or '-'}，目录 {bk.get('dest') or '-'}）"))
+    # 竞价/复盘「今天该有而没有」类告警：交易日免误报复用竞价采集器的
+    # non-trade-day 标记（09:14 采集器已查过交易日历），不重复联网判定
+    now = time.localtime()
+    if now.tm_wday < 5:
+        hm = time.strftime("%H:%M")
+        auc_st = load_status("auction.json") or {}
+        holiday = str(auc_st.get("date") or "") == time.strftime("%Y%m%d") \
+            and "non-trade-day" in str(auc_st.get("note") or "")
+        if not holiday:
+            auc = h.get("auction") or {}
+            if "09:26" <= hm <= "15:10" \
+                    and str(auc.get("date") or "") != time.strftime("%Y%m%d"):
+                out.append(("auction.missing",
+                            f"竞价采集今日尚无状态（最近 {auc.get('date') or '-'}），"
+                            "检查计划任务 auction_task.bat"))
+            rc = h.get("recap") or {}
+            if "19:30" <= hm <= "23:59" \
+                    and rc.get("last_date") != time.strftime("%Y-%m-%d"):
+                out.append(("recap.missing",
+                            f"17:05 复盘采集今日未见落盘（最新 {rc.get('last_date') or '-'}），"
+                            "检查 data/fetch.log 与计划任务 arecap-daily-fetch"))
+    return out
+
+
+def _health_monitor_loop():
+    """守护线程：首轮只建基线不推送（避免重启后旧告警重放轰炸），之后每轮
+    把「当轮存在的告警 key」推给 notify（notify 侧还有 6h key 节流兜底）。"""
+    first = True
+    while True:
+        time.sleep(_HEALTH_SCAN_INTERVAL)
+        try:
+            alerts = _health_alerts(health_payload())
+            if not first:
+                for key, msg in alerts:
+                    r = notify.send(title="看板数据链告警",
+                                    text=msg + f"\n\n时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
+                                    key="health:" + key)
+                    if r.get("sent"):
+                        print(f"[health-monitor] 已推送 {key}", flush=True)
+            first = False
+        except Exception as e:  # noqa: BLE001 - 监控线程自身绝不退出
+            sys.stderr.write(f"[health-monitor] {type(e).__name__}: {e}\n")
 
 
 def auction_payload():
@@ -885,10 +989,35 @@ class Handler(SimpleHTTPRequestHandler):
         self.log_message("write rejected: missing token %s", self.path)
         return None
 
+    # ---------------- 读接口闸门（2026-09-15，远程暴露场景可选） ----------------
+
+    def _read_gate_ok(self):
+        """数据面读闸门：仅当配置了 AK_READ_TOKEN 且客户端非本机时生效。
+
+        覆盖 /api/*、/data/*、/quant-results/*（看板全部数据出口）；页面静态
+        资源不拦（无数据即无泄露）。本机回环始终放行。返回 True 放行；
+        返回 None 表示已拒绝（401 已发送）。"""
+        if self._client_is_local():
+            return True
+        token = os.environ.get(READ_TOKEN_ENV, "").strip()
+        if not token:
+            return True
+        import hmac as _hmac
+        got = (self.headers.get("X-AK-Token") or ""
+               or self._query().get("token", [""])[0])
+        if got and _hmac.compare_digest(got, token):
+            return True
+        self._json({"error": "read token required"}, 401)
+        self.log_message("read rejected: missing token %s", self.path)
+        return None
+
     # ---------------- 分发 ----------------
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if path.startswith(("/api/", "/data/", "/quant-results/")) \
+                and self._read_gate_ok() is None:
+            return
         for pat, fn in GET_ROUTES:
             m = pat.fullmatch(path)
             if m:
@@ -1387,6 +1516,12 @@ def main():
         print("!! 绑定了非本机地址：接口将暴露给局域网。写接口已有跨源防护（Origin/Referer）,")
         print("!! 但局域网内的脚本直连仍无鉴权；如需收紧，设置环境变量 AK_WRITE_TOKEN=随机串，")
         print("!! 之后非本机写请求必须携带 X-AK-Token 头。")
+        print("!! 若经内网穿透等远程暴露：建议同时设置 AK_READ_TOKEN=随机串，")
+        print("!! 届时非本机访问 /api、/data 全部数据接口都须携带 X-AK-Token 头或 ?token=。")
+
+    # health 巡检推送线程（0914 事故复盘：「打开看板才知道」→「手机先知道」）
+    threading.Thread(target=_health_monitor_loop, daemon=True,
+                     name="health-monitor").start()
 
     rd, cd = rot_dates(), recap_dates()
     landing = landing_path()

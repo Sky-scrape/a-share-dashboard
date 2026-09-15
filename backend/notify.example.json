@@ -1,0 +1,19 @@
+{
+  "_说明": "推送告警渠道配置模板。复制为 .status/notify.json 后填入自己的凭据即可生效（.status/ 已 gitignore，密钥不入库）；三渠道可任选其一或同时配多个，全部留空 = 不推送（健康面板 notify 段会显示 configured=false）。min_interval_hours：同一告警指纹的节流窗口。",
+  "min_interval_hours": 6,
+  "channels": {
+    "serverchan": {
+      "_说明": "Server酱（https://sctapi.ftqq.com 微信推送），sendkey 登录后首页可见，形如 SCTxxxx",
+      "sendkey": ""
+    },
+    "wecom": {
+      "_说明": "企业微信群机器人，群设置里添加机器人后复制完整 webhook 地址",
+      "webhook": ""
+    },
+    "telegram": {
+      "_说明": "Telegram Bot：找 @BotFather 建 bot 拿 token；chat_id 可先给 bot 发消息再访问 api.telegram.org/bot<token>/getUpdates 获取",
+      "bot_token": "",
+      "chat_id": ""
+    }
+  }
+}

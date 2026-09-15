@@ -177,11 +177,17 @@ A/
 | arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；hithink data sync 研究库增量（非阻塞——17:05 那次与上游「T 日 release ≈17:11 发布」存在竞态，漏赶会致 T 日线整层缺失，2026-09-14 实例）→ us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
 | areauction-live-fetch | 交易日 09:14 | backend/auction/auction_task.bat（09:15–09:24:30 每 30s live 轮询 + 09:25:10 终态 + 基准，日志 .status/logs/fetch-auction.log）；已设为**不看电池、错过可补跑、上限 PT30M** |
 | rotation-intraday-fetch | 交易日 09:25 | backend/rotation/fetch_day_task.bat → ths_collect.py 盘中逐分钟轮询循环（数据只到 15:00，收盘定格后自退）；不看电池、错过可补跑、上限 PT8H |
-| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档 + **收盘后补刷全球总览**（CN 热力图数据源是实时快照，盘前那轮抓不到当日数据，见下行说明），日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成） |
+| arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档 + **收盘后补刷全球总览**（CN 热力图数据源是实时快照，盘前那轮抓不到当日数据，见下行说明），日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成）；**失败时自动调 backend/notify_once.py 推送失败明细（2026-09-15）** |
+| arecap-backup | 每日 12:10 | backend/backup_task.bat → backup.py：data/ + strategy-iter/{data,raw} 滚动打包 zip（默认排除 cache/ 与 panel/ 等可再生派生层），保留 10 份，默认存 `~/AreCapBackups`（改目录/份数：.status/backup.json），状态落 .status/backup_state.json（/api/health `backup` 段）；不看电池、错过可补跑 |
+| arecap-watchdog | 每 15 分钟 | backend/watchdog_task.bat → watchdog.py：探 `http://127.0.0.1:8000/api/health`，连续 2 次失联推送「看板服务失联」（手机打不开看板的主因就是服务已停），顺带巡检备份失败/超 3 天没备份；自动拉起默认关（.status/watchdog.json 里 `autostart:true` 开启），日志 .status/logs/watchdog.log |
 | rotation-daily-fetch | 每日 17:10 | backend/rotation/fetch_day_task.bat（盘中断档时的收盘定格兑底 + derive 重算；盘外定格不覆盖已有盘中数据） |
 | aglobal-daily-fetch | 工作日 08:40 | backend/global/fetch_task.bat → fetch_global.py（全球指数/雷达/热力/分时 → data/global/global.json）；08:40 = 美股凌晨收盘后、A股盘前窗口。**注意**：A 股热力图取的是实时快照，盘前必然为空——此时按预期沿用上一份收盘副本（不记降级），当日收盘数据由上面 17:05 链补刷 |
 
 > 表内按一天里的触发时刻排序，与顶栏板块顺序（竞价 → 轮动 → 复盘 → 全球 → 量化）同调。手动重抓与计划任务共用文件锁（.status/fetch-*.lock），不会并发。
+
+> **开机自启**不走计划任务（LogonTrigger 需管理员注册），走「启动文件夹」快捷方式：`backend/autostart_task.bat`（最小化 `python start.py --no-browser`）已放入 `shell:startup`，登录后服务自动拉起，不弹浏览器。
+
+> **告警推送（2026-09-15）**：三类事件会主动推到手机——①数据链告警（server 内置 health 巡检线程每 10 分钟扫一次：轮动断流/研究库日线层缺失备源启用/美股因子过期/备份异常/竞价未启动/17:05 采集缺失，key 级 6h 节流）；②任务失败（17:05 采集失败明细、凌晨完成链步骤失败）；③样本外漂移/到期复审（warn/severe）。渠道三选一或同配：复制 `backend/notify.example.json` 为 `.status/notify.json` 填入 Server酱/企业微信/Telegram 凭据即可（.status/ 不入库，密钥安全）；未配置时一切照旧，健康面板 notify 段显示 configured=false。**远程暴露安全**：若经内网穿透等把看板暴露到公网，设环境变量 `AK_READ_TOKEN` 后非本机访问全部 /api、/data 接口须携带 X-AK-Token 头或 ?token=。
 
 采集链路的真实节奏（示意）：
 
@@ -190,6 +196,7 @@ A/
 08:40  全球总览     指数地图 / 中美轮动雷达 / 双市场热力图
 09:14  实时竞价     09:15–09:24:30 每 30s 轮询 → 09:25:10 定盘
 09:25  日内轮动     盘中每 60s 批量轮询 90 个一级行业指数 → 15:00 定格
+12:10  数据备份     data/ + 策略研究库滚动 zip（每 15 分钟看门狗巡检服务与备份）
 17:05  盘后复盘     快照 + 概念周更 + gzip 归档 + 补刷全球
 17:10  轮动兑底     盘中断档时的收盘定格兜底 + 派生层重算
 ```

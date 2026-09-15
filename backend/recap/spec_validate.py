@@ -420,6 +420,8 @@ _OOS_REVIEW_EVERY = 20      # 复审周期（样本外验证日数）
 _OOS_WARN_WIN_DROP = 8.0    # 胜率较基线回落 ≥8pct → 警告（轮间稳定阈值 3pct 的两倍余量）
 _OOS_WARN_MEAN = 1.0        # 或均次 <1.0%（基线约一半）
 _OOS_CRIT_WIN_DROP = 12.0   # 胜率回落 ≥12pct 或均次 <0 → 严重衰减，建议重开迭代
+_OOS_DRIFT_DAYS = 10        # 近端漂移窗口（最近 N 个验证日滚动统计）
+_OOS_DRIFT_MIN_N = 10       # 漂移判定最少笔数（不足=accumulating，不下结论）
 
 _OOS_VERDICT_TEXT = {
     "ok": "复审通过：样本外与固化窗口基线无实质差异，C7 继续运行",
@@ -486,6 +488,29 @@ def _oos_state(track):
         cum.append({"date": d["date"], "n": rn,
                     "win_rate": round(100.0 * rw / rn, 2) if rn else None,
                     "avg_close": round(rs / rn, 3) if rn else None})
+    # 近端漂移（2026-09-15）：最近 10 个验证日的滚动统计 vs 固化基线。
+    # 累积判定要 20 日才复审一次，「最近变差」暴露太慢；漂移每日常驻面板，
+    # 阈值复用累积判定的 warn/severe 常量（同一套口径，不另立第二套标准）。
+    recent = per_day[-_OOS_DRIFT_DAYS:]
+    r_n = sum(d["valid"] for d in recent)
+    if recent and r_n >= _OOS_DRIFT_MIN_N:
+        r_w = 100.0 * sum(d["_wins"] for d in recent) / r_n
+        r_a = sum(d["_sum"] for d in recent) / r_n
+        # 与 _oos_verdict 同一口径：基线 − 近端（正数=回落幅度）
+        d_win = round(_OOS_BASELINE["win_rate"] - r_w, 1)
+        d_avg = round(_OOS_BASELINE["avg_close"] - r_a, 2)
+        level = "ok"
+        if (d_win is not None and d_win >= _OOS_CRIT_WIN_DROP) or r_a < 0:
+            level = "severe"
+        elif (d_win is not None and d_win >= _OOS_WARN_WIN_DROP) or r_a < _OOS_WARN_MEAN:
+            level = "warn"
+        drift = {"window_days": len(recent), "n": r_n,
+                 "win_rate": round(r_w, 1), "avg_close": round(r_a, 2),
+                 "d_win": d_win, "d_avg": d_avg, "level": level}
+    else:
+        drift = {"window_days": len(recent), "n": r_n,
+                 "win_rate": None, "avg_close": None,
+                 "d_win": None, "d_avg": None, "level": "accumulating"}
     for d in per_day:
         d.pop("_wins")
         d.pop("_sum")   # 内部累加字段不下发
@@ -498,6 +523,7 @@ def _oos_state(track):
                                     if sc else None),
             "baseline": dict(_OOS_BASELINE),
             "verdict": _oos_verdict(win_rate or 0.0, avg_close or 0.0, n),
+            "drift": drift,
             "review_every": _OOS_REVIEW_EVERY,
             "next_review_in": (_OOS_REVIEW_EVERY - (days % _OOS_REVIEW_EVERY)) if days else None,
             "per_day": per_day[-10:], "cum": cum}
@@ -540,6 +566,37 @@ def _observation_state(rows):
     else:
         out_sc = {"n": len(sc), "status": "observing", "thresholds": th_sc}
     return {"concept_cold": out_cc, "strong_concept": out_sc}
+
+
+def _notify_oos(oos, review):
+    """样本外漂移 / 到期复审的主动推送（尽力而为，不抛错）。
+
+    漂移 warn/severe 各自独立节流 key（24h）——warn 连续多日触发时每天至多
+    提醒一次，升级为 severe 后立刻有新的一条。复审只在到线当天推。"""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import notify  # noqa: PLC0415
+        if not notify.status().get("configured"):
+            return
+        d = oos.get("drift") or {}
+        if d.get("level") in ("warn", "severe"):
+            lv = d["level"]
+            notify.send(
+                title="样本外近端漂移（%s）" % ("严重衰减" if lv == "severe" else "回落"),
+                text=(f"最近 {d.get('window_days')} 个验证日 / {d.get('n')} 笔："
+                      f"胜率 {d.get('win_rate')}%（较基线回落 {d.get('d_win')}pct）· "
+                      f"均次 {d.get('avg_close')}%（差 {d.get('d_avg')}pct）\n"
+                      "样本外与固化窗口基线的近端对照已亮牌，请打开复盘页复核归因分布。"),
+                key="oos:drift:" + lv, min_interval_hours=24)
+        if review and review.get("verdict") in ("warn", "severe"):
+            notify.send(
+                title="样本外到期复审：" + ("严重衰减" if review["verdict"] == "severe" else "回落"),
+                text=(f"{review.get('date')} 复审（{review.get('n_days')} 日 / {review.get('n')} 笔，"
+                      f"胜率 {review.get('win_rate')}% · 均次 {review.get('avg_close')}%）："
+                      f"{review.get('note')}"),
+                key="oos:review:" + str(review.get("date")), min_interval_hours=24)
+    except Exception:  # noqa: BLE001 - 告警失败绝不打断验证闭环
+        pass
 
 
 def update_optimizer(date8, persist=True):
@@ -589,6 +646,9 @@ def update_optimizer(date8, persist=True):
         reviews = reviews[-20:]
     oos["reviews"] = reviews[-5:]
     oos["review_today"] = review
+    # 漂移/复审告警推送（0915 起，persist=True 才推——回填路径不触发打扰）
+    if persist:
+        _notify_oos(oos, review)
     out = {"version": ver, "updated": str(date8),
            "min_score": state["min_score"], "penalties": state["penalties"],
            "bucket_stats": state["bucket_stats"], "samples": state["samples"],

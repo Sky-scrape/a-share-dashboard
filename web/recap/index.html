@@ -1763,6 +1763,14 @@ function renderPool() {
         const vd = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], empty: ["var(--text-2)", "待积累"] }[oos.verdict] || ["var(--text-2)", esc(oos.verdict)];
         h += '<div style="margin-top:8px;font-size:13px">📡 <b>样本外追踪</b>'
           + '（基线=调参区间 ' + esc(oos.baseline.win_rate) + '% / +' + (+oos.baseline.avg_close).toFixed(2) + '%）：<b style="color:' + vd[0] + '">' + vd[1] + '</b>';
+        const dr = oos.drift;
+        if (dr && dr.level && dr.level !== "accumulating" && dr.n > 0) {
+          const dl = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"] }[dr.level] || ["var(--text-2)", esc(dr.level)];
+          h += '<div style="font-size:12px;margin-top:2px">📉 <b>近端漂移</b>（最近 ' + esc(dr.window_days) + ' 个验证日 / ' + esc(dr.n) + ' 笔）：'
+            + '<b style="color:' + dl[0] + '">' + dl[1] + '</b>'
+            + ' · 胜率 ' + esc(dr.win_rate) + '%（较基线回落 ' + esc(dr.d_win ?? 0) + 'pct）'
+            + ' · 均次 ' + f1(dr.avg_close) + '%（差 ' + esc(dr.d_avg ?? 0) + 'pct）</div>';
+        }
         if (oos.n > 0) {
           h += ' 自 ' + esc(oos.since || "-") + ' 已积累 <b>' + oos.days + '</b> 个验证日 / ' + oos.n + ' 笔：'
             + '胜率 <b>' + esc(oos.win_rate) + '%</b> · 均次 <b>' + f1(oos.avg_close) + '</b>'

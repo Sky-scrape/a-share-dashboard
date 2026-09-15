@@ -165,6 +165,13 @@ def main():
         check("health.us_market 字段齐（隔夜美股因子直接监控）",
               _umh.get("present") is True and all(k in _umh for k in
               ("updated_at", "age_hours", "last_t", "last_us_date", "failed")), str(_umh)[:100])
+        # 2026-09-15 告警闭环批次：health 段新增 notify（推送配置摘要）与 backup（备份状态）
+        check("health.notify/backup 段（告警推送与数据备份）",
+              all(k in (h.get("notify") or {}) for k in
+                  ("configured", "channels", "min_interval_hours"))
+              and all(k in (h.get("backup") or {}) for k in
+                      ("present", "ok", "stale", "dest")),
+              str({k: h.get(k) for k in ("notify", "backup")})[:160])
 
         st, gl = get(base, "/api/global")
         check("/api/global 200", st == 200, str(gl)[:80])
@@ -425,6 +432,45 @@ def main():
                       encoding="utf-8").read()
         check("收盘链前置研究库同步（17:05 sync 与上游发布竞态兜底）",
               "sync_research_db()" in _ucsrc and '"data", "sync"' in _ucsrc)
+        # 2026-09-15 告警闭环批次（0914 复盘「打开看板才知道」→「手机先知道」）：
+        # 推送三渠道 / 采集链失败推送 / 备份 / 看门狗 / health 巡检线程 / 漂移 / 读 token
+        _nt = open(os.path.join(ROOT, "backend", "notify.py"), encoding="utf-8").read()
+        check("告警推送模块（三渠道白名单+节流+尽力而为）",
+              "sctapi.ftqq.com" in _nt and "qyapi.weixin.qq.com" in _nt
+              and "api.telegram.org" in _nt
+              and "_ALLOWED_HOSTS" in _nt and "is_global" in _nt   # SSRF 三重边界
+              and "def send(" in _nt and "def _throttled(" in _nt
+              and "save_json_atomic" in _nt)
+        _no = open(os.path.join(ROOT, "backend", "notify_once.py"), encoding="utf-8").read()
+        _ftb = open(os.path.join(ROOT, "backend", "recap", "fetch_task.bat"),
+                    encoding="utf-8").read()
+        check("17:05 采集失败推送出口（bat 挂 notify_once）",
+              "def recap_failed(" in _no and "notify_once.py recap-failed" in _ftb)
+        check("凌晨完成链失败推送（us_close_task 挂 notify）",
+              "_notify(" in _ucsrc and "chain:snap-missing" in _ucsrc
+              and "chain:steps-failed" in _ucsrc)
+        _bp = open(os.path.join(ROOT, "backend", "backup.py"), encoding="utf-8").read()
+        check("数据资产备份（data+研究库滚动 zip，派生层默认排除）",
+              "ZIP_DEFLATED" in _bp and "backup_state.json" in _bp
+              and '"data"' in _bp and "strategy-iter" in _bp
+              and "DERIVED" in _bp and "def run(" in _bp)
+        _wd = open(os.path.join(ROOT, "backend", "watchdog.py"), encoding="utf-8").read()
+        check("看门狗（回环探测+连败告警+备份巡检，自动拉起默认关）",
+              "def _probe(" in _wd and "consecutive_fails" in _wd
+              and "backup_state.json" in _wd
+              and "is_loopback" in _wd                    # SSRF：只探环回
+              and '"autostart"' in _wd)                   # 拉起开关默认关闭
+        check("运维任务脚本三件套在位（CRLF 由 bat 断言统一覆盖）",
+              all(os.path.isfile(os.path.join(ROOT, "backend", _f)) for _f in
+                  ("backup_task.bat", "watchdog_task.bat", "autostart_task.bat")))
+        check("health 巡检推送线程+读接口 token（server）",
+              "_health_monitor_loop" in _srv2 and "_health_alerts(" in _srv2
+              and 'threading.Thread(target=_health_monitor_loop' in _srv2
+              and "AK_READ_TOKEN" in _srv2 and "_read_gate_ok" in _srv2)
+        check("样本外近端漂移（后端计算+前端亮牌+告警推送）",
+              "_OOS_DRIFT_DAYS" in sp_src2 and '"drift": drift' in sp_src2
+              and "def _notify_oos(" in sp_src2
+              and "近端漂移" in rp)
         check("备选池 M_Final 主板口径+双组+负面清单", '"涨停组"' in sp_src2 and '"非涨停组"' in sp_src2
               and "score < ms_lu" in sp_src2 and "score < ms_nlu" in sp_src2
               and "nonzt" in sp_src2 and '"类型"' in sp_src2
@@ -490,6 +536,14 @@ def main():
         check("竞价缺口前瞻回验脚本与产出",
               os.path.isfile(_gp_src)
               and os.path.isfile(os.path.join(_c3_dir, "gap_ahead_report.md")))
+        # C11 立项研究（rounds_log §10 唯一候选的完整评审，2026-09-15）：
+        # 预注册判定脚本 + 报告产物在位（无论结论通过/销项，评审留痕不可缺）
+        _c11 = os.path.join(ROOT, "strategy-iter", "scripts", "c11_time_study.py")
+        _c11_dir = os.path.join(ROOT, "strategy-iter", "runs", "c11_window_C7")
+        check("C11 time 重校准研究脚本与报告（预注册判定留痕）",
+              os.path.isfile(_c11)
+              and "预注册" in open(_c11, encoding="utf-8").read()
+              and os.path.isfile(os.path.join(_c11_dir, "c11_time_report.md")))
         # ⑥ 板块对比补齐：行业指数日线缓存（881xxx index.history）+ 强于板块 + 板块持续性不足归因
         check("备选池验证板块对比", "def industry_series(" in sp_src2 and "_series_pct(" in sp_src2
               and "import industry_common" in sp_src2
