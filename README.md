@@ -1,6 +1,18 @@
 # A股看板（统一项目）
 
+**一套系统 · 盯完一个交易日。**
+
 单服务、单端口、单入口的个人 A 股盯盘与策略系统，五大板块按盯盘节奏排序：**实时竞价 → 日内轮动 → 盘后复盘 → 全球总览 → 量化平台**。
+
+<img src="assets/docs/poster-night.jpg" width="48%" alt="A股看板 · 夜台主题" />&nbsp;<img src="assets/docs/poster-morning.jpg" width="48%" alt="A股看板 · 晨报主题" />
+
+> 全站双主题一键切换：**夜台**（深色霓虹，盘中盯屏）/ **晨报**（暖纸色，盘后复盘）。
+
+## 三层能力总览
+
+系统按「数据基石 → 体验闭环 → 深度分析」三层堆叠，底层稳、中层顺、上层出结论。
+
+![A股看板三层架构总览](assets/docs/roadmap.jpg)
 
 - 启动落点跟盯盘节奏：工作日 09:10–09:30 自动先开竞价页，其余时间先开轮动页（`backend/landing.py` 单一口径，不联网）
 - 全站行业/板块口径统一为**同花顺一级行业指数（881xxx，90 个）**，跨页精确联动；概念板块保持同花顺概念目录
@@ -146,7 +158,7 @@ A/
 ├── tests/
 │   ├── smoke.py           冒烟测试：起临时 server 断言 API 契约 + 前端结构（改完跑这个）
 │   └── test_units.py      纯函数单测（环境分档/因子分桶/执行层/日历/重试等）
-├── assets/                图标
+├── assets/                图标与 README 用图（docs/poster-*.jpg 双主题海报、roadmap.jpg 三层总览）
 ├── docs/                  各板块文档（README-recap / README-rotation；开发日志 PROGRESS.md 仅本地保留，不入库）
 │   └── legacy/            合并前的旧版服务与脚本（仅归档，不再使用）
 └── .github/               CI：量化引擎回归测试（python -m pytest quant/tests tests；smoke.py 文件名不入 pytest 收集，需本地起服务跑；data/、.status/、.context/ 为本地运行数据与个人笔记，不入库）
@@ -164,6 +176,17 @@ A/
 | aglobal-daily-fetch | 工作日 08:40 | backend/global/fetch_task.bat → fetch_global.py（全球指数/雷达/热力/分时 → data/global/global.json）；08:40 = 美股凌晨收盘后、A股盘前窗口。**注意**：A 股热力图取的是实时快照，盘前必然为空——此时按预期沿用上一份收盘副本（不记降级），当日收盘数据由上面 17:05 链补刷 |
 
 > 表内按一天里的触发时刻排序，与顶栏板块顺序（竞价 → 轮动 → 复盘 → 全球 → 量化）同调。手动重抓与计划任务共用文件锁（.status/fetch-*.lock），不会并发。
+
+采集链路的真实节奏（示意）：
+
+```
+04:05  美股收盘链   us_close → 隔夜美股 → 备选池生成（T-1 池）
+08:40  全球总览     指数地图 / 中美轮动雷达 / 双市场热力图
+09:14  实时竞价     09:15–09:24:30 每 30s 轮询 → 09:25:10 定盘
+09:25  日内轮动     盘中每 60s 批量轮询 90 个一级行业指数 → 15:00 定格
+17:05  盘后复盘     快照 + 概念周更 + gzip 归档 + 补刷全球
+17:10  轮动兑底     盘中断档时的收盘定格兜底 + 派生层重算
+```
 
 ```bash
 schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
