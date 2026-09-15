@@ -12,10 +12,15 @@ if os.path.dirname(_HERE) not in sys.path:
     sys.path.insert(0, os.path.dirname(_HERE))
 
 import ht  # noqa: E402
+import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import spec_ohlc_fb  # noqa: E402  研究库日线缺口备源（腾讯前复权）
 from spec_rules import SCAN_TH, _date_iso, thscode_of  # noqa: E402  最底层口径/工具
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE_DIR = os.path.join(HERE, ".ht_cache")
+# 日线层探测状态（server /api/health 只读不 import 本模块；ok=False=整层/查询缺口）
+DUCKDB_STATUS = os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                             ".status", "duckdb.json")   # 项目根 .status（server load_status 同源）
 
 
 # ---------------------------------------------------------------- DuckDB
@@ -104,7 +109,8 @@ def _market_amt_ratio(date8):
     """T 日全市场成交额 / 前 19 个交易日均值（DuckDB 单查询）。
 
     与 engine ms.amt_ratio 同口径（T 日收盘可得，无未来函数）；数据缺失返回
-    None——闸门不启用（诚实降级）。"""
+    None——闸门不启用（诚实降级）。本地库落后（T 日 bar 缺失）时同样返回 None：
+    拿 T-1 当 T 计算会静默用错日数据（0914 实例，「市场量能 0.98」实为 0911 口径）。"""
     iso = _date_iso(date8)
     try:
         rows = _db_export(
@@ -112,6 +118,8 @@ def _market_amt_ratio(date8):
             f"WHERE date <= DATE '{iso}' GROUP BY date ORDER BY date DESC LIMIT 20",
             f"amtratio_{date8}")
     except Exception:  # noqa: BLE001
+        return None
+    if not rows or str((rows[0] or {}).get("date") or "")[:10] != iso:
         return None
     amts = [r.get("amt") for r in rows if r.get("amt")]
     if len(amts) < 20 or not amts[0]:
@@ -172,9 +180,45 @@ def scan_trend(date8):
 
 
 def ohlc_rets(date8, codes):
-    """T 日相对 T-1 收盘的开/高/低/收涨幅（%）与量比：{code6: {o,h,l,c,amtr}}。"""
+    """T 日相对 T-1 收盘的开/高/低/收涨幅（%）与量比：{code6: {o,h,l,c,amtr}}。
+
+    本地库缺行（整层未同步/个股缺口/查询失败）时走腾讯前复权日线备源兜底（spec_ohlc_fb，
+    前复权同口径），补到的行带 src="em"；两源都缺的行如实缺席（真停牌/退市）。
+    每次调用把研究库日线层状态原子落 .status/duckdb.json（server health 告警，
+    2026-09-15：0914 整层缺失曾静默降级成「停牌」标签且无任何监控）。"""
+    codes = [str(c) for c in codes if str(c)]
     if not codes:
         return {}
+    out, db_error = {}, None
+    try:
+        out = _duckdb_ohlc(date8, codes)
+    except Exception as e:  # noqa: BLE001 - 库不可用不丢验证：整体走备源
+        db_error = f"{type(e).__name__}"
+    missing = [c for c in codes if c not in out]
+    fb = {}
+    if missing and len(missing) <= _FB_MAX_CODES:
+        try:
+            fb = spec_ohlc_fb.day_rets(date8, missing)
+        except Exception:  # noqa: BLE001 - 备源失败不影响既有行为
+            fb = {}
+    out.update(fb)
+    if missing:
+        layer_n, last_bar = _layer_probe(date8)
+    else:
+        layer_n, last_bar = None, _date_iso(date8)   # 标的齐全 → T 日层必在（下界）
+    fallback = ({"n": len(missing), "ok": len(fb),
+                 "codes": sorted(missing)[:10]} if missing else None)
+    note = (f"本地研究库缺 {last_bar or '-'} 之后的日线层"
+            if layer_n == 0 else
+            (f"本地研究库查询失败（{db_error}）" if db_error else
+             (f"本地研究库缺 {len(missing)} 只标的日线" if missing else
+              "标的日线齐全（本地研究库）")))
+    _record_layer_status(date8, layer_n, last_bar, fallback, db_error, note)
+    return out
+
+
+def _duckdb_ohlc(date8, codes):
+    """DuckDB 主源：T 日相对 T-1 收盘的 o/h/l/c 涨幅（%）与量比（LAG 前一根 bar）。"""
     d = _date_iso(date8)
     start = (_dt.datetime.strptime(d, "%Y-%m-%d")
              - _dt.timedelta(days=15)).strftime("%Y-%m-%d")
@@ -191,3 +235,49 @@ def ohlc_rets(date8, codes):
     )
     rows = _db_export(sql, f"poolval_{date8}")
     return {str(r.get("thscode") or "").split(".")[0]: r for r in rows}
+
+
+# ------------------------------------------------------ 日线层探测与状态落盘
+
+_FB_MAX_CODES = 20        # 备源单日上限（验证集 ≤4 只，上限防误用触发批量外呼）
+_PROBE_CACHE = {}         # date8 -> (该日行数, 库内最新 bar)；进程内缓存
+_LAST_STATUS = {}         # 最近一次写盘的状态（验证 note 读取，spec_validate.layer_status）
+
+
+def _layer_probe(date8):
+    """T 日日线层探测：{该日行数（0=整层缺失）, 库内最新 bar}；查询失败取 None。"""
+    if date8 not in _PROBE_CACHE:
+        iso = _date_iso(date8)
+        n, last = None, None
+        try:
+            rows = _db_export(
+                "SELECT (SELECT COUNT(*) FROM v_daily_qfq WHERE date = DATE '"
+                + iso + "') AS n, (SELECT MAX(date) FROM v_daily_qfq) AS last_bar",
+                f"layerprobe_{date8}")
+            r = (rows or [{}])[0]
+            n = int(r.get("n") or 0)
+            last = str(r.get("last_bar") or "")[:10] or None
+        except Exception:  # noqa: BLE001 - 探测失败不阻断验证
+            pass
+        _PROBE_CACHE[date8] = (n, last)
+    return _PROBE_CACHE[date8]
+
+
+def _record_layer_status(date8, layer_n, last_bar, fallback, db_error, note):
+    """状态进程内留底 + 原子落盘（server /api/health 的 duckdb 段只读该文件）。"""
+    st = {"updated": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+          "probed": str(date8),
+          "ok": not (layer_n == 0 or db_error),
+          "layer_n": layer_n, "last_bar": last_bar,
+          "fallback": fallback, "db_error": db_error, "note": note}
+    _LAST_STATUS.clear()
+    _LAST_STATUS.update(st)
+    try:
+        fsutil.save_json_atomic(DUCKDB_STATUS, st, separators=(",", ":"))
+    except Exception:  # noqa: BLE001 - 状态写盘失败不影响验证
+        pass
+
+
+def layer_status():
+    """最近一次 ohlc_rets 的研究库层状态（验证 note / 健康聚合读取）。"""
+    return dict(_LAST_STATUS)

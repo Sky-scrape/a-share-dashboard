@@ -1722,6 +1722,7 @@ function renderPool() {
       h += '<div style="margin:4px 0 8px;font-size:12px;color:var(--text-2)"><span style="font-family:var(--mono)">' + esc(va.date || "-") + '</span> 选出的标的今日表现：'
         + chip("涨停组", st.lu) + chip("低吸组", st.nlu)
         + (st.overall && st.overall.valid ? ('<span class="sp-badge">买点触发率 ' + st.overall.buy_trigger_rate + '%</span>') : "") + '</div>';
+      if (va.note) h += '<div style="margin:0 0 6px;font-size:12px;color:var(--gold)">⚠ ' + esc(va.note) + '</div>';
       const ex = st.exec;
       const exg = (k, lbl) => { const e = ex && ex[k];
         if (!e || !e.n_exec) return "";
@@ -1741,7 +1742,8 @@ function renderPool() {
               + '　<span class="sp-badge" style="color:' + (x.buy_triggered ? "var(--up)" : "var(--gold)") + '">' + (x.buy_triggered ? "买点触发" : "买点未触发") + '</span>'
               + (x.risk_hit ? '<span class="sp-badge sev">触发风险位</span>' : '')
               + (x.ind_pct != null ? '　<span style="color:var(--text-2)">板块' + esc(x.industry || "-") + ' ' + f1(x.ind_pct) + '·' + (x.strong_sector ? "强于" : "弱于") + '板块</span>' : '')
-              + '　<span style="color:var(--text-2)">归因：' + esc(x.attribution || "-") + '</span>')
+              + '　<span style="color:var(--text-2)">归因：' + esc(x.attribution || "-") + '</span>'
+              + (x.data_src === "em" ? '<span class="sp-badge" style="color:var(--gold)">东财备源</span>' : ''))
             : ('<span style="color:var(--text-2)">' + esc(x.attribution || "停牌/数据缺失") + '</span>'))
           + '</div>';
       });

@@ -490,6 +490,25 @@ def _us_market_health():
     }
 
 
+def _duckdb_health():
+    """本地研究库（hithink DuckDB）日线层健康（.status/duckdb.json，只读不 import 模块）。
+
+    2026-09-15 前该链路无监控：上游 T 日 release 未按时发布 → 17:05 sync 判 SKIP
+    → 次日 04:05 终版链在缺 T 日线的库上重建池/验证，全部静默降级（0914 实例：
+    低吸组空、偏离空、验证全标「停牌/数据缺失」）。speculate 侧每次探测原子落盘，
+    这里直接读；stale=True 表示最近一次链跑时库内没有验证日（probed）的日线层。"""
+    st = load_status("duckdb.json")
+    if not st:
+        return {"present": False}
+    return {"present": True, "updated_at": st.get("updated"),
+            "age_hours": _hours_since(st.get("updated")),
+            "probed": st.get("probed"), "ok": bool(st.get("ok")),
+            "layer_n": st.get("layer_n"), "last_bar": st.get("last_bar"),
+            "fallback": st.get("fallback"), "db_error": st.get("db_error"),
+            "note": st.get("note"),
+            "stale": not st.get("ok", True)}
+
+
 def health_payload():
     rd, cd = rot_dates(), recap_dates()
     rot_path = os.path.join(ROT_DAILY, rd[-1] + ".json") if rd else None
@@ -544,6 +563,7 @@ def health_payload():
                          or (gp_proc is not None and gp_proc.poll() is None)),
         },
         "us_market": _us_market_health(),
+        "duckdb": _duckdb_health(),
         "auction": {
             "last_run": (auc_st or {}).get("last_run"),
             "date": (auc_st or {}).get("date"),

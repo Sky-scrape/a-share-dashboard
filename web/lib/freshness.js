@@ -56,6 +56,18 @@ function renderFreshness(slotId) {
       html += '<div class="err">' + c.errors.length + " 个模块失败：" +
         c.errors.map(function (x) { return esc(x.module); }).join("、") + "</div>";
     }
+    var dk = h.duckdb || {};
+    if (dk.present) {
+      html += "<h5>研究库日线 " + (dk.probed ? shortDate(dk.probed) : "-") + "</h5>";
+      if (dk.stale) {
+        html += '<div class="err">⚠ ' + esc(dk.note || "本地研究库缺验证日日线层") + "</div>";
+        if (dk.fallback && dk.fallback.n) {
+          html += "<div>腾讯备源回填 " + (dk.fallback.ok || 0) + "/" + esc(dk.fallback.n) + " 只</div>";
+        }
+      } else {
+        html += '<div style="color:var(--text-3)">验证日日线层在库 ✓</div>';
+      }
+    }
     var now10 = localDate10(), now8 = localDate8();
     var rotStale = r.last_date !== now10, capStale = c.last_date !== now8;
     if (rotStale) html += '<div><button data-f="rotation">↻ 重抓轮动分时</button></div>';
@@ -88,7 +100,9 @@ function renderFreshness(slotId) {
       lastHealth = h;
       var g1 = grade(h.rotation, localDate10());
       var g2 = grade(h.recap, localDate8());
-      var worst = g1.c === "bad" || g2.c === "bad" ? "bad" : (g1.c === "warn" || g2.c === "warn" ? "warn" : "ok");
+      var dkStale = h.duckdb && h.duckdb.present && h.duckdb.stale;   // 研究库日线层缺口（0914 实例）
+      var worst = g1.c === "bad" || g2.c === "bad" ? "bad"
+        : (g1.c === "warn" || g2.c === "warn" || dkStale ? "warn" : "ok");
       slot.className = "fresh-pill " + worst;
       slot.innerHTML = '<span class="dot"></span>轮动 ' + esc(g1.t) + " · 复盘 " + esc(g2.t);
       slot.title = "数据新鲜度（点击看明细）";

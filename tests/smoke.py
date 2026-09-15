@@ -405,14 +405,26 @@ def main():
         # ⑥ 明日备选池：容器/渲染器/注册/后端引擎（防结构回退）
         check("recap 明日备选池容器+渲染器", 'id="poolBox"' in rp and "function renderPool(" in rp
               and "[renderPool, \"poolBox\"]" in rp)
-        # 投机引擎 2026-09-10 拆为门面 speculate.py + spec_*.py 六模块（行为不变）：
+        # 投机引擎 2026-09-10 拆为门面 speculate.py + spec_*.py 七模块（行为不变；
+        # 2026-09-15 增 spec_ohlc_fb.py 日线缺口备源）：
         # 源码文本断言改为读门面与全部子模块的拼接源码，断言本身一条不改
         sp_src2 = "\n".join(
             open(os.path.join(ROOT, "backend", "recap", _f), encoding="utf-8").read()
             for _f in ("speculate.py", "spec_rules.py", "spec_series.py", "spec_duckdb.py",
-                       "spec_builders.py", "spec_pool.py", "spec_validate.py"))
+                       "spec_ohlc_fb.py", "spec_builders.py", "spec_pool.py", "spec_validate.py"))
         check("备选池后端引擎 build_pool", "def build_pool(" in sp_src2 and 'data["pool"]' in sp_src2
               and "_MF_QUOTA" in sp_src2 and "scan_trend(" in sp_src2)
+        # 2026-09-15 0914 事故（研究库整层缺 T 日线→验证静默标「停牌」）防回退：
+        # ohlc_rets 缺行走东财备源 + 层探测状态落 .status/duckdb.json + 验证行标 data_src
+        check("研究库日线缺口备源兜底+层告警",
+              "import spec_ohlc_fb" in sp_src2 and "def day_rets(" in sp_src2
+              and "def _layer_probe(" in sp_src2 and "duckdb.json" in sp_src2
+              and "spec_ohlc_fb.day_rets(date8, missing)" in sp_src2
+              and '"data_src": r.get("src")' in sp_src2 and "layer_status()" in sp_src2)
+        _ucsrc = open(os.path.join(ROOT, "backend", "recap", "us_close_task.py"),
+                      encoding="utf-8").read()
+        check("收盘链前置研究库同步（17:05 sync 与上游发布竞态兜底）",
+              "sync_research_db()" in _ucsrc and '"data", "sync"' in _ucsrc)
         check("备选池 M_Final 主板口径+双组+负面清单", '"涨停组"' in sp_src2 and '"非涨停组"' in sp_src2
               and "score < ms_lu" in sp_src2 and "score < ms_nlu" in sp_src2
               and "nonzt" in sp_src2 and '"类型"' in sp_src2
@@ -520,6 +532,8 @@ def main():
         _fsrc = open(os.path.join(ROOT, "web", "lib", "freshness.js"), encoding="utf-8").read()
         check("新鲜度胶囊展示盘中停滞告警（2026-09-02 静默失败事故防回退）",
               "r.stall" in _fsrc and "盘中断采" in _fsrc)
+        check("新鲜度胶囊展示研究库日线缺口告警（2026-09-15 0914 事故防回退）",
+              "h.duckdb" in _fsrc and "腾讯备源回填" in _fsrc)
         # esc 单一来源（2026-09-04 收敛）：global/quant 旧副本不转义单引号，而龙虎榜/热股
         # 上游文本直接进 innerHTML——那是实际注入面；此后只许 lib/util.js 一处定义
         _usrc = open(os.path.join(ROOT, "web", "lib", "util.js"), encoding="utf-8").read()

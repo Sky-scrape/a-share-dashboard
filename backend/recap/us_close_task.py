@@ -8,11 +8,14 @@ T 日复盘的完成时点从 T 日 17:05 推迟到 T+1 美股收盘后 1 小时
 时序（计划任务 arecap-usclose-fetch 每日 04:05 触发本脚本）：
   1. 等待到最近的美股收盘 +20 分钟（美东 16:20，zoneinfo 自动处理夏令时；
      +20 分钟同时保证 us_market 的「未收盘 bar 剔除」守卫（16:15 ET）已放行）；
-  2. python backend/us_market.py                  # 抓隔夜美股 + 重建 factors.json
-  3. T = 上一个 A 股交易日；T 无快照 → 告警退出（17:05 采集失败，白天人工补）
-  4. python backend/recap/speculate.py --date T   # 备选池（含闸门）+ T-1 验证归因
-  5. python backend/recap/check_snapshot.py data/recap/<T>.json
-  6. python backend/derive.py
+  2. hithink-finance data sync（研究库增量，非阻塞）：17:05 的 sync 与上游
+     「T 日 release ≈17:11 发布」存在竞态（0911/0912/0913 压线赶上，0914 未
+     赶上→SKIP），而本链的池/验证全部依赖 T 日线——重建前必须再同步一次；
+  3. python backend/us_market.py                  # 抓隔夜美股 + 重建 factors.json
+  4. T = 上一个 A 股交易日；T 无快照 → 告警退出（17:05 采集失败，白天人工补）
+  5. python backend/recap/speculate.py --date T   # 备选池（含闸门）+ T-1 验证归因
+  6. python backend/recap/check_snapshot.py data/recap/<T>.json
+  7. python backend/derive.py
 
 全部步骤落盘 .status/logs/usclose.log；A 股节假日（无 T 快照）只跳过复盘步骤，
 美股数据仍照常更新。非投资建议，数据规则化处理。
@@ -61,6 +64,32 @@ def wait_us_close():
         _log(f"[warn] zoneinfo unavailable ({type(e).__name__}), skip wait")
 
 
+def sync_research_db() -> bool:
+    """研究库（hithink 本地 DuckDB）增量同步（非阻塞）。
+
+    根因（0914 实例）：上游「T 日 release ≈17:11 发布」晚于 17:05 sync → 当日
+    SKIP；次日凌晨 04:21 重建终版池/验证时本地库整层缺 T 日线——低吸组空仓、
+    偏离/量比空、验证全标「停牌/数据缺失」。这里在重建前补一次同步（此时上游
+    必已发布），失败仅 [warn]：缺口由 spec_duckdb 探测落盘 + 东财备源兜底。"""
+    sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
+    try:
+        import ht  # noqa: PLC0415
+    except Exception as e:  # noqa: BLE001
+        _log(f"[warn] hithink CLI 不可用: {type(e).__name__}: {str(e)[:150]}")
+        return False
+    # 默认 1GiB 上限在本机会让 sync 提交失败（README「重建或换机时记得带上」）
+    os.environ.setdefault("HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT", "4GiB")
+    try:
+        d = ht.ht("data", "sync", timeout=600) or {}
+        _log(f"sync ok: decision={(d or {}).get('decision')} "
+             f"release={(d or {}).get('release_id')}")
+        return True
+    except Exception as e:  # noqa: BLE001 - 非阻塞：缺口由探测+备源兜底
+        _log(f"[warn] hithink data sync failed (non-blocking): "
+             f"{type(e).__name__}: {str(e)[:200]}")
+        return False
+
+
 def prev_ashare_trade_date() -> str | None:
     """上一个 A 股交易日（ISO，相对北京时间今天）；来源 us_market 日历单一来源。"""
     sys.path.insert(0, os.path.join(ROOT, "backend"))
@@ -86,6 +115,7 @@ def run_step(cmd: list[str]) -> bool:
 
 def main():
     _log("==== us-close recap chain start ====")
+    sync_research_db()   # 先补研究库（利用等待窗口），T 日线是后面池/验证的硬依赖
     wait_us_close()
 
     ok_us = run_step([sys.executable, os.path.join("backend", "us_market.py")])

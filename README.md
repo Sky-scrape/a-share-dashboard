@@ -156,7 +156,7 @@ A/
 
 | 任务 | 时间 | 命令 |
 | --- | --- | --- |
-| arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
+| arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；hithink data sync 研究库增量（非阻塞——17:05 那次与上游「T 日 release ≈17:11 发布」存在竞态，漏赶会致 T 日线整层缺失，2026-09-14 实例）→ us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
 | areauction-live-fetch | 交易日 09:14 | backend/auction/auction_task.bat（09:15–09:24:30 每 30s live 轮询 + 09:25:10 终态 + 基准，日志 .status/logs/fetch-auction.log）；已设为**不看电池、错过可补跑、上限 PT30M** |
 | rotation-intraday-fetch | 交易日 09:25 | backend/rotation/fetch_day_task.bat → ths_collect.py 盘中逐分钟轮询循环（数据只到 15:00，收盘定格后自退）；不看电池、错过可补跑、上限 PT8H |
 | arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档 + **收盘后补刷全球总览**（CN 热力图数据源是实时快照，盘前那轮抓不到当日数据，见下行说明），日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成） |
@@ -201,7 +201,7 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
   **关键口径（已实测）：集合竞价结束后，`stage=live` 与 `stage=final` 返回完全相同的 09:25 定盘冻结值（`auction_phase=closed`），只有 `last_price` 随盘中变。** 所以「竞价过程曲线」只能靠 09:15–09:25 本地逐轮留存拿到，事后补抓画不出过程；每轮因此带 `in_window` 标记。
 - **量化平台**：引擎内置 `quant/`（无硬编码路径，换机即用）；行情用 hithink 本地 DuckDB（个股秒级）+ 远端 fund.history（ETF），与复盘板块共享 hithink 基础设施；选股因子缓存 quant/data/screener/，任务临时产物在 data/quant/jobs/
 - **全球总览**：新浪通道为主（环球指数/美股指数/美股个股实时；本网络环境东财 push2 系列接口不通，勿用）；美股个股 5/20 日窗口直接解析新浪 staticdata 日线；A股雷达动量复用本地复盘快照逐日复合，A股热力图行业窗口用快照复合、个股窗口用 hithink 前复权日线（限流自动重试）；世界地图 GeoJSON 已本地化在 web/lib/map/
-- **研究库**：hithink 本地 DuckDB（`hithink-finance db query` 可查 10 年日线），每日 data sync 增量
+- **研究库**：hithink 本地 DuckDB（`hithink-finance db query` 可查 10 年日线），每日 data sync 增量（17:05 与次日 04:05 各一次防竞态）；上游未发布时日线层会整层缺口——投机分析验证侧 OHLC 缺行走腾讯前复权日线备源兜底（`spec_ohlc_fb`，行带备源标记；东财 push2 本网络直连不通故弃用），层探测状态落 `.status/duckdb.json`（/api/health `duckdb` 段 + 新鲜度弹窗告警）；全市场扫描（低吸组/偏离/量能）无备源，缺口日诚实降级（量能闸门不启用，`_market_amt_ratio` 拒用错日数据）
 
 详细文档见 `docs/README-recap.md`（复盘）与 `docs/README-rotation.md`（轮动）；实时竞价的接口契约与时间线参数以 `backend/auction/auc_config.py` 顶部注释为单一来源。
 

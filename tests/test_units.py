@@ -677,6 +677,130 @@ def test_fsutil_newline_param_and_tmp_cleanup(tmp_path):
     assert {p.name for p in tmp_path.iterdir()} == {"lf.md", "native.txt"}
 
 
+
+
+# ---------------- 日线层备源兜底与研究库 stale 探测（2026-09-15） ----------------
+
+def test_spec_ohlc_fb_symbol_mapping():
+    import spec_ohlc_fb
+    assert spec_ohlc_fb._symbol_of("600601") == "sh600601"
+    assert spec_ohlc_fb._symbol_of("605258") == "sh605258"
+    assert spec_ohlc_fb._symbol_of("000823") == "sz000823"
+    assert spec_ohlc_fb._symbol_of("300750") == "sz300750"
+    assert spec_ohlc_fb._symbol_of("920819") is None   # 北交所不在池口径，不猜前缀
+    assert spec_ohlc_fb._symbol_of("") is None
+    assert spec_ohlc_fb._symbol_of("abc123") is None
+
+
+def test_spec_ohlc_fb_ohlc_from_bars_matches_duckdb_math():
+    # 与 spec_duckdb.ohlc_rets 同构：涨幅相对前一根 bar 收盘（LAG 语义）；
+    # 量比 amtr 为估计口径（量比×价比，腾讯日线无成交额字段）
+    import spec_ohlc_fb
+    bars = [{"date": "2026-09-11", "open": 31.39, "close": 34.77, "high": 34.77,
+             "low": 31.05, "volume": 80647.0},
+            {"date": "2026-09-14", "open": 34.50, "close": 35.06, "high": 36.66,
+             "low": 34.10, "volume": 127505.0},
+            {"date": "2026-09-15", "open": 34.63, "close": 36.16, "high": 36.96,
+             "low": 34.60, "volume": 97286.0}]   # 盘中未收盘 bar：不得参与定位
+    r = spec_ohlc_fb.ohlc_from_bars("2026-09-14", bars)
+    assert r == {"o": round((34.50 / 34.77 - 1) * 100, 2),
+                 "h": round((36.66 / 34.77 - 1) * 100, 2),
+                 "l": round((34.10 / 34.77 - 1) * 100, 2),
+                 "c": round((35.06 / 34.77 - 1) * 100, 2),
+                 "amtr": round((127505.0 / 80647.0) * (35.06 / 34.77), 2),
+                 "src": "em"}
+    assert spec_ohlc_fb.ohlc_from_bars("2026-09-14", bars[::-1]) == r   # 乱序输入可换算
+    assert spec_ohlc_fb.ohlc_from_bars("2026-09-16", bars) is None      # 缺 T 日 bar
+    assert spec_ohlc_fb.ohlc_from_bars("2026-09-11", bars) is None      # 缺前收（真停牌如实缺席）
+    zero_vol = [bars[0], dict(bars[1], volume=0.0)]
+    assert spec_ohlc_fb.ohlc_from_bars("2026-09-14", zero_vol)["amtr"] is None
+
+
+def test_ohlc_rets_fallback_merge_and_status(monkeypatch, tmp_path):
+    # 缺口日：库内缺 000823 → 东财备源补齐 + 状态落盘 ok=False + 备源计数
+    import json as _json
+    import spec_duckdb, spec_ohlc_fb
+
+    def fake_export(sql, tag):
+        if tag.startswith("poolval"):
+            return [{"thscode": "600601.SH", "o": 1.0, "h": 2.0, "l": -1.0,
+                     "c": 1.5, "amtr": 1.1}]
+        if tag.startswith("layerprobe"):
+            return [{"n": 0, "last_bar": "2026-09-11"}]
+        return []
+
+    monkeypatch.setattr(spec_duckdb, "_db_export", fake_export)
+    monkeypatch.setattr(spec_ohlc_fb, "day_rets",
+                        lambda d, cs: {c: {"o": 0.1, "h": 0.2, "l": 0.0, "c": 0.15,
+                                           "amtr": 1.0, "src": "em"} for c in cs})
+    monkeypatch.setattr(spec_duckdb, "DUCKDB_STATUS", str(tmp_path / "duckdb.json"))
+    spec_duckdb._PROBE_CACHE.clear()
+    out = spec_duckdb.ohlc_rets("20260914", ["600601", "000823"])
+    assert out["600601"]["c"] == 1.5 and "src" not in out["600601"]
+    assert out["000823"]["src"] == "em"
+    st = _json.loads((tmp_path / "duckdb.json").read_text(encoding="utf-8"))
+    assert st["ok"] is False and st["layer_n"] == 0 and st["last_bar"] == "2026-09-11"
+    assert st["fallback"] == {"n": 1, "ok": 1, "codes": ["000823"]}
+    assert spec_duckdb.layer_status()["probed"] == "20260914"
+
+
+def test_ohlc_rets_healthy_day_no_probe_no_alarm(monkeypatch, tmp_path):
+    # 齐全日：不触发层探测（省一次 CLI 调用），状态 ok=True、last_bar=验证日下界
+    import json as _json
+    import spec_duckdb
+
+    calls = []
+
+    def fake_export(sql, tag):
+        calls.append(tag)
+        return [{"thscode": "600601.SH", "o": 1.0, "h": 2.0, "l": -1.0,
+                 "c": 1.5, "amtr": 1.1}]
+
+    monkeypatch.setattr(spec_duckdb, "_db_export", fake_export)
+    monkeypatch.setattr(spec_duckdb, "DUCKDB_STATUS", str(tmp_path / "duckdb.json"))
+    spec_duckdb._PROBE_CACHE.clear()
+    out = spec_duckdb.ohlc_rets("20260914", ["600601"])
+    assert out["600601"]["c"] == 1.5
+    assert [t for t in calls if not t.startswith("poolval")] == []   # 无额外探测调用
+    st = _json.loads((tmp_path / "duckdb.json").read_text(encoding="utf-8"))
+    assert st["ok"] is True and st["last_bar"] == "2026-09-14" and st["fallback"] is None
+
+
+def test_market_amt_ratio_requires_t_day_bar(monkeypatch):
+    # 本地库落后（T 日 bar 缺失）时必须返回 None：拿 T-1 当 T 是静默用错日数据
+    import spec_duckdb
+    stale_rows = [{"date": "2026-09-11", "amt": 1.0}] + [
+        {"date": f"2026-09-{d:02d}", "amt": 1.0} for d in range(1, 11)]
+    monkeypatch.setattr(spec_duckdb, "_db_export", lambda sql, tag: stale_rows)
+    assert spec_duckdb._market_amt_ratio("20260914") is None
+    fresh_rows = [{"date": "2026-09-14", "amt": 2.0}] + [
+        {"date": f"2026-09-{d:02d}", "amt": 1.0} for d in range(1, 20)]
+    monkeypatch.setattr(spec_duckdb, "_db_export", lambda sql, tag: fresh_rows)
+    assert spec_duckdb._market_amt_ratio("20260914") == 2.0
+
+
+def test_validate_prev_pool_marks_em_source_and_note(monkeypatch):
+    # 备源回填的行带 data_src="em"，payload note 说明缺口与回填数量
+    import spec_validate
+
+    snap = {"modules": {"speculation": {"data": {"pool": {
+        "picks": [{"代码": "605258", "名称": "协和电子", "类型": "涨停板",
+                   "得分": 78.5, "factors": {"group": "lu", "lb": 1, "sealed": True}}],
+        "note": "C7 主板概念口径", "env": "defensive"}}}}}
+    monkeypatch.setattr(spec_validate.snapio, "load", lambda d8: snap)
+    monkeypatch.setattr(spec_validate, "ohlc_rets",
+                        lambda d8, cs: {"605258": {"o": -0.78, "h": 5.44, "l": -1.93,
+                                                   "c": 0.83, "amtr": 1.63, "src": "em"}})
+    monkeypatch.setattr(spec_validate, "layer_status",
+                        lambda: {"probed": "20260914", "ok": False, "layer_n": 0,
+                                 "last_bar": "2026-09-11"})
+    monkeypatch.setattr(spec_validate, "index_series", lambda *a: [])
+    monkeypatch.setattr(spec_validate, "_industry_lookup", lambda: {})
+    val = spec_validate.validate_prev_pool("20260914", [{"date": "2026-09-11"}])
+    assert val["ok"] and val["picks"][0]["data_src"] == "em"
+    assert "全市场日线" in (val["note"] or "") and "备源" in (val["note"] or "")
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))

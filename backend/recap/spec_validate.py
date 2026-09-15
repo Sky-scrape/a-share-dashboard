@@ -15,7 +15,7 @@ if os.path.dirname(_HERE) not in sys.path:
 import execution_layer  # noqa: E402
 import fsutil  # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 import snapio  # noqa: E402
-from spec_duckdb import ohlc_rets  # noqa: E402
+from spec_duckdb import layer_status, ohlc_rets  # noqa: E402
 from spec_rules import _date_iso  # noqa: E402
 from spec_series import (_industry_lookup, _series_pct, index_gain,  # noqa: E402
                          index_series, industry_series)
@@ -185,7 +185,8 @@ def validate_prev_pool(date8, sent_rows, concept_pct=None):
         row = {"code": code, "name": p.get("名称"), "group": grp,
                "pick_score": p.get("得分"), "rules": rules_tag,
                "buckets": _pick_buckets(p.get("factors")),
-               "env": pool.get("env")}
+               "env": pool.get("env"),
+               "data_src": r.get("src") or "db"}
         if c is None or o is None:
             row.update({"attribution": "停牌/数据缺失"})
             out.append(row)
@@ -223,12 +224,26 @@ def validate_prev_pool(date8, sent_rows, concept_pct=None):
                     "strong_concept": (c > con_pct1 if (con_pct1 is not None) else None),
                     "attribution": attr})
         out.append(row)
+    # 研究库缺口留痕（0914 实例：整层缺失曾静默降级成「停牌」标签）：备源回填与
+    # 两源均缺的数量如实写进 note，前端验证卡与 pool_track 留痕共用
+    ls = layer_status()
+    n_fb = sum(1 for p in out if p.get("data_src") == "em")
+    n_none = sum(1 for p in out if p.get("close") is None)
+    parts = []
+    if ls.get("layer_n") == 0:
+        parts.append(f"本地研究库缺 {iso} 全市场日线（库内最新 bar {ls.get('last_bar') or '-'}）")
+    elif ls.get("db_error"):
+        parts.append(f"本地研究库查询失败（{ls['db_error']}）")
+    if n_fb:
+        parts.append(f"{n_fb} 只日线经腾讯前复权日线备源回填")
+    if n_none:
+        parts.append(f"{n_none} 只两源均无日线（按停牌/缺失处理）")
     return {"ok": True, "date": prev8, "env": pool.get("env"), "rules": rules_tag,
             "picks": out, "stats": {"overall": _val_stats(out),
                                     "lu": _val_stats([p for p in out if p["group"] == "lu"]),
                                     "nlu": _val_stats([p for p in out if p["group"] == "nlu"]),
                                     "exec": _val_exec_stats(out)},
-            "note": None}
+            "note": "；".join(parts) or None}
 
 
 def _val_stats(rows):
