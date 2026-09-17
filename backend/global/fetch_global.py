@@ -16,6 +16,7 @@ import io
 import json
 import os
 import random
+import re
 import sys
 import time
 from urllib.parse import urlencode
@@ -545,6 +546,32 @@ class NoSessionData(RuntimeError):
     """
 
 
+def _cn_snapshot_date8(board_daily=None, daily_dir=None):
+    """A股全市场快照的数据日（8 位）——live snapshot 行本身不带日期字段。
+
+    单一口径取「轮动日线最近一个交易日」（盘中逐分钟在写、收盘后定格，任何盘外
+    时刻都与全市场快照同场）；读不到再回退 board_daily（复盘 boards 的交易日轴，
+    调用方已加载）。两者都空时返回 ""——宁可缺失也不冒充，前端不显示截至日。
+    daily_dir 可注入（smoke/单测换桩用）。"""
+    import glob
+    try:
+        daily_dir = daily_dir or os.path.join(ROOT, "data", "rotation", "daily")
+        cands = glob.glob(os.path.join(daily_dir, "*.json"))
+        dates = [re.sub(r"\D", "", os.path.basename(p)) for p in cands]
+        dates = [d for d in dates if len(d) == 8]
+        if dates:
+            return max(dates)
+    except OSError:
+        pass
+    try:
+        all_dates = [d for bd in (board_daily or {}).values() for d in bd]
+        if all_dates:
+            return max(all_dates).replace("-", "")
+    except (ValueError, AttributeError):
+        pass
+    return ""
+
+
 def fetch_heat_cn(board_daily=None):
     """A股热力图。board_daily：预加载的行业逐日涨跌幅（radar 共用一次加载）。"""
     ind_map, ind_date = _latest_industry_map()
@@ -581,14 +608,18 @@ def fetch_heat_cn(board_daily=None):
                     "amount": round(d["amount"] / 1e8, 1),  # 亿
                     "stocks": top})
     out.sort(key=lambda x: -x["amount"])
-    asof = ind_date or ""
-    if len(asof) == 8:
-        asof = f"{asof[:4]}-{asof[4:6]}-{asof[6:]}"
+    # asof=快照数据日（最近完成采集的 A 股交易日）；行业映射 vintage 是另一件事，
+    # 只作 map_vintage 附属标注——曾误把 vintage 当 asof，映射几天不刷新就把
+    # 09-17 的热力图标成「截至 09-14」（2026-09-17 实测）。
+    asof = _cn_snapshot_date8(board_daily)
+    map_vintage = ""
+    if ind_date and len(ind_date) == 8:
+        map_vintage = f"{ind_date[:4]}-{ind_date[4:6]}-{ind_date[6:]}"
     try:
         _add_windows_cn(out, board_daily)
     except Exception as e:  # noqa: BLE001  窗口缺失不连坐主数据
         LOG.info(f"[warn] cn 窗口计算失败: {type(e).__name__}: {str(e)[:120]}")
-    return {"asof": asof, "sectors": out}
+    return {"asof": asof, "map_vintage": map_vintage, "sectors": out}
 
 
 # ---------------- 4. 日内分时 ----------------

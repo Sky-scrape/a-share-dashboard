@@ -558,15 +558,16 @@ function heatOption(){
       formatter: p=>{
         const d = (p && p.data) || {};
         const pct = d.pct;
-        // 市值：同花顺 881 指数口径不提供板块市值（mcap 恒 0），如实显示 '-'
-        return `<b>${esc(d.name || '')}</b><br>涨跌幅 ${fmtPct(pct)}<br>成交额 ${(d.amt > 0) ? (d.amt/1e8).toFixed(1) + ' 亿' : '-'}<br>市值 ${(d.mcap > 0) ? (d.mcap/1e8).toFixed(0) + ' 亿' : '-'}`;
+        // 同花顺 881 指数口径不提供板块市值（mcap 恒 0）：恒空字段直接不展示，别让 tooltip 每次都带一行「市值 -」
+        return `<b>${esc(d.name || '')}</b><br>涨跌幅 ${fmtPct(pct)}<br>成交额 ${(d.amt > 0) ? (d.amt/1e8).toFixed(1) + ' 亿' : '-'}`;
       }
     },
     series:[{
       type:'treemap', roam:false, nodeClick:false, breadcrumb:{show:false}, sort:'desc',   // 始终按面积值降序布局：面积=涨跌幅时按涨跌幅排，面积=成交额时按成交额排
       width:'100%', height:'100%',
       animationDurationUpdate:400, animationDuration:200,
-      label:{show:true, formatter:p=>p.name, fontSize:(window.innerWidth <= 720 ? 9 : 11), color:P().panel, textShadowBlur:2, fontFamily:CHART_FONT},
+      // ellipsis 用中文省略号：默认 ASCII "..." 在 11px 下挤成一条基线短杠，看起来像残缺的下划线
+      label:{show:true, formatter:p=>p.name, ellipsis:'…', fontSize:(window.innerWidth <= 720 ? 9 : 11), color:P().panel, textShadowBlur:2, fontFamily:CHART_FONT},
       upperLabel:{show:false},
       itemStyle:{borderColor:P().panel, borderWidth:1, gapWidth:1},   // 面板色分隔线（随主题）
       emphasis:{itemStyle:{borderColor:P().hiGold, borderWidth:2}},

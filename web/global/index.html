@@ -932,7 +932,9 @@ function renderHeat() {
     crumbs.className = ''; crumbs.innerHTML = '';
     return;
   }
-  $('heatAsOf').textContent = '截至 ' + fmtCn(has.asof) + ' · ' + WIN_LABEL[heatWin];
+  // map_vintage=个股→行业映射的建库时点（旧数据无此字段）：与「截至」数据日是两件事，附属小字标注
+  $('heatAsOf').textContent = '截至 ' + fmtCn(has.asof) + ' · ' + WIN_LABEL[heatWin]
+    + (heatMode === 'cn' && has.map_vintage ? '（行业映射 ' + fmtCn(has.map_vintage) + '）' : '');
   $('heatWinNote').textContent = WIN_LABEL[heatWin];
   renderHeatBar();
   const tree = heatBaseTree();

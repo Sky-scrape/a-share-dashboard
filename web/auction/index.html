@@ -832,6 +832,27 @@ function renderSector() {
   }
   $("sectorNote").textContent = srcNote;
   var top = rows;
+  if (!top.length) {
+    // 空态必须画在图体内：只靠右上角小字注释，用户看到的是一整块白板，分不清「没数据」还是「没渲染」
+    var side = state.sectorSide === "down" ? "低开" : "高开";
+    var msg;
+    if ((sec.rows || []).length && (secDate === today8() || secDate === dataFreshness().date8)) {
+      var opp = sec.rows.filter(function (r) { return sgn * r.open_pct <= 0; });
+      var ext = opp.length ? opp.reduce(function (a, b) { return (sgn * b.open_pct) < (sgn * a.open_pct) ? b : a; }) : null;
+      msg = (secDate !== today8() ? mdOf(secDate) + " " : "") + "全部 " + opp.length + " 个一级行业竞价" + side
+        + (ext ? "（" + (sgn < 0 ? "最强 " : "最深 ") + fmtPct(ext.open_pct) + " · " + esc(ext.n) + "）" : "")
+        + "，无" + side + "行业" + (state.sectorSide === "down" ? "；点「涨」看高开" : "；点「跌」看低开");
+    } else {
+      msg = "观察池内无" + side + "行业聚合（非全板块口径）";
+    }
+    sectorChart.setOption({
+      textStyle: { fontFamily: CHART_FONT },
+      graphic: [{ type: "text", left: "center", top: "middle", silent: true,
+        style: { text: msg, fill: P().text3, fontSize: 13, fontFamily: CHART_FONT, lineHeight: 20 } }],
+      xAxis: { show: false }, yAxis: { show: false }, series: []
+    }, true);
+    return;
+  }
   sectorChart.setOption({
     textStyle: { fontFamily: CHART_FONT },
     grid: { left: 90, right: 60, top: 8, bottom: 22 },
@@ -874,11 +895,17 @@ function renderSelf() {
     var r = byCode[tc]; if (!r) return; hit++;
     var pc = pctClass(r.auction_pct);
     var px = num(r.auction_price);
+    // 空数据要给原因而不是一排 "-"：920xxx 北交所等票源不覆盖/未参与撮合时，四个字段全空
+    var empty = (r.auction_pct == null && px == null && !r.auction_amount && !r.auction_volume);
     html += '<div class="scard" data-code="' + esc(tc) + '">' +
       '<div class="nm"><span>' + esc(r.name || tc) + '</span><span class="cd">' + esc(r.ticker || "") + "</span></div>" +
-      '<div class="px ' + pc + '">' + (px != null ? px : "-") +
-      ' <span style="font-size:12px">' + fmtPct(r.auction_pct) + "</span></div>" +
-      '<div class="sub"><span>额 ' + fmtAmt(r.auction_amount) + '</span><span>量 ' + fmtVol(r.auction_volume) + "</span></div></div>";
+      (empty
+        ? '<div class="px dim" style="font-size:12px">无竞价数据</div>' +
+          '<div class="sub"><span>源未覆盖或未参与撮合</span></div>'
+        : '<div class="px ' + pc + '">' + (px != null ? px : "-") +
+          ' <span style="font-size:12px">' + fmtPct(r.auction_pct) + "</span></div>" +
+          '<div class="sub"><span>额 ' + fmtAmt(r.auction_amount) + '</span><span>量 ' + fmtVol(r.auction_volume) + "</span></div>") +
+      "</div>";
   });
   $("selfCards").innerHTML = html || '<div class="dim" style="padding:12px;font-size:12px">自选股暂无竞价数据</div>';
   $("selfNote").textContent = hit + "/" + self.length;

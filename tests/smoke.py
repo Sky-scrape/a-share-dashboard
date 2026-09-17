@@ -288,14 +288,15 @@ def main():
               "document.addEventListener('click'" in rot_html
               and "t.closest('#heatmap, #curves, #rankPanel, #drillPanel')" in rot_html)
         # 交互语义统一（2026-09-05）：点击=只开钻取（近5日走势+池），不再联动曲线聚焦
-        # （聚焦会把 Top3 别的板块曲线挂到页面上）；悬停=涨跌幅/成交额/市值
+        # （聚焦会把 Top3 别的板块曲线挂到页面上）；悬停=涨跌幅/成交额
+        # （2026-09-18 起 881 口径 mcap 恒 0，「市值 -」恒空行从 tooltip 移除，不再展示）
         _clk = rot_html.split("heatChart.on('click'")[1].split("});")[0]
         check("热力图点击语义统一：点击=只开钻取，再点同一板块收起（不联动聚焦）",
               "openDrill(d.name);" in _clk and "drillName === d.name" in _clk
               and "focused" not in _clk)
-        check("热力图悬停 tooltip 含涨跌幅/成交额/市值（ths 指数无市值时如实显示 '-'）",
-              "涨跌幅 ${fmtPct(pct)}" in rot_html and "d.mcap > 0" in rot_html
-              and rot_html.count("市值 ${(d.mcap > 0)") == 1)
+        check("热力图悬停 tooltip 含涨跌幅/成交额，且不再展示恒空的市值行",
+              "涨跌幅 ${fmtPct(pct)}" in rot_html and "成交额 ${(d.amt > 0)" in rot_html
+              and "市值 ${(d.mcap" not in rot_html)
 
         if bds.get("industry"):
             nm = urllib.parse.quote(bds["industry"][0]["name"])
@@ -635,6 +636,11 @@ def main():
         check("global 热力面板", 'id="heatChart"' in gp and "type: 'treemap'" in gp)
         check("global 热力周期切换与涨跌停色阶", 'id="heatWinSeg"' in gp and "HEAT_CLAMP" in gp and
               'id="heatBar"' in gp and 'id="heatCrumbs"' in gp and "heatJump" in gp)
+        # 热力图数据日口径（2026-09-18）：asof=快照数据日（轮动日线最近交易日），
+        # 行业映射 vintage 只作附属小字——曾误把映射 vintage 当数据日（0917 实测误标 09-14）
+        check("global 热力图 asof=快照数据日，映射 vintage 附属标注不冒充数据日",
+              "map_vintage" in gp and "行业映射" in gp
+              and "_cn_snapshot_date8" in open(os.path.join(ROOT, "backend", "global", "fetch_global.py"), encoding="utf-8").read())
         check("global 滚动条槽固定+走势坐标轴", "scrollbar-gutter: stable" in gp and "containLabel" in gp)
         check("global 走势自选日期区间控件", 'id="trQuick"' in gp and 'id="trStart"' in gp and
               'id="trEnd"' in gp and "trendHist" in gp)
@@ -721,6 +727,13 @@ def main():
         # server 端自愈补抓（交易日 fail-closed + 节流 + 采集锁防重入）兜底恢复全成分口径
         check("板块竞价强度回退口径显性标注（观察池偏样本 ≠ 全板块）+ 恢复指引在",
               "板块竞价强度 · 观察池偏样本" in auc_html and "非全板块口径" in auc_html)
+        # 空态画进图体（2026-09-18）：全线低开日涨榜为空时不再是一整块白板（0917 实测 89 行业全低开）
+        check("板块竞价强度空态画进图体（无高开/低开行业时给数据日+最深缺口+切换指引）",
+              "无" in auc_html and "graphic: [{ type: \"text\"" in auc_html
+              and "个一级行业竞价" in auc_html and "观察池内无" in auc_html)
+        # 自选卡空数据标注（2026-09-18）：920xxx 等源未覆盖票显示原因，不再只给一排 "-"
+        check("自选卡空竞价数据显式标注原因（源未覆盖/未撮合）",
+              "无竞价数据" in auc_html and "源未覆盖或未参与撮合" in auc_html)
         check("server sector 过期自愈补抓（交易日 fail-closed + 节流 + 采集锁防重入）",
               "_maybe_auto_sector_backfill" in _sp and "is_trade_today" in _sp
               and "respond=False" in _sp and "09:26" in _sp)

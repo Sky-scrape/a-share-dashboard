@@ -17,6 +17,7 @@ data/rotation/panel/——它们由 derive.py 从快照重建，占了备份体�
 """
 import argparse
 import datetime as _dt
+import glob
 import json
 import os
 import sys
@@ -84,6 +85,13 @@ def run(full=False, dest_override=None, keep_override=None):
     t0 = time.time()
     stamp = time.strftime("%Y%m%d-%H%M")
     os.makedirs(dest, exist_ok=True)
+    # 开工前清掉历史中断留下的半截 .tmp（休眠/断电杀进程时，except 兜底没机会跑）：
+    # 不清会每次备份旁路躺一份几十 MB 的死文件（2026-09-16 实测遗留 70MB）
+    for stale in glob.glob(os.path.join(dest, "arecap-data-*.zip.tmp")):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
     zpath = os.path.join(dest, f"arecap-data-{stamp}.zip")
     tmp = zpath + ".tmp"
     n_files = 0

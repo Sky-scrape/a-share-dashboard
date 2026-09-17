@@ -324,10 +324,12 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
           <label>成交口径</label><select id="inExec"></select></div>
         <div class="frow"><label>佣金(万)</label><input type="number" id="inComm" value="2.5" step="0.5" min="0" style="width:60px">
           <label>最低佣</label><input type="number" id="inMinC" value="5" step="1" min="0" style="width:56px">
-          <label>印花税(万)</label><input type="number" id="inStamp" value="5" step="0.5" min="0" style="width:60px">
-          <label>参与率</label><input type="number" id="inPart" value="0.05" step="0.01" min="0.01" max="1" style="width:64px"></div>
-        <div class="frow"><label>滑点</label><select id="inSlipM"></select><input type="number" id="inSlipV" value="0.0005" step="0.0001" style="width:84px">
-          <label>回撤熔断%</label><input type="number" id="inHalt" value="0" min="0" max="90" style="width:56px"></div>
+          <label>印花税(万)</label><input type="number" id="inStamp" value="5" step="0.5" min="0" style="width:60px"></div>
+        <!-- 参与率单独一行：挤在佣金行末尾会在侧栏宽度下被 flex-wrap 拆成孤儿输入框（2026-09-18 实测） -->
+        <div class="frow"><label>参与率（大资金回测按成交额占比限流）</label><input type="number" id="inPart" value="0.05" step="0.01" min="0.01" max="1" style="width:64px"></div>
+        <!-- 回撤熔断同理：跟滑点同排会挤成孤儿 -->
+        <div class="frow"><label>滑点</label><select id="inSlipM"></select><input type="number" id="inSlipV" value="0.0005" step="0.0001" style="width:84px"></div>
+        <div class="frow"><label>回撤熔断%（净值回撤超限停止开新仓）</label><input type="number" id="inHalt" value="0" min="0" max="90" style="width:56px"></div>
         <div class="frow"><label><input type="checkbox" id="inBlock" checked> 涨跌停禁成交</label>
           <label><input type="checkbox" id="inLiq" checked> 期末平仓</label>
           <label>预热bar</label><input type="number" id="inWarm" value="0" min="0" max="500" style="width:64px"></div>

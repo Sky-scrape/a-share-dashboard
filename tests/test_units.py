@@ -6,6 +6,9 @@
 代码转换、交易日历口径、M_Final 环境分档/分桶、主板范围、备选池打分与买点文案、
 共享重试。全部离线、不联网、不写数据目录。
 """
+import os
+import sys
+
 import pytest
 
 if __package__ in (None, ""):
@@ -242,6 +245,61 @@ def test_retry_exhausts_and_raises(monkeypatch):
 
     with pytest.raises(ValueError):
         http_retry.retry(always, tries=2, delay=0)
+
+
+# ---------------- fetch_global：A股热力图数据日口径（2026-09-18） ----------------
+
+def _load_fetch_global():
+    """隔离加载 fetch_global（其模块级 stdout 包装不应污染测试进程捕获）。
+
+    asof 口径背景：live snapshot 行不带日期字段，曾误用行业映射 vintage（成分映射
+    建库日，滞后行情数日）当数据日。现取「轮动日线最近交易日」，map vintage 降为
+    附属标注。"""
+    import importlib.util
+    import io
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = os.path.join(root, "backend", "global", "fetch_global.py")
+    # 模块级会执行 sys.stdout = TextIOWrapper(sys.stdout.buffer, ...)：pytest 捕获流
+    # 在用例结束后关闭，留下的包装句柄会让解释器收尾报 lost sys.stderr——
+    # 用一次性哑流接住这次包装，真实 stdout/stderr 全程不动。
+    dumb_out = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    dumb_err = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    real_out, real_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = dumb_out, dumb_err
+    try:
+        spec = importlib.util.spec_from_file_location("fetch_global_under_test", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+    return mod
+
+
+def test_cn_snapshot_date_prefers_rotation_daily(tmp_path):
+    mod = _load_fetch_global()
+    d = tmp_path / "daily"
+    d.mkdir()
+    (d / "2026-09-10.json").write_text("{}", encoding="utf-8")
+    (d / "20260908.json").write_text("{}", encoding="utf-8")     # 老命名兼容
+    (d / "2026-09-12.json").write_text("{}", encoding="utf-8")
+    (d / "notadate.json").write_text("{}", encoding="utf-8")     # 无日期文件必须忽略
+    assert mod._cn_snapshot_date8(daily_dir=str(d)) == "20260912"
+
+
+def test_cn_snapshot_date_falls_back_to_board_daily(tmp_path):
+    mod = _load_fetch_global()
+    empty = tmp_path / "none"
+    empty.mkdir()
+    bd = {"种植业与林业": {"2026-09-10": 1.0, "2026-09-11": -0.5}}
+    assert mod._cn_snapshot_date8(bd, daily_dir=str(empty)) == "20260911"
+
+
+def test_cn_snapshot_date_missing_everywhere_returns_empty(tmp_path):
+    mod = _load_fetch_global()
+    empty = tmp_path / "none"
+    empty.mkdir()
+    assert mod._cn_snapshot_date8({}, daily_dir=str(empty)) == ""
 
 
 # ---------------- derive 轮动统计：5日主线速度 / 持续强势（2026-09-04 重定义） ----------------
