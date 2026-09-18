@@ -415,6 +415,12 @@ def _optimizer_state(date8):
 # C7 在 2026-09-09 固化（strategy-iter us_round5_C7_aligned，窗口 01-05..09-08）；
 # 此后每日验证闭环里 rules="c7" 的记录就是真正的样本外。观察不能只挂不办：
 # 每满 20 个样本外验证日复审一次，胜率/均次跌破明确阈值必须给出结论（写死，不漂移）。
+# 基线口径注记（2026-09-19 C13，只改注释零行为）：win_rate/avg_close 是「入选票条件
+# 期望」（T+1 收盘 vs T 收盘，含买点未触发票）；trigger_rate 是**后视上界定义**（含
+# 「收盘>开盘」等收盘才可知的确认；严格冻结口径=开盘 0~+5% 窗+low≥-3+收盘>开盘，
+# C12 窗 n=447 触发率 26.8% vs 后视 32.4%，4.7% 后视触发票开盘为负实盘不接）。
+# 另生产池与研究引擎存在一字板/事故连锁口径差（影子对账 strategy-iter/runs/
+# shadow_parity/），样本外 <20 验证日时勿单独解读 trigger_rate；本阈值只消费前两者。
 _OOS_BASELINE = {"win_rate": 62.09, "avg_close": 2.497}   # C7 对齐run stats.json overall（n=422 条件口径）
 _OOS_REVIEW_EVERY = 20      # 复审周期（样本外验证日数）
 _OOS_WARN_WIN_DROP = 8.0    # 胜率较基线回落 ≥8pct → 警告（轮间稳定阈值 3pct 的两倍余量）

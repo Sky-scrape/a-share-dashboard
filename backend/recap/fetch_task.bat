@@ -2,6 +2,11 @@
 cd /d "%~dp0..\.."
 set PYTHONIOENCODING=utf-8
 if not exist .status\logs mkdir .status\logs
+rem [C13 2026-09-19] concept_map refresh MOVED BEFORE fetch_daily: on 7-day expiry days the
+rem old order left 17:05 pool build on a stale map (concept dimension silently degraded).
+rem Pre-positioning guarantees a fresh map at compute time; no-op within 7 days. Non-blocking.
+python backend\recap\concept_map.py >> .status\logs\fetch-recap.log 2>&1
+if errorlevel 1 echo [warn] concept_map refresh failed (non-blocking) >> .status\logs\fetch-recap.log
 rem Rotate fetch log when over 1MB: keep last 2 copies
 for %%A in (.status\logs\fetch-recap.log) do if %%~zA GEQ 1048576 (
   if exist .status\logs\fetch-recap.log.2 del .status\logs\fetch-recap.log.2
@@ -19,9 +24,6 @@ rem Default DuckDB memory cap is 1GiB which breaks sync commit on this box; give
 set HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT=4GiB
 call hithink-finance data sync --format json >> .status\logs\fetch-recap.log 2>&1
 if errorlevel 1 echo [warn] hithink data sync failed (non-blocking) >> .status\logs\fetch-recap.log
-rem concept membership map refresh: no-op unless older than 7 days (rebuild takes minutes, weekly)
-python backend\recap\concept_map.py >> .status\logs\fetch-recap.log 2>&1
-if errorlevel 1 echo [warn] concept_map refresh failed (non-blocking) >> .status\logs\fetch-recap.log
 rem gzip archive snapshots older than 14 days
 python backend\recap\archive.py --older-than 14 >> .status\logs\fetch-recap.log 2>&1
 rem 全球总览收盘后刷新：CN 热力图数据源是**实时快照**，08:40 盘前抓不到当日成交数据，
