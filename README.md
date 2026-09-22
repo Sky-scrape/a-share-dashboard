@@ -26,12 +26,20 @@
 
 ## 免安装 exe（Windows）
 
-不想装 Python 环境的话，到 [Releases](https://github.com/Sky-scrape/a-share-dashboard/releases) 下载 `ak-dashboard-win64-*.zip`（PyInstaller onedir 打包，内嵌 Python + 全部依赖 + web/backend/quant 源码），解压后双击 `ak-dashboard.exe` 即可：自动开浏览器，行为与 `python server.py` 完全一致（`--port`、`AK_PORT`、`--no-open` 等参数照用）。
+不想装 Python 环境的话，到 [Releases](https://github.com/Sky-scrape/a-share-dashboard/releases) 下载，两种形态任选：
 
-- 数据与状态生成在解压目录 `_internal\data\` 与 `_internal\.status\`（首次为空，页内点「重新抓取」拉数据）；整目录删除即彻底卸载
+| 形态 | 适合 | 说明 |
+| --- | --- | --- |
+| **单文件版** `ak-dashboard-win64-*-single.exe` | 拿来就用 | 一个 exe 双击即运行，自动开浏览器；源码与数据常驻 `%LOCALAPPDATA%\ak-dashboard`（卸载 = 删 exe + 删该目录） |
+| **解压版** `ak-dashboard-win64-*.zip` | 计划任务/开机自启 | 解压后双击 `ak-dashboard.exe`，全部文件都在解压目录（`_internal\data\`），启动快、路径直观 |
+
+两者行为与 `python server.py` 完全一致（`--port`、`AK_PORT`、`--no-open` 等参数照用）。单文件版每次启动需自解压（约 5-15 秒）且派生抓取子进程时同样自解压一次，介意启动速度或要配采集计划任务就选解压版。
+
+- 数据首次为空，页内点「重新抓取」拉数据；升级 = 换新 exe，启动时自动重同步源码、用户数据保留
 - 数据源 CLI（hithink-finance）仍需单独安装并配 key（同下节第 2 步），四条采集链路才可用；没有它时量化引擎离线可用
-- **计划任务也能用 exe**：采集类 bat 里的 `python xxx.py` 可换成 `"<解压目录>\ak-dashboard.exe" "<解压目录>\_internal\xxx.py"`（exe 会把 .py 参数按脚本转发运行，等价 python），无需再装 Python
-- 自行打包：根目录双击 `打包exe.bat`（或 `.venv-ci/Scripts/python.exe -m PyInstaller packaging/ak-dashboard.spec --noconfirm`），产物在 `dist/ak-dashboard/`；打包配置与启动器见 `packaging/`
+- **计划任务也能用 exe**：采集类 bat 里的 `python xxx.py` 可换成 `"<exe路径>" "<脚本路径>.py"`（exe 会把 .py 参数按脚本转发运行，等价 python），无需再装 Python
+- 首次运行如被 SmartScreen 拦截：点「更多信息 → 仍要运行」（exe 未做代码签名）
+- 自行打包：根目录双击 `打包exe.bat`（同时产出两种形态），配置在 `packaging/`（spec 的 `AK_ONEFILE=1` 切单文件版）
 
 ## 首次使用（五步走）
 

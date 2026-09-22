@@ -1,12 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""AK 看板 PyInstaller 打包配置（onedir 单目录版）。
+"""AK 看板 PyInstaller 打包配置（onedir / onefile 双形态）。
 
-产物结构 dist/ak-dashboard/：
-    ak-dashboard.exe            入口（packaging/launcher.py，见文件头注释）
-    _internal/                  解释器 + 第三方依赖 + 内嵌源码树
-        web/  backend/  quant/  与仓库同构（server.py 的 ROOT 锚定 _internal）
-        server.py  start.py
-运行期 data/ 与 .status/ 首次启动自动生成在 _internal/ 下（仓库运行同理）。
+默认 onedir：产物 dist/ak-dashboard/（exe + _internal/ 内嵌源码树），
+    启动快、路径直观，适合计划任务/开机自启。
+环境变量 AK_ONEFILE=1 切 onefile：产物 dist/ak-dashboard-onefile.exe，
+    单文件零残留；运行时源码与数据常驻 %LOCALAPPDATA%\ak-dashboard
+    （launcher 首启同步，见 launcher.py 头注释）。
 
 构建（仓库根目录执行）：
     .venv-ci/Scripts/python.exe -m PyInstaller packaging/ak-dashboard.spec --noconfirm
@@ -15,6 +14,7 @@ import os
 
 from PyInstaller.utils.hooks import collect_all
 
+ONEFILE = os.environ.get("AK_ONEFILE") == "1"
 ROOT = os.path.dirname(SPECPATH)   # spec 在 packaging/ 下，ROOT 即仓库根
 
 # 运行产物 / 缓存目录（相对仓库根），整目录剔除，绝不出现在交付包里
@@ -83,22 +83,37 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
-    name="ak-dashboard",
-    debug=False,
-    strip=False,
-    upx=False,
-    console=True,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    name="ak-dashboard",
-)
+if ONEFILE:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.datas,
+        [],
+        name="ak-dashboard-onefile",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=True,
+        exclude_binaries=False,
+    )
+else:
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name="ak-dashboard",
+        debug=False,
+        strip=False,
+        upx=False,
+        console=True,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.datas,
+        strip=False,
+        upx=False,
+        name="ak-dashboard",
+    )
