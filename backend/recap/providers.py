@@ -386,11 +386,27 @@ def breadth():
         flat_n = len(pcts) - up_n - down_n
 
         zt = _get_zt_pool_ht()
-        dt_rows = _get_dt_pool_ht()
+        # 跌停池（hithink special）上游偶发对 ST 票的关联查询整体 500（FUYAO_5003，
+        # 2026-09-22 实例：*ST亚士 603378 跌停触发 unknown market_id=22，列表级失败，
+        # 任何分页/size 都避开不了）。跌停家数改用全市场快照近似：|pct|≥9.9 即视为
+        # 跌停（含 ST 5cm 档会少量多计，误差远小于整个 breadth 模块失败）；
+        # 模块不再因单一池子挂掉而 error——limit_down_pool 模块自身仍如实报错。
+        try:
+            dt_rows = _get_dt_pool_ht()
+        except Exception as _dt_err:  # noqa: BLE001
+            dt_rows = []
+            _dt_degraded = True
+            LOG_BREADTH_DEGRADED = str(_dt_err)[:120]
+        else:
+            _dt_degraded = False
+            LOG_BREADTH_DEGRADED = None
         zb = _get_zb_pool_ht()
         max_lb = max((r.get("continue_day_cnt") or 1) for r in zt) if zt else 0
         real_zt = sum(1 for r in zt
                       if not r.get("is_st") and not r.get("is_new"))
+        if _dt_degraded:
+            dt_rows = [{"ticker": r.get("ticker")} for r in rows
+                       if (r.get("price_change_ratio_pct") or 0) <= -9.9]
 
         data = {
             "上涨": up_n, "下跌": down_n, "平盘": flat_n,
@@ -398,6 +414,8 @@ def breadth():
             "最高连板": max_lb, "炸板家数": len(zb),
             "真实涨停": real_zt,
         }
+        if _dt_degraded:
+            data["跌停家数口径"] = f"快照近似（|pct|≥9.9，上游跌停池故障: {LOG_BREADTH_DEGRADED}）"
 
         # 两市成交额（沪市 sh000001 + 深市 sz399106）+ 大小盘对比（沪深300 / 中证1000）
         try:
@@ -523,7 +541,13 @@ def boards():
 
         def fetch_hist(code):
             try:
-                return code, index_hist_cache.series(code + ".TI", DATE)
+                # code 来自 _get_industries()，已是 "881xxx.TI" 形态——
+                # 2026-09-20 修复：原先再拼一次 ".TI" 得到 "881xxx.TI.TI"，被上游
+                # 参数校验拒绝（CLI_BAD_ARGUMENT），异常被下面 except 吞掉后降级成
+                # 空历史，导致 09-10 起快照 boards.history 只剩当天 1 条、前端
+                # 「点行业看近5日走势」画不出折线。index_hist_cache._file_key 对
+                # ".TI" 后缀已有归一，直接传 code 即命中同一份缓存。
+                return code, index_hist_cache.series(code, DATE)
             except Exception:  # noqa: BLE001 - 单行业历史失败跳过
                 return code, []
 

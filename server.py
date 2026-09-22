@@ -276,7 +276,7 @@ def _read_panel(path, parser):
 
 
 # ---------------- 大 JSON 文件的「序列化 bytes + ETag」mtime 缓存 ----------------
-# /api/day（~800KB，轮动页 30s 轮询 + 复盘页 5 连拉）此前每请求都要
+# /api/day（~800KB，轮动页 15s 轮询 + 复盘页 5 连拉）此前每请求都要
 # json.load 全量解析再 dumps 算 ETag；缓存下沉到序列化层后，
 # 文件 mtime+size 不变时 304 与 200 都近零成本（零读盘零解析零重序列化）。
 _etag_body_cache = {}   # path -> [(mtime_ns, size), body_bytes, etag, [gz_bytes 或 None]]
@@ -1071,7 +1071,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not _DATE_RE.fullmatch(date):   # 白名单，防路径穿越
             return self._json({"error": "日期格式非法"}, 400)
         # ETag/304 + mtime 缓存：分时文件未变时零读盘零解析（bytes 层缓存见 _cached_json_bytes），
-        # 盘中 30s 轮询与复盘页 5 连拉在数据未更新时都是 304 空回
+        # 盘中 15s 轮询与复盘页 5 连拉在数据未更新时都是 304 空回
         cached = _cached_json_bytes(os.path.join(ROT_DAILY, f"{date}.json"))
         if cached is None:
             return self._json({"error": f"没有 {date} 的数据"}, 404)

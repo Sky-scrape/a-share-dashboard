@@ -378,10 +378,15 @@ def compute_rotation_stats(limit=48):
         newcomers = [x for x in days[-1]["top"] if x["code"] not in yset]
     leaders = []
     cum = {}
+    # 口径统一（2026-09-20）：累计范围改为「当日全板块」，与 _mainline_set（轮动速度）、
+    # _persistent_list（持续强势）及复盘页前端「板块强度榜」一致。
+    # 原实现只累计当日 Top10 成员（for x in d["top"]），导致同一板块在两处数字对不上：
+    # 非 Top10 当日被整段跳过，累计值系统性偏小且排序不稳（0918 实例：医疗服务
+    # 前端 9.82% vs 此处 8.18%，差 1.64pct；电子化学品 9.77% vs 10.93%）。
     for d in days[-5:]:
-        for x in d["top"]:
-            c = cum.setdefault(x["code"], {"name": x["name"], "mul": 1.0})
-            c["mul"] *= (1 + x["pct"] / 100)
+        for c, e in (d.get("pcts") or {}).items():
+            g = cum.setdefault(c, {"name": e["name"], "mul": 1.0})
+            g["mul"] *= (1 + e["pct"] / 100)
     leaders = [{"code": k, "name": v["name"], "pct": round((v["mul"] - 1) * 100, 2)}
                for k, v in cum.items()]
     leaders.sort(key=lambda x: x["pct"], reverse=True)
@@ -400,14 +405,24 @@ def compute_rotation_stats(limit=48):
             nc = [x for x in d["top"] if x["code"] not in yset]
         pers = _persistent_list(pcts_all[max(0, i - PERSIST_WINDOW + 1):i + 1])
         cum = {}
+        # 同顶层 leaders_5d：累计范围=全板块（与 _mainline_set/_persistent_list/前端强度榜同口径）
         for dd in days[max(0, i - 4): i + 1]:
-            for x in dd["top"]:
-                cc = cum.setdefault(x["code"], {"name": x["name"], "mul": 1.0})
-                cc["mul"] *= (1 + x["pct"] / 100)
+            for c, e in (dd.get("pcts") or {}).items():
+                cc = cum.setdefault(c, {"name": e["name"], "mul": 1.0})
+                cc["mul"] *= (1 + e["pct"] / 100)
         lead = sorted(({"code": k, "name": v["name"], "pct": round((v["mul"] - 1) * 100, 2)}
                        for k, v in cum.items()), key=lambda x: x["pct"], reverse=True)[:10]
+        # 全板块累计（2026-09-20 单一来源）：复盘页「板块强度榜」原先在前端拉 5 份全量分时
+        # 自行重算同一算法，既重复又容易漂移（本次 leaders_5d 口径不一致即源于此），
+        # 且不按复盘日期锚定（看历史日期仍显示最新 5 日）。此处直接下发全板块结果，
+        # 前端只负责渲染；按 cum 降序（前端取正向前 8 / 负向后 3）。
+        board_cum = sorted(({"name": v["name"], "cum": round((v["mul"] - 1) * 100, 2),
+                            "n": sum(1 for dd in days[max(0, i - 4): i + 1]
+                                     if c in (dd.get("pcts") or {}))}
+                           for c, v in cum.items()), key=lambda x: -x["cum"])
         by_date[d["date"]] = {"speed": sp_val, "speed_hist": sp_hist,
-                              "newcomers": nc, "persistent": pers, "leaders_5d": lead}
+                              "newcomers": nc, "persistent": pers, "leaders_5d": lead,
+                              "board_cum": board_cum, "board_cum_window": len(days[max(0, i - 4): i + 1])}
 
     return {
         "dates": [d["date"] for d in days],

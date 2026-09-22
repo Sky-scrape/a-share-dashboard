@@ -116,5 +116,5 @@ function renderFreshness(slotId) {
     if (lastHealth) openPop(lastHealth); else refresh();
   });
   refresh();
-  setInterval(refresh, 120000);   // 2 分钟自动核对一次
+  setInterval(refresh, 45000);   // 45s 自动核对一次（原先 120s，盘中断采预警最坏要 4 分钟才浮上来）
 }

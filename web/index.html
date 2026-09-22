@@ -1420,9 +1420,8 @@ async function autoTick(){
     return;
   }
   histView = false;
-  refreshPanelsTick();
   try {
-    // 带 ETag：数据没变（午休/收盘后/上游无新点）时 304 空回，不再每 30s 全量重拉 ~70KB
+    // 带 ETag：数据没变（午休/收盘后/上游无新点）时 304 空回，不重复全量重拉 ~700KB
     const etag = DATA._etag ? { headers: { 'If-None-Match': DATA._etag } } : undefined;
     const r = await fetch('/api/day?date=' + DATA.date, etag);
     if (r.status === 304) { checkWatchAlert(); return; }
@@ -1432,6 +1431,7 @@ async function autoTick(){
       checkWatchAlert();
       return;
     }
+    refreshPanels();   // 确认拿到新分钟点：矩阵/统计同拍重拉（不 await，不阻塞曲线重绘）
     j._etag = (r.headers && r.headers.get) ? (r.headers.get('ETag') || null) : null;
     const oldIdx = curIdx;
     const wasPlaying = playing;
@@ -1457,11 +1457,11 @@ async function autoTick(){
     updateLiveBtn();
   } catch(e){}
 }
-/* 派生面板盘中刷新：derive 现在随采集每轮重算（增量门），页面每 4 个 tick（≈2 分钟）重拉矩阵/统计；
+/* 派生面板盘中刷新：derive 现在随采集每轮重算（增量门），页面改为事件驱动——
+   只要 /api/day 真的拉到新分钟点就立刻重拉矩阵/统计（原先每 4 个 tick ≈2 分钟才动一次，
+   是盘中「矩阵慢半拍」的主要来源；矩阵与统计本身带 ETag，未变时 304 空回，代价可忽略）。
    竞赛模式不打断播放/停止状态，下次播放自动用新数据 */
-let _panelTickN = 0;
-async function refreshPanelsTick(){
-  if (++_panelTickN % 4 !== 0) return;
+async function refreshPanels(){
   try {
     const [m, s] = await Promise.all([
       AK.getJson('/api/rotation-matrix'),
@@ -1476,7 +1476,7 @@ async function refreshPanelsTick(){
 }
 function startAutoRefresh(){
   if (autoTimer) clearInterval(autoTimer);
-  autoTimer = setInterval(autoTick, 30000);
+  autoTimer = setInterval(autoTick, 15000);
   setInterval(refreshWatch, 60000);   // 自选价格与提醒轮询
   // 隔夜外围：采集器每交易日 08:40 更新 global.json，页面对应低频重拉
   // （autoTick 只管当日分时，不碰这块；数据一天一变，10 分钟轮询 + 唤醒重拉足够；

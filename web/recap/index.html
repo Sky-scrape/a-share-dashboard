@@ -681,15 +681,27 @@ async function loadDates() {
   }
 }
 
-async function loadSnapshot(date) {
+async function loadSnapshot(date, quiet) {
   try {
-    const r = await fetch("/data/" + date + ".json");
+    // quiet：轮询重拉时带 ETag，快照未变就 304 空回（~1.2MB 全量包不再每 5 分钟重解一次）
+    const etag = (quiet && SNAP && SNAP.date === date && SNAP._etag) ? SNAP._etag : null;
+    const r = await fetch("/data/" + date + ".json", etag ? { headers: { "If-None-Match": etag } } : undefined);
+    if (r.status === 304) return false;   // 未变化，调用方不重渲染
     if (!r.ok) throw new Error("HTTP " + r.status);
-    SNAP = await r.json();
+    const prevFetched = (quiet && SNAP && SNAP.date === date) ? SNAP.fetched_at : null;
+    const newEtag = (r.headers && r.headers.get) ? (r.headers.get("ETag") || null) : null;
+    const j = await r.json();
+    // 双保险：服务端无 ETag（异常/旧版）时按业务时间戳判等价，不拿相同内容重渲染
+    if (quiet && prevFetched && !newEtag && j.fetched_at === prevFetched) return false;
+    SNAP = j;
+    SNAP._etag = newEtag;
     render();
     renderRotStats();   // 轮动统计随复盘日期重渲染（按日锚定）
+    loadBoardStrength();   // 强度榜同属按日锚定（2026-09-20 起消费 board_cum），切日期必须重拉
+    return true;
   } catch (e) {
-    $("status").textContent = "加载失败：" + e;
+    if (!quiet) $("status").textContent = "加载失败：" + e;
+    return false;
   }
 }
 
@@ -1757,7 +1769,7 @@ function renderPool() {
         + ' · 生效惩罚 ' + np + ' 项'
         + ' · 滚动窗口 ' + esc(op.window_days ?? 45) + ' 日（样本 涨停 ' + esc((op.samples || {}).lu ?? 0) + ' / 低吸 ' + esc((op.samples || {}).nlu ?? 0) + '）'
         + '<br>' + esc(op.note || "") + (op.error ? ' <span class="sp-badge sev">' + esc(op.error) + '</span>' : '') + '</div>';
-      // 样本外追踪（C_Final 固化后 rules=cf 验证闭环）+ 到期复审 + 观察项到期
+      // 样本外追踪（C7 固化后 rules=c7 验证闭环）+ 到期复审 + 观察项到期
       const oos = op.oos;
       if (oos) {
         const vd = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], empty: ["var(--text-2)", "待积累"] }[oos.verdict] || ["var(--text-2)", esc(oos.verdict)];
@@ -1782,7 +1794,7 @@ function renderPool() {
               + (d.win_rate != null ? ' · 胜率 ' + d.win_rate + '% · 均次 ' + f1(d.avg_close) : '（无有效验证）') + '</div>';
           });
         } else {
-          h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">样本外积累中——首笔 C_Final 备选池将于下一交易日验证后计入。</div>';
+          h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">样本外积累中——首笔 C7 备选池将于下一交易日验证后计入。</div>';
         }
         (oos.reviews || []).forEach(function (r) {
           const vc = r.verdict === "ok" ? "var(--up)" : (r.verdict === "warn" ? "var(--gold)" : "var(--down)");
@@ -1811,12 +1823,16 @@ function renderPool() {
   }
   h += '<div class="sp-rule-card"><h4>一、明日市场判断</h4><ul>'
     + '<li>情绪判断：' + esc(mk["情绪判断"] || "-") + '</li>'
-    + '<li>主线方向：' + esc(mk["主线方向"] || "-") + '</li>'
-    + '<li>操作策略：' + esc(mk["操作策略"] || "-") + '</li></ul></div>';
+    + '<li>主线方向：' + esc(mk["主线方向"] || "-") + '</li></ul></div>';
+  // 注：原「操作策略」行已删——与「四、最终结论·明日最适合的策略」逐字相同
+  // （market.操作策略 与 concl.策略 同源，全 174 份快照 100% 一致），保留在「四」。
   h += '<div class="sp-rule-card"><h4>二、明日重点关注标的</h4>';
   (p.picks || []).forEach((x, i) => {
     h += '<div style="margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-1)">'
       + '<div style="font-size:13px"><b>' + (i + 1) + '. 【' + esc(x["名称"]) + ' / ' + esc(x["代码"]) + '】</b> '
+      // 首票即 concl.最优先关注（后端同源：全 173 份快照 100% 一致），在此标记后
+      // 「四、最终结论」不再复述标的名称，避免同一只票在 ⑥ 内出现两次
+      + (i === 0 ? '<span class="sp-badge sev" style="margin-right:4px">最优先关注</span>' : '')
       + '<span class="sp-badge ' + (x["类型"] === "涨停板" ? "sev" : "watch") + '">' + esc(x["类型"] || "-") + '</span> '
       + '<span style="color:var(--gold);letter-spacing:2px">' + stars(x["入选强度"]) + '</span></div>'
       + '<ul style="margin:4px 0 0">'
@@ -1834,7 +1850,10 @@ function renderPool() {
     + '<li>需要规避的方向：' + (rk.avoid || []).map(esc).join('；') + '</li></ul></div>';
   h += '<div class="sp-rule-card"><h4>四、最终结论</h4><ul>'
     + '<li>明日最适合的策略是：' + esc(cc["策略"] || "-") + '</li>'
-    + '<li>最优先关注：' + esc(cc["最优先关注"] || "-") + '</li>'
+    // 「最优先关注」行：有票时即「二」的第 1 条（已在该条打「最优先关注」标记，
+    // 不重复展示）；空仓日（后端 picks 为空 → cc.最优先关注="空仓观察"）无对应
+    // 标的可引用，仍在此显式给出，避免「空仓」结论丢失（0915 实例）。
+    + ((p.picks || []).length ? '' : '<li>最优先关注：' + esc(cc["最优先关注"] || "空仓观察") + '</li>')
     + '<li>仅观察不急于买入：' + esc(cc["仅观察不急于买入"] || "-") + '</li></ul></div>';
   h += '</div>';
   if (p.note) h += '<div class="sp-note" style="margin-top:8px">' + esc(p.note) + '</div>';
@@ -1846,33 +1865,21 @@ function renderPool() {
 async function loadBoardStrength() {
   const box = $("boardStrength");
   try {
-    const rd = await AK.getJson("/api/dates");
-    const dates = (rd.dates || []).slice(-5);
-    if (dates.length < 2) { box.innerHTML = `<div class="empty">轮动历史数据不足（需 ≥2 个交易日）</div>`; return; }
-    // 5 个 /api/day 都是全量分时 JSON，串行 await 又慢又互相放大延迟；并行拉取，
-    // 且单日失败不放大为整面板失败（allSettled 容忍缺失，凑够 2 天即出榜）
-    const rs = await Promise.allSettled(dates.map(d => fetch("/api/day?date=" + d).then(r => {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
-    })));
-    const days = rs.filter(x => x.status === "fulfilled" && x.value && x.value.boards && x.value.series)
-      .map(x => x.value);
-    if (days.length < 2) { box.innerHTML = `<div class="empty">轮动数据不足（${days.length}/5 日可用）</div>`; return; }
-    const map = {};
-    for (const day of days) {
-      for (const b of day.boards) {
-        const s = day.series[b.code];
-        if (!s || !s.pcts || !s.pcts.length) continue;
-        const last = s.pcts[s.pcts.length - 1];
-        if (last == null || !isFinite(last)) continue;
-        const e = map[b.code] || (map[b.code] = { name: b.name, factor: 1, n: 0 });
-        e.factor *= (1 + last / 100);
-        e.n++;
-      }
+    // 单一来源（2026-09-20）：原实现在前端拉 5 份全量分时 JSON（≈4MB）自行重算
+    // 「近 5 日全板块累计」，与后端 derive 的 leaders_5d 是两套实现——口径漂移
+    // 即源于此（0918 实例：医疗服务前端 9.82% vs leaders_5d 8.18%）。现改为直接
+    // 消费 derive 下发的 board_cum，与「持续强势」「新晋」同源，且按复盘日期锚定。
+    const rd = await AK.getJson("/api/rotation-stats");
+    const iso = SNAP && SNAP.date
+      ? (SNAP.date.slice(0, 4) + "-" + SNAP.date.slice(4, 6) + "-" + SNAP.date.slice(6, 8))
+      : null;
+    const anchor = (iso && rd.by_date && rd.by_date[iso]) || null;
+    if (!anchor || !anchor.board_cum || !anchor.board_cum.length) {
+      box.innerHTML = `<div class="empty">轮动数据不足（需 ≥2 个交易日）</div>`;
+      return;
     }
-    const list = Object.values(map).filter(x => x.n >= 2)
-      .map(x => ({ name: x.name, cum: (x.factor - 1) * 100, n: x.n }))
-      .sort((a, b) => b.cum - a.cum);
+    const list = anchor.board_cum;
+    const win = anchor.board_cum_window || 5;
     const top = list.filter(x => x.cum > 0).slice(0, 8);
     const losers = list.filter(x => x.cum < 0).slice(-3).reverse();
     const maxAbs = Math.max(0.01, ...list.map(x => Math.abs(x.cum)));
@@ -1881,7 +1888,7 @@ async function loadBoardStrength() {
       <div class="bar-track"><div class="bar-fill" style="width:${(Math.abs(r.cum) / maxAbs * 100).toFixed(1)}%;background:${r.cum >= 0 ? "var(--up)" : "var(--down)"}"></div></div>
       <div class="bar-val ${cls(r.cum)}">${sign(r.cum)}%</div>
     </div>`;
-    box.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:6px">最近 ${days.length} 个交易日累计涨幅（截至 ${esc(dates[dates.length - 1])}，轮动数据）</div>
+    box.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:6px">最近 ${win} 个交易日累计涨幅（截至 ${esc(iso || "-")}，轮动数据）</div>
       ${top.map(bar).join("")}
       ${losers.length ? `<div style="color:var(--muted);font-size:12px;margin:12px 0 6px">领跌</div>` + losers.map(bar).join("") : ""}`;
   } catch (e) {
@@ -2383,6 +2390,45 @@ document.querySelectorAll("#groupNav a").forEach(a => {
 applyFold();
 try { renderFreshness("freshPillSlot"); } catch (e) {}
 
+/* ---- 复盘页自动更新（2026-09-22）----
+   原先本页完全无轮询：盘后 17:05 抓完新快照，页面挂着也不会变，必须手动刷新，
+   是「看板信息更新有点慢」在复盘侧的全部原因。现在每 5 分钟做一次轻量核对：
+   1) 正在看的这一天快照被重抓过（ETag 变）——静默重渲染，toast 告知；
+   2) 出现了更新的交易日快照而用户在看历史日——不抢焦点不回跳，只在状态栏给可点击入口。
+   笔记输入框聚焦或内容未落盘时本轮整体跳过，绝不覆盖用户正在写的东西。 */
+let RECAP_POLL = null;
+function recapPollTick() {
+  if (!SNAP || document.hidden) return;
+  const box = $("noteBox");
+  // noteTimer 非空 = 输入后 400ms 防抖尚未落地，此刻重渲染会丢用户刚写的内容
+  if (box && (box === document.activeElement || noteTimer !== null)) return;
+  // 池子搜索框有词时不重渲染：renderZt/renderDt 内部固定 paintZt("")，
+  // 会把用户筛出来的几张行静默恢复成全表——输入框还留着字、列表却变了，看着像坏了
+  const zs = $("ztSearch"), ds = $("dtSearch");
+  if ((zs && zs.value.trim()) || (ds && ds.value.trim())) return;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+  const viewing = SNAP.date;
+  loadSnapshot(viewing, true).then((changed) => {
+    if (changed) {
+      document.title = "A股复盘 · " + viewing;
+      toast("复盘数据已更新（" + (SNAP.fetched_at || "").slice(5, 16) + "）", "ok");
+      return;
+    }
+    return loadDates().then((latest) => {   // 无变化才多跑一次轻接口（<1KB）
+      if (!latest || latest === viewing) return;
+      const st = $("status");
+      if (st && !st.textContent) {
+        st.textContent = "ℹ 已有更新一日的复盘快照（"
+          + AK.dates.fmtCn(latest.slice(0, 4) + "-" + latest.slice(4, 6) + "-" + latest.slice(6, 8))
+          + "），点这里查看";
+        st.style.cursor = "pointer";
+        st.onclick = () => { st.onclick = null; st.style.cursor = ""; st.textContent = ""; DATE_DP && DATE_DP.setValue(latest); loadSnapshot(latest); };
+      }
+    });
+  }).catch(() => {});
+}
+
 (
 
 async function init() {
@@ -2411,5 +2457,7 @@ async function init() {
   if (sk) sk.remove();
   document.body.classList.add("ready");
   loadBoardStrength();   // 异步加载板块强度榜（不阻塞主流程）
+  RECAP_POLL = setInterval(recapPollTick, 5 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) recapPollTick(); });   // 切回页面立即核对一次
 })();
 </script>

@@ -341,8 +341,24 @@ def main():
         check("轮动数据只到 15:00（用户指定；收盘后不再落 15:01/15:02 冗余点）",
               "PM_OPEN, PM_CLOSE = 13 * 60, 15 * 60" in _tc_src
               and "one_round(in_window=(hm == PM_CLOSE))" in _tc_src)
-        check("首页 autoTick 跨日自动跳到最新日（浏览历史时不强拉） + 派生面板≈2分钟重拉",
-              "histView" in rot_html and "refreshPanelsTick" in rot_html)
+        check("首页 autoTick 跨日自动跳到最新日（浏览历史时不强拉） + 派生面板事件驱动重拉（2026-09-22 收敛）",
+              "histView" in rot_html and "refreshPanels" in rot_html
+              and "refreshPanelsTick" not in rot_html)
+        # 盘中刷新节奏（2026-09-22）：用户报「看板信息更新有点慢」。采集侧实测每 60s 落点、
+        # 单轮写盘中位 3s，慢在前端：曲线 30s 轮询 + 矩阵每 4 tick（≈2min）节流，叠加后最坏 2.5min。
+        # 现收敛为：曲线 15s（无新点走 ETag 304 空回）+ 矩阵在拿到新分钟点的那一拍事件驱动重拉。
+        _arsrc = rot_html.split("function startAutoRefresh")[1].split("\n}")[0]
+        check("首页盘中轮询 15s（且仍带 If-None-Match 协商，未更新不重拉全量）",
+              "setInterval(autoTick, 15000)" in _arsrc and "If-None-Match" in rot_html)
+        _rp2 = open(os.path.join(ROOT, "web", "recap", "index.html"), encoding="utf-8").read()
+        _rpoll = (_rp2.split("function recapPollTick")[1] if "function recapPollTick" in _rp2 else "")
+        check("复盘页自动更新：定时轮询 + 快照 ETag 静默重渲染 + 笔记防抖期跳过 + 搜索/输入态不重渲染",
+              "setInterval(recapPollTick" in _rp2 and "loadSnapshot(viewing, true)" in _rpoll
+              and "noteTimer !== null" in _rpoll
+              and 'zs.value.trim()' in _rpoll and "activeElement" in _rpoll)
+        check("新鲜度胶囊 45s 核对（原 120s，盘中断采预警浮出太慢）",
+              "setInterval(refresh, 45000)" in open(
+                  os.path.join(ROOT, "web", "lib", "freshness.js"), encoding="utf-8").read())
         _race2 = ((get(base, "/api/rotation-stats")[1] or {}).get("race")) or []
         check("stats.race 每日含 bottom 跌幅侧（非旧版只涨 TOP10）",
               bool(_race2) and all("bottom" in d for d in _race2))
@@ -562,6 +578,20 @@ def main():
         #（且 leaders_5d 只累计每日 Top10，两处数字对不上），已从轮动统计中删除
         check("recap 轮动统计不再重复 5 日领涨列（口径归板块强度榜）",
               "5日领涨板块" not in rp and "板块强度榜" in rp)
+        # 板块口径统一（2026-09-20）：强度榜改为消费 derive 下发的 board_cum，不再在前端
+        # 自行重算（原实现与 leaders_5d 是两套代码，0918 实例 医疗服务 9.82% vs 8.18%），
+        # 并随复盘日期锚定（原实现只看最新 5 日，看历史日期也显示最新）
+        check("recap 强度榜消费后端 board_cum（单一来源，不再前端重算）",
+              "board_cum" in rp and "rotation-stats" in rp
+              and "Promise.allSettled(dates.map" not in rp)
+        check("recap 强度榜按复盘日期锚定且切日期重拉",
+              rp.count("loadBoardStrength()") >= 2 and "board_cum_window" in rp)
+        # providers.boards 的 .TI 双后缀 bug（2026-09-20 修）：_get_industries() 已返回
+        # "881xxx.TI"，再拼一次得到 "881xxx.TI.TI" 被上游参数校验拒绝，异常被吞后
+        # 降级成空历史 —— 09-10 起快照 boards.history 只剩当天 1 条、前端画不出折线
+        check("providers.boards 不再重复拼 .TI 后缀（防行业 5 日线静默丢失）",
+              'index_hist_cache.series(code + ".TI"' not in pv0
+              and "index_hist_cache.series(code, DATE)" in pv0)
         # 轮动速度/持续强势展示新口径（2026-09-04 重定义，详见 derive.py）
         check("复盘页展示新口径（在榜X/10日·累计），旧「连续≥3日」文案不回潮",
               "在榜" in rp and "近10日在榜≥4日" in rp
