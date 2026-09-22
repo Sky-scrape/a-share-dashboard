@@ -24,6 +24,15 @@
 - 全站行业/板块口径统一为**同花顺一级行业指数（881xxx，90 个）**，跨页精确联动；概念板块保持同花顺概念目录
 - Windows 计划任务全自动采集（竞价/轮动/复盘/全球四条定时链路），支持手机 Tailscale 私有访问与全站双主题
 
+## 免安装 exe（Windows）
+
+不想装 Python 环境的话，到 [Releases](https://github.com/Sky-scrape/a-share-dashboard/releases) 下载 `ak-dashboard-win64-*.zip`（PyInstaller onedir 打包，内嵌 Python + 全部依赖 + web/backend/quant 源码），解压后双击 `ak-dashboard.exe` 即可：自动开浏览器，行为与 `python server.py` 完全一致（`--port`、`AK_PORT`、`--no-open` 等参数照用）。
+
+- 数据与状态生成在解压目录 `_internal\data\` 与 `_internal\.status\`（首次为空，页内点「重新抓取」拉数据）；整目录删除即彻底卸载
+- 数据源 CLI（hithink-finance）仍需单独安装并配 key（同下节第 2 步），四条采集链路才可用；没有它时量化引擎离线可用
+- **计划任务也能用 exe**：采集类 bat 里的 `python xxx.py` 可换成 `"<解压目录>\ak-dashboard.exe" "<解压目录>\_internal\xxx.py"`（exe 会把 .py 参数按脚本转发运行，等价 python），无需再装 Python
+- 自行打包：根目录双击 `打包exe.bat`（或 `.venv-ci/Scripts/python.exe -m PyInstaller packaging/ak-dashboard.spec --noconfirm`），产物在 `dist/ak-dashboard/`；打包配置与启动器见 `packaging/`
+
 ## 首次使用（五步走）
 
 1. **装 Python 依赖**

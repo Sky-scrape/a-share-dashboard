@@ -7,6 +7,10 @@
 /.venv-ci/
 /.workbuddy/
 
+# ---- 打包产物（PyInstaller onedir，用 打包exe.bat 重新生成）----
+/build/
+/dist/
+
 # ---- 第三方参考资料（本地副本，不入库）----
 docs/reference/
 
