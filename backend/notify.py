@@ -17,7 +17,10 @@
   如实回报 configured=False，健康面板可见）。
 - HTTP 口径（Mimosa 门禁 / SSRF 三重边界）：目标主机限定白名单
   （sctapi.ftqq.com / qyapi.weixin.qq.com / api.telegram.org），强制 https，
-  解析 IP 必须 is_global（阻私网/环回/链路本地/元数据端点），禁用重定向。
+  解析 IP 必须 is_global（阻私网/环回/链路本地/元数据端点；本地代理 fake-IP 段
+  198.18.0.0/15 走 netguard.is_proxy_fakeip 豁免——2026-09-24 实证 is_global 会把
+  该段误判非公网致推送全挂，与 us_market/_safe_get 同病灶，裁决见 netguard 模块头），
+  禁用重定向。
 """
 import ipaddress
 import json
@@ -27,6 +30,8 @@ import time
 import urllib.parse
 
 import requests
+
+import netguard  # noqa: E402  SSRF 防线单一来源（backend/netguard.py）
 
 os.environ.setdefault("HTTP_PROXY", "")
 os.environ.setdefault("HTTPS_PROXY", "")
@@ -74,7 +79,7 @@ def _post(host, path, data=None, json_body=None, extra_url=""):
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
             return None, "resolve 到非法地址"
-        if not ip.is_global:
+        if not ip.is_global and not netguard.is_proxy_fakeip(ip):
             return None, f"resolve 到非公网地址 {ip}，拒绝请求"
     url = extra_url or f"https://{host}{path}"
     try:

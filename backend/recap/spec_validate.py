@@ -276,15 +276,21 @@ def _val_stats(rows):
 
 def _exec_pnl_realtime(grp, o, h, l, c):
     """实时可执行近似收益（%）；与 strategy-iter backtest_capital.trade_pnl 主口径
-    同一实现，窗口/风险位常量单一来源 execution_layer.MF_BUY。不成交返回 None。"""
+    同一实现，窗口/风险位常量单一来源 execution_layer.MF_BUY。不成交返回 None。
+
+    2026-09-24 口径修正：LU 出场止损此前误取 low_min=-3%。low_min 是 confirm
+    对照口径的「买入触发过滤」（盘中最低≥昨收-3%），不是风险位；执行层风险位
+    实为 risk_low=-5%（见 execution_layer 模块头与 backtest_capital 2026-09-10
+    同源修正记录）。比较符同步对齐为 <=（原 LU 用严格 <，与参考实现不一致）。
+    """
     b = _MF_BUY[grp]
     if o is None or c is None or not (b["win_min"] <= o <= b["win_max"]):
         return None
     if grp == "nlu" and (h is None or h < max(o, 0.0)):
         return None                      # 限价挂 max(开盘,昨收)，当日未触及=未成交
     entry = o if grp == "lu" else max(o, 0.0)
-    stop = b["low_min"] if grp == "lu" else b["risk_low"]
-    hit = l is not None and ((l < stop) if grp == "lu" else (l <= stop))
+    stop = b["risk_low"]                 # 两组同为盘中风险位（lu -5% / nlu -4%）
+    hit = l is not None and l <= stop
     exit_pct = stop if hit else c
     return round(((1 + exit_pct / 100.0) / (1 + entry / 100.0) - 1) * 100, 2)
 
@@ -295,7 +301,7 @@ def _val_exec_stats(rows):
     out = {}
     for grp in ("lu", "nlu"):
         b = _MF_BUY[grp]
-        stop = b["low_min"] if grp == "lu" else b["risk_low"]
+        stop = b["risk_low"]             # 2026-09-24 同 _exec_pnl_realtime 口径修正
         rs = [p for p in rows if p.get("group") == grp]
         oo = [p["open"] for p in rs if p.get("open") is not None]
         exec_rows = []
@@ -306,8 +312,7 @@ def _val_exec_stats(rows):
                 exec_rows.append((p, pnl))
         pnls = [pnl for _p, pnl in exec_rows]
         stopped = [(p, pnl) for p, pnl in exec_rows
-                   if p.get("low") is not None
-                   and ((p["low"] < stop) if grp == "lu" else (p["low"] <= stop))]
+                   if p.get("low") is not None and p["low"] <= stop]
         whipsaw = [p for p, _pnl in stopped
                    if p.get("close") is not None
                    and p["close"] > (p["open"] if grp == "lu" else max(p["open"], 0.0))]

@@ -18,11 +18,8 @@
 不碰池构建侧的 scan_trend/scan_deviation（全市场扫描无法逐只兜底）——那一侧
 由 us_close_task 链前移的 data sync + 研究库 stale 告警（.status/duckdb.json）负责。
 """
-import ipaddress
 import os
-import socket
 import sys
-from urllib.parse import urlparse
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -31,7 +28,7 @@ if os.path.dirname(_HERE) not in sys.path:
     sys.path.insert(0, os.path.dirname(_HERE))
 
 import http_retry  # noqa: E402  共享重试（backend/http_retry.py）
-import requests  # noqa: E402
+import netguard  # noqa: E402  SSRF 防线单一来源（backend/netguard.py）
 from spec_rules import _date_iso, thscode_of  # noqa: E402  底层口径/工具单一来源
 
 # 字面量 URL + 主机白名单（安全扫描口径；不从外部输入拼协议/域名）
@@ -52,17 +49,12 @@ def _symbol_of(code6):
 
 
 def _safe_get(url, params, timeout=10):
-    """SSRF 防线（us_market._safe_get 同款）：协议/主机白名单 + 解析 IP 受限段阻断。"""
-    parts = urlparse(url)
-    if parts.scheme != "https" or parts.hostname not in _ALLOWED_HOSTS:
-        raise ValueError(f"非白名单主机: {parts.hostname!r}")
-    for info in socket.getaddrinfo(parts.hostname, 443, proto=socket.IPPROTO_TCP):
-        ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast):
-            raise ValueError(f"目标解析到受限地址: {ip}")
-    return requests.get(url, params=params, timeout=timeout, allow_redirects=False,
-                        headers={"User-Agent": "Mozilla/5.0"})
+    """SSRF 防线：协议/主机白名单 + 解析 IP 受限段阻断（netguard 单一来源）。
+
+    原为 us_market._safe_get 的手工副本，2026-09-24 收拢——两份实现曾同时把本地
+    代理 fake-IP 段（198.18.0.0/15）误判为受限地址，备源因此整体静默失效。
+    """
+    return netguard.safe_get(url, _ALLOWED_HOSTS, params=params, timeout=timeout)
 
 
 def fetch_bars(code6, date8):

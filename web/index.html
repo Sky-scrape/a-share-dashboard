@@ -32,6 +32,11 @@ body {
 /* 顶栏统一样式见 lib/tokens.css（header.appbar）；本页仅补充两行变体：标题行 + 回放控制行 */
 header.appbar.appbar-stack { padding: 10px 18px 9px; }
 header.appbar.appbar-stack .appbar-row { overflow: hidden; }
+/* 滚动条贯通整页右侧（2026-09-23）：滚动从 main 上移到 view 层，溢出时滚动条
+   从窗口顶贯到底部；头部两行与隔夜外围条吸顶常驻。行高(fr)基准不变。 */
+#viewRotation { overflow-y: auto; scrollbar-gutter: stable; }
+#viewRotation > header.appbar.appbar-stack { position: sticky; top: 0; z-index: 30; }
+#overnightBar { position: sticky; top: var(--head-h, 92px); z-index: 25; }
 header .hdr-player {
   display: flex; flex-direction: column; gap: 7px;
 }
@@ -68,7 +73,9 @@ button:active { transform: translateY(1px); }
 .badge.ok { color: var(--down); border-color: var(--down-line); background: var(--down-soft); }
 .badge.demo { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 main {
-  flex: 1; min-height: 0; display: grid; overflow: auto;
+  flex: 1; min-height: 0; display: grid; overflow: visible;
+  /* 滚动已上移到 #viewRotation 层（2026-09-23）：滚动条贯通整页右侧；
+     main 仍是行高(fr)的确定基准——flex:1 定高，溢出内容溢出到 view 滚动 */
   grid-template-columns: minmax(300px, 34%) 1fr;
   /* 行轨道用 fr（min 兜底）而非 auto：行高只按视口分配，不被内容擑开；
      榜单「全部」等长列表在 .ranklist 内部滚动（.panel 已 min-height:0） */
@@ -176,9 +183,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 .tabs button.active { border-color: var(--accent); color: var(--accent); }
 .legend { font-size: 11px; color: var(--text-3); display: flex; gap: 10px; align-items: center; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+/* 滚动条样式已收敛到 lib/tokens.css 全站单一来源（2026-09-23），本页不再自带副本 */
 @media (max-width: 720px) {
   header .sub { display: none; }
   header .player-row2 #speedStat { display: none; }
@@ -1921,6 +1926,18 @@ try {
       if (id === 'navRot')   { switchTab(true);  return true; }
       return false;   // auction/global/quant 交组件默认跳转
     }});
+} catch(e){}
+
+/* 头部高度同步给隔夜条的吸顶偏移（滚动上移到 view 层后，随断点/字体加载自适应） */
+try {
+  (function(){
+    const view = document.getElementById('viewRotation');
+    const head = view && view.querySelector('header.appbar');
+    if (!head || !window.ResizeObserver) return;
+    const set = () => view.style.setProperty('--head-h', head.offsetHeight + 'px');
+    set();
+    new ResizeObserver(set).observe(head);
+  })();
 } catch(e){}
 
 /* 标题栏操作：刷新 / 重新抓取 */

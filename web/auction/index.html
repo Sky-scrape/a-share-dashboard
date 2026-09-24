@@ -49,7 +49,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 #phaseBar .stat b { color: var(--text-1); font-weight: 700; }
 
 /* ---- 主体 ---- */
-main { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(280px, 1fr); gap: 10px; padding: 10px 12px 40px; }
+main { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(280px, 1fr); gap: 10px; padding: 10px 10px 40px; }
 @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
 .col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .panel {
@@ -200,7 +200,9 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
 <body>
 <header class="appbar">
   <h1><span class="dot">●</span> 实时竞价</h1>
-  <span class="sub">09:15–09:25 集合竞价快照 · 每 30 秒采集 · hithink-finance</span>
+  <!-- 副题保持短口径（2026-09-23 缩减）：时段由下方阶段条与倒计时胶囊表达，
+       数据源 hithink-finance 在 README/启动横幅/体检面板交代——顶栏要给导航让宽 -->
+  <span class="sub">集合竞价快照 · 每 30 秒采集</span>
   <button id="btnPool" title="编辑自选观察池">观察池</button>
   <button id="btnFetch" title="立即补抓一轮终态+基准（后台执行）"><span class="b-full">立即补抓</span><span class="b-mini">补抓</span></button>
   <div class="spacer"></div>

@@ -18,6 +18,8 @@ echo.
 echo 打包完成:
 echo   解压版   dist\ak-dashboard\ak-dashboard.exe（整个目录才是完整程序）
 echo   单文件版 dist\ak-dashboard-onefile.exe（双击即用；数据在 %%LOCALAPPDATA%%\ak-dashboard）
+echo   两种形态双击默认开独立桌面窗口，全程无终端黑窗（不弹浏览器，关窗即退出）；
+echo   --web 切回浏览器模式，--console 现场开控制台看日志。
 pause
 exit /b 0
 :err

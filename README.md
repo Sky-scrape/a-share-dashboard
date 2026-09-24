@@ -30,16 +30,22 @@
 
 | 形态 | 适合 | 说明 |
 | --- | --- | --- |
-| **单文件版** `ak-dashboard-win64-*-single.exe` | 拿来就用 | 一个 exe 双击即运行，自动开浏览器；源码与数据常驻 `%LOCALAPPDATA%\ak-dashboard`（卸载 = 删 exe + 删该目录） |
-| **解压版** `ak-dashboard-win64-*.zip` | 计划任务/开机自启 | 解压后双击 `ak-dashboard.exe`，全部文件都在解压目录（`_internal\data\`），启动快、路径直观 |
+| **单文件版** `ak-dashboard-win64-*-single.exe` | 拿来就用 | 一个 exe 双击即运行；源码与数据常驻 `%LOCALAPPDATA%\ak-dashboard`（卸载 = 删 exe + 删该目录） |
+| **解压版** `ak-dashboard-win64-*.zip` | 计划任务/开机自启 | 解压后双击 `ak-dashboard.exe`，全部文件都在解压目录，启动快、路径直观 |
 
-两者行为与 `python server.py` 完全一致（`--port`、`AK_PORT`、`--no-open` 等参数照用）。单文件版每次启动需自解压（约 5-15 秒）且派生抓取子进程时同样自解压一次，介意启动速度或要配采集计划任务就选解压版。
+双击 exe 默认打开**独立桌面窗口**（pywebview + 系统自带 WebView2 内核，Win10/11 免装）：exe 为窗口子系统构建，**全程不出现终端黑窗**；自己的标题栏与任务栏图标，不弹浏览器，**标题栏颜色随页面主题**（晨报纸色/夜台深底，页内切换即时跟随，Win10 只深浅跟随、更旧系统退系统默认）；窗口尺寸/位置自动记忆，主题、自选等 localStorage 随数据目录持久；页面里的外部链接（公告/研报）自动交给系统浏览器打开。**关窗 = 整个程序退出**（含派生的抓取子进程）。
 
+- **启动加载**：双击后先显示"正在启动服务"的启动页，服务就绪后自动进入看板首页；单文件版每次启动要先自解压（约 3~5 秒，取决于磁盘），日常想要秒开建议用解压版；刚下载/刚更新的 exe 首次启动 Windows Defender 会先完整扫描一遍，第二次起恢复正常
+- **想要旧的浏览器形态**：`ak-dashboard.exe --web`（不弹桌面窗口，server 自动开浏览器，与 `python server.py` 行为一致，日志兜到 `%TEMP%\ak-server-fallback.log`）；`--console` 是桌面窗口 + 现场开一个控制台看日志
+- **端口**：默认 8000（`AK_PORT` / `--port` 照用）；被其他程序占用时自动向后找空端口；检测到已有看板实例在跑则直接再开一个窗口（共享同一服务，关新窗不影响旧实例）
+- **手机/Tailscale 访问**：桌面窗口默认只绑 127.0.0.1（不触发防火墙弹窗）；需要手机访问请用 `python start.py` 流程，或 `ak-dashboard.exe --web --host 0.0.0.0`
+- **桌面窗口 + 采集计划任务共存**：采集类 bat 里的 `python xxx.py` 可换成 `"<exe路径>" "<脚本路径>.py"`（exe 会把 .py 参数按脚本转发运行，等价 python），无需再装 Python
 - 数据首次为空，页内点「重新抓取」拉数据；升级 = 换新 exe，启动时自动重同步源码、用户数据保留
 - 数据源 CLI（hithink-finance）仍需单独安装并配 key（同下节第 2 步），四条采集链路才可用；没有它时量化引擎离线可用
-- **计划任务也能用 exe**：采集类 bat 里的 `python xxx.py` 可换成 `"<exe路径>" "<脚本路径>.py"`（exe 会把 .py 参数按脚本转发运行，等价 python），无需再装 Python
 - 首次运行如被 SmartScreen 拦截：点「更多信息 → 仍要运行」（exe 未做代码签名）
-- 自行打包：根目录双击 `打包exe.bat`（同时产出两种形态），配置在 `packaging/`（spec 的 `AK_ONEFILE=1` 切单文件版）
+- 桌面窗口起不来（极老系统缺 WebView2 等）会自动回退浏览器模式；排障查 `%TEMP%\ak-gui-debug.log`，`AK_WEBVIEW_DEBUG=1` 可开 WebView2 devtools
+- 单文件版每次启动需自解压（约 5-15 秒）且派生抓取子进程时同样自解压一次，介意启动速度或要配采集计划任务就选解压版
+- 自行打包：根目录双击 `打包exe.bat`（同时产出两种形态），配置在 `packaging/`（`AK_ONEFILE=1` 切单文件版；桌面窗口实现在 `packaging/gui.py`）
 
 ## 首次使用（五步走）
 

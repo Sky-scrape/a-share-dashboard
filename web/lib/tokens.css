@@ -157,6 +157,18 @@ html[data-theme="cyber"] header.appbar button.navtheme { box-shadow: 0 0 10px -2
 
 /* ============ 统一顶栏 appbar（竞价 / 轮动 / 复盘 / 全球 / 量化 五页共用，2026-08-31） ============
    结构约定：[h1 ●页名] [sub 副题] [页面控件：日期/刷新/重抓/导出] [spacer] [状态/胶囊] [navgroup] */
+/* 五板块右缘对齐（2026-09-23）：长页（复盘/竞价）有纵向滚动条、短页（轮动/量化，
+   内部滚动）没有，右对齐的导航组会随切换横跳（同页数据加载前后也会跳一下）。
+   给视口常驻保留滚动条槽位后，无论页面长短、数据多少，右缘位置恒定。 */
+html { scrollbar-gutter: stable; }
+/* 滚动条统一（2026-09-23）：五页单一来源，替换各页零散定义（轮动 6px / 复盘 7px /
+   竞价·全球·量化 浏览器默认大条）。8px 圆角细条：轨道透明不喧宾，滑块走边线色、
+   悬停加深；纵向/横向滚动条与面板内滚动区一律生效，两主题自动跟随各自变量。 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+::-webkit-scrollbar-corner { background: transparent; }
 header.appbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
   min-height: 44px; padding: 10px 18px 6px;
@@ -185,6 +197,20 @@ header.appbar .b-mini { display: none; }
 /* 两行变体（轮动页：标题行 + 回放控制行） */
 header.appbar.appbar-stack { flex-direction: column; align-items: stretch; gap: 7px; }
 header.appbar.appbar-stack .appbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; white-space: nowrap; min-height: 32px; }
+/* 顶栏放不下时（桌面窗口默认 ~1295px、半屏浏览器）导航组换到第二行右对齐，
+   不再与左侧标题/控件挤在一行（2026-09-23：桌面窗口版竞价页出现顶栏挤压）。
+   一行装得下时与原布局完全一致（换行只在溢出时发生），手机端 760px 断点规则不变。 */
+header.appbar { flex-wrap: wrap; row-gap: 4px; }
+header.appbar .navgroup { margin-left: auto; }
+/* 中窄宽度层（2026-09-23）：桌面窗口常态宽度下顶栏保持单行——
+   藏品牌字「A股看板·」（页签已表明身份）+ 页签用短文案（竞价/轮动/盘后/全球/量化），
+   最长的竞价/复盘两页顶栏也能收进一行；极端更窄再由上面的 wrap 兜底接手。
+   宽窗口（>1440px）自动恢复品牌字与完整页签文案。 */
+@media (max-width: 1440px) {
+  header.appbar .brand { display: none; }
+  header.appbar .b-full { display: none; }
+  header.appbar .b-mini { display: inline; }
+}
 @media (max-width: 760px) {
   header.appbar { padding: 8px 12px 5px; gap: 8px; }
   header.appbar h1 { font-size: 15px; letter-spacing: .5px; }

@@ -11,6 +11,7 @@
 - /api/quant: 总览面板（collector 聚合 quant/ 产物）顶层结构/platform 字段/流水行字段
 - 量化页: id 唯一、四表/散点/入口在、tokens 共享、四页导航均有量化入口
 - /api/health: 结构齐、rotation/recap 字段在、状态文件不再错位（last_date 非 8-25 死值需真实日期格式）
+- /api/auction/status: 归档段合式（auc_archive 的健康可见性锚，2026-09-25 审查批增补；未归档日允许缺省）
 - /api/sentiment: series 非空、含 weights_version、每日行含 index/label
 - /api/rotation-stats: 与旧形状兼容（dates/speed/persistent/newcomers/leaders_5d）
 - /api/rotation-matrix: dates/boards/patterns 齐
@@ -801,6 +802,10 @@ def main():
         st, ast = get(base, "/api/auction/status")
         check("/api/auction/status 轻量结构", st == 200 and all(k in ast for k in
               ("status", "watchlist", "fetching", "config")), str(list((ast or {}).keys())))
+        _arc = ((ast or {}).get("status") or {}).get("archive")
+        check("/api/auction/status 归档段合式（有则必含 date/ok/files；未归档日允许缺省）",
+              _arc is None or all(k in _arc for k in ("date", "ok", "files")),
+              str(_arc)[:120])
         st, hth = get(base, "/api/health")
         check("/api/health 含 auction 段", st == 200 and "auction" in (hth or {}),
               str(list((hth or {}).keys()))[:100])
@@ -926,8 +931,14 @@ def main():
               and _srows["种植业"]["last_pct"] == 5.0 and _srows["游戏"]["last_pct"] is None,
               str(_secj)[:180])
         check("sector 抓取挂在两处终态路径（timeline final + 手动 --once）且失败不阻断",
-              asrc.count("\n    fetch_sector(date8)") == 2
+              asrc.count("\n        fetch_sector(date8)") == 2
+              and asrc.count("except Exception") >= 2
               and "except Exception" in asrc.split("def _sector_rows")[1].split("def ")[0])
+        # 2026-09-25 审查 F1：sector 抓取异常不得绕过末尾归档——两处调用点都必须
+        # 包 try/except 后紧跟归档（当日有落盘则归档行必达）
+        check("sector 失败后归档仍可达（终态路径 try 兜底）",
+              all("auc_archive.archive(date8)" in blk
+                  for blk in asrc.split("try:\n        fetch_sector(date8)")[1:]))
         # 2026-09-02 事故：09:25:10 定盘时刻指数快照 open 未就绪，无重试导致
         # sector.json 整天停在上一交易日。重试逻辑不得回退。
         check("sector 定盘时刻 open 未就绪有退避重试（防静默陈旧）",

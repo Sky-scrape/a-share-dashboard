@@ -84,8 +84,10 @@ def _cli(args: Sequence[str], timeout: int = 300, retries: int = 3) -> dict:
         if attempt:
             time.sleep(0.5 * (2 ** (attempt - 1)) + random.uniform(0.0, 0.25))
         try:
+            # 同 ht.py：控制台工具从无控制台的窗口子系统 exe 拉起会闪黑窗，压掉
             proc = subprocess.run([exe, *args, "--format", "json"], capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired as e:
             last_err = e
             continue

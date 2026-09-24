@@ -169,8 +169,25 @@ def save_json(name, obj):
 
 
 def save_status(obj):
-    """任务状态 → .status/auction.json（/api/health 展示用，失败不影响采集）。"""
+    """任务状态 → .status/auction.json（/api/health 展示用，失败不影响采集）。
+
+    本函数对其余键整写覆盖（last_run/note/rounds 属当次运行，陈旧即误导），仅
+    archive 段（auc_archive 写入的按日归档状态）跨运行保留：非交易日/失败日没有
+    新归档，不保留会让 /api/health 丢失「最近一次归档」可见性（2026-09-25 审查 F2）。
+    """
     try:
+        prev_archive = None
+        try:
+            prev = {}
+            if os.path.exists(STATUS_JSON):
+                with open(STATUS_JSON, encoding="utf-8") as f:
+                    prev = json.load(f)
+            if isinstance(prev, dict) and isinstance(prev.get("archive"), dict):
+                prev_archive = prev["archive"]
+        except Exception:  # noqa: BLE001 - 旧文件损坏时按无历史处理
+            prev_archive = None
+        if prev_archive is not None:
+            obj.setdefault("archive", prev_archive)
         fsutil.save_json_atomic(STATUS_JSON, obj)
     except Exception as e:  # noqa: BLE001
         print(f"状态写入失败（忽略）: {e}", file=sys.stderr)

@@ -64,7 +64,9 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   header.appbar button.navtab { font-size: 10px; padding: 3px 4px; }
   select, button { padding: 4px 6px; }
 }
-main { max-width: 1280px; margin: 0 auto; padding: 18px 22px; }
+/* 五板块容器口径统一（2026-09-23）：与轮动/竞价/全球同为通栏流式 + 10px 内边距，
+   不再限宽 1280 居中——拉大窗口时切页不再跳宽 */
+main { padding: 10px; }
 /* —— 叙事分组（4 组 + 锚点导航 + 折叠） —— */
 /* 叙事分组锚点（唯一贴顶元素；标题栏已改随页滚动） */
 #groupNav {
@@ -316,10 +318,7 @@ body.ready main .section:nth-child(8) { animation-delay: .38s; }
 body.ready main .section:nth-child(9) { animation-delay: .43s; }
 body.ready main .section:nth-child(10) { animation-delay: .48s; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-::-webkit-scrollbar { width: 7px; height: 7px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); }
+/* 滚动条样式已收敛到 lib/tokens.css 全站单一来源（2026-09-23），本页不再自带副本 */
 @media (max-width: 900px) {
   .grid-5, .grid-4, .grid-3, .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }

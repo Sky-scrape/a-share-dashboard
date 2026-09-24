@@ -55,9 +55,12 @@ datas += [(os.path.join(ROOT, "server.py"), "."),
 # 第一方模块全部以源码形态随包分发并由 runpy 执行（launcher 转发），
 # 因此这里只需要保证第三方包被收进 exe：fetch 子进程（runpy 源码）import
 # requests/akshare 等时，由 exe 内置的 frozen importer 供给。
+# webview/pythonnet/clr_loader 是桌面窗口（gui.py → pywebview → WebView2）三件套。
 binaries = []
-hiddenimports = ["requests", "numpy", "pandas", "pyarrow", "tzdata"]
-for pkg in ("akshare", "py_mini_racer", "mini_racer", "tzdata"):
+hiddenimports = ["requests", "numpy", "pandas", "pyarrow", "tzdata",
+                 "webview.platforms.winforms", "webview.platforms.edgechromium"]
+for pkg in ("akshare", "py_mini_racer", "mini_racer", "tzdata",
+            "webview", "pythonnet", "clr_loader"):
     try:
         d, b, h = collect_all(pkg)
     except Exception:
@@ -66,9 +69,11 @@ for pkg in ("akshare", "py_mini_racer", "mini_racer", "tzdata"):
     binaries += b
     hiddenimports += h
 
+ICON = os.path.join(ROOT, "assets", "arecap.ico")
+
 a = Analysis(
     [os.path.join(SPECPATH, "launcher.py")],
-    pathex=[ROOT,
+    pathex=[ROOT, SPECPATH,   # SPECPATH：launcher 里 import gui（packaging/gui.py）
             os.path.join(ROOT, "backend"),
             os.path.join(ROOT, "backend", "recap"),
             os.path.join(ROOT, "backend", "quant"),
@@ -83,6 +88,9 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# console=False：窗口子系统，双击不出现终端黑窗（界面就是 pywebview 桌面窗口）。
+# 要看日志用 --console（gui._ensure_console 现场 AllocConsole 开控制台）。
+# 抓取子进程 [exe, xxx.py] 同为窗口子系统不会闪窗，stdout 已由 server 重定向进日志文件。
 if ONEFILE:
     exe = EXE(
         pyz,
@@ -94,7 +102,8 @@ if ONEFILE:
         debug=False,
         strip=False,
         upx=False,
-        console=True,
+        console=False,
+        icon=ICON,
         exclude_binaries=False,
     )
 else:
@@ -107,7 +116,8 @@ else:
         debug=False,
         strip=False,
         upx=False,
-        console=True,
+        console=False,
+        icon=ICON,
     )
     coll = COLLECT(
         exe,

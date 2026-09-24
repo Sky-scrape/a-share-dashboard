@@ -191,7 +191,8 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 #focusBar select{font-size:12px;padding:2px 6px}
 #ovFocusStats{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 /* ------- 通用宽页 ------- */
-.wide { max-width: 1280px; width: 100%; margin: 0 auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+/* 五板块容器口径统一（2026-09-23）：去掉 1280 限宽居中，与概览页及其余四板块同为通栏 */
+.wide { width: 100%; padding: 10px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
 .wide .panel { overflow: visible; }
 .wide .panel .body { position: static; }
 .jobbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; }

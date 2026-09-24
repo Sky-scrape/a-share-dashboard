@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend", "recap"))
 import ht                      # noqa: E402
 import lockutil                # noqa: E402
 import auc_config as C         # noqa: E402
+import auc_archive             # noqa: E402  每日归档（auc_archive.py）
 import auc_industry as AUI     # noqa: E402
 import trade_cal               # noqa: E402  交易日历判定单一来源（backend/trade_cal.py）
 import logutil                 # noqa: E402  统一 logging（时间戳/级别）
@@ -262,14 +263,25 @@ def run_once(date8):
                                "mode": "manual", "pre_market": _pre_market(),
                                "provisional": provisional, "round": rnd})
     append_series(date8, dict(rnd, label="manual"))
-    fetch_benchmark()
-    AUI.maybe_refresh()   # 行业全量映射到期重建（失败不阻断），消灭「未分类」
+    try:
+        fetch_benchmark()
+        AUI.maybe_refresh()   # 行业全量映射到期重建（失败不阻断），消灭「未分类」
+    except Exception as e:  # noqa: BLE001
+        # 与 _timeline 同口径：final/series 已落盘，基准/映射失败只 [warn]，
+        # 不让异常绕过末尾归档（同 F1 缺陷类）
+        LOG.info(f"[warn] 基准/行业映射维护异常（终态已落盘不受影响）: "
+                 f"{type(e).__name__}: {str(e)[:120]}")
     C.save_status({"last_run": _now(), "date": date8,
                    "rounds": 1, "mode": "manual", "ok": rnd["count"] > 0,
                    **({"note": "上游未返回终态（provisional）"} if provisional else {})})
     if provisional:
         LOG.warning("注意：上游 data_status 非 final，本次终态为盘中快照（provisional）。")
-    fetch_sector(date8)   # 辅助面板：可能退避重试数分钟，放最后不拖住主流程状态
+    try:
+        fetch_sector(date8)   # 辅助面板：可能退避重试数分钟，放最后不拖住主流程状态
+    except Exception as e:  # noqa: BLE001
+        LOG.info(f"[warn] sector 抓取异常（不影响终态落盘与归档）: "
+                 f"{type(e).__name__}: {str(e)[:120]}")
+    auc_archive.archive(date8)   # 每日归档（sector 已落盘，此处收全；sector 失败也照常归档）
 
 
 def _timeline(date8):
@@ -337,6 +349,10 @@ def _timeline(date8):
         C.save_status({"last_run": _now(), "date": date8, "rounds": n_live + 1,
                        "mode": "timeline", "ok": False,
                        "note": f"终态抓取异常({type(e).__name__})，无 09:25 定盘"})
+        # 终态失败 ≠ 当日无数据：live 轮已在 series/rounds_meta 里，归档按缺省
+        # 跳过缺失产物收走已落盘部分——否则次日 09:14 覆盖式落盘把当日采集永久
+        # 带走（2026-09-25 审查 F1，正是归档模块要杜绝的事）
+        auc_archive.archive(date8)
         return
     provisional = (rnd.get("data_status") or "") != "final"
     rnd.pop("label", None)
@@ -360,7 +376,12 @@ def _timeline(date8):
                    "rounds": n_live + 1, "mode": "timeline", "ok": rnd["count"] > 0,
                    **({"note": "；".join(_notes)} if _notes else {})})
     LOG.info("== 竞价采集完成 ==")
-    fetch_sector(date8)   # 辅助面板：定盘时刻 open 可能未就绪，退避重试放最后不拖住状态
+    try:
+        fetch_sector(date8)   # 辅助面板：定盘时刻 open 可能未就绪，退避重试放最后不拖住状态
+    except Exception as e:  # noqa: BLE001
+        LOG.info(f"[warn] sector 抓取异常（不影响终态落盘与归档）: "
+                 f"{type(e).__name__}: {str(e)[:120]}")
+    auc_archive.archive(date8)   # 每日归档（sector 已落盘，此处收全；sector 失败也照常归档）
 
 
 def run_timeline(once=False):

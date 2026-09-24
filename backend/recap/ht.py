@@ -44,8 +44,11 @@ def ht(*args, timeout=90):
     """执行 hithink-finance 命令，成功返回 data 部分；失败抛 RuntimeError。"""
     cmd = [_exe(), *args, "--format", "json"]
     try:
+        # hithink-finance 是控制台工具（npm .cmd→cmd.exe），从无控制台的窗口
+        # 子系统 exe 拉起会被分配新黑窗闪一下，CREATE_NO_WINDOW 压掉
         p = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=timeout)
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"ht timeout: {' '.join(args)} 超过 {timeout}s")
     try:

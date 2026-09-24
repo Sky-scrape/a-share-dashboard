@@ -35,22 +35,19 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import ipaddress
 import json
 import os
 import re
-import socket
 import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-import requests  # noqa: E402
 import fsutil    # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import netguard  # noqa: E402  SSRF 防线单一来源（backend/netguard.py）
 from http_retry import retry  # noqa: E402
 
 DATA_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(HERE),
@@ -155,17 +152,8 @@ def _safe_sym(sym: str) -> str:
 
 
 def _safe_get(url: str, timeout: float = 20.0):
-    """仅允许 https + 白名单主机；解析 DNS 并阻断私网/环回/链路本地地址。"""
-    parts = urlsplit(url)
-    if parts.scheme != "https" or parts.hostname not in _ALLOWED_HOSTS:
-        raise ValueError(f"非白名单主机: {parts.hostname!r}")
-    for info in socket.getaddrinfo(parts.hostname, 443, proto=socket.IPPROTO_TCP):
-        ip = ipaddress.ip_address(info[4][0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast):
-            raise ValueError(f"目标解析到受限地址: {ip}")
-    return requests.get(url, timeout=timeout, allow_redirects=False,
-                        headers={"User-Agent": "Mozilla/5.0"})
+    """仅允许 https + 白名单主机；解析 DNS 并阻断受限地址（netguard 单一来源）。"""
+    return netguard.safe_get(url, _ALLOWED_HOSTS, timeout=timeout)
 
 
 # ---------------------------------------------------------------- 落盘（字面量文件名 + 原子写）
