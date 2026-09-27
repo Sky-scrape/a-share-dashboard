@@ -49,8 +49,15 @@ datas = []
 datas += add_tree("web")
 datas += add_tree("backend")
 datas += add_tree("quant")
-datas += [(os.path.join(ROOT, "server.py"), "."),
-          (os.path.join(ROOT, "start.py"), ".")]
+# server 拆分模块（2026-09-27 方案 O-3b）：server.py 经 runpy 以源码执行，
+# 其 import 的同目录模块必须逐一随包列出（backend/ 等树已由 add_tree 覆盖）。
+datas += [(os.path.join(ROOT, f), ".") for f in
+          ("server.py", "start.py",
+           "server_context.py",
+           "server_handlers_core.py", "server_handlers_www.py",
+           "server_handlers_rotation.py", "server_handlers_recap.py",
+           "server_handlers_auction.py", "server_handlers_global.py",
+           "server_handlers_quant.py", "server_handlers_ops.py")]
 
 # 第一方模块全部以源码形态随包分发并由 runpy 执行（launcher 转发），
 # 因此这里只需要保证第三方包被收进 exe：fetch 子进程（runpy 源码）import

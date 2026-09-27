@@ -147,7 +147,27 @@ def main():
         check("轮动状态文件已修复错位（有 last_run）", bool(rot_task.get("last_run")), str(rot_task)[:80])
         # 轮动采集防缺失三件套（2026-09-05）：节拍对齐整分钟 / 定格点并入 / 断流自愈
         _tcs = open(os.path.join(ROOT, "backend", "rotation", "ths_collect.py"), encoding="utf-8").read()
-        _srv2 = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
+
+        # 2026-09-27 起源码防回退检查跟随结构拆分（方案 O-3b/O-3c）：
+        # server 源码 = server.py + server_context + server_handlers_*（mixin 全家桶）；
+        # 复盘页源码 = index.html + app.js（内联 JS 已抽出）。对"检查目标在哪个文件"不敏感。
+        import glob as _glob
+
+        def _server_src():
+            parts = [open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()]
+            for f in sorted(_glob.glob(os.path.join(ROOT, "server_*.py"))):
+                parts.append(open(f, encoding="utf-8").read())
+            return "\n".join(parts)
+
+        def _recap_page_src():
+            base = os.path.join(ROOT, "web", "recap")
+            out = open(os.path.join(base, "index.html"), encoding="utf-8").read()
+            appjs = os.path.join(base, "app.js")
+            if os.path.isfile(appjs):
+                out += "\n" + open(appjs, encoding="utf-8").read()
+            return out
+
+        _srv2 = _server_src()
         check("轮动采样节拍对齐整分钟（固定 sleep 漂移跳分钟防回退）",
               "def _next_tick" in _tcs and "_next_tick(datetime.datetime.now(), args.interval)" in _tcs)
         check("轮动定格点（11:30/15:00）并入 daily 时间轴（尾部缺 15:00 防回退）",
@@ -307,7 +327,7 @@ def main():
         st, im = get(base, "/api/industry-map")
         check("/api/industry-map 一级行业单源", st == 200 and im.get("src") == "ths" and im.get("stocks", 0) > 4000,
               f"stocks={im.get('stocks')}")
-        rec_html = open(os.path.join(ROOT, "web", "recap", "index.html"), encoding="utf-8").read()
+        rec_html = _recap_page_src()
         check("前端无东财板块口径文案残留", "东财实时" not in rot_html and "东财板块" not in rot_html
               and "东财分时" not in rec_html and "近似匹配" not in rec_html)
         check("点数不足时有诚实空态而非静默空白", "chartNote" in rot_html and "无法成线" in rot_html
@@ -351,7 +371,7 @@ def main():
         _arsrc = rot_html.split("function startAutoRefresh")[1].split("\n}")[0]
         check("首页盘中轮询 15s（且仍带 If-None-Match 协商，未更新不重拉全量）",
               "setInterval(autoTick, 15000)" in _arsrc and "If-None-Match" in rot_html)
-        _rp2 = open(os.path.join(ROOT, "web", "recap", "index.html"), encoding="utf-8").read()
+        _rp2 = _recap_page_src()
         _rpoll = (_rp2.split("function recapPollTick")[1] if "function recapPollTick" in _rp2 else "")
         check("复盘页自动更新：定时轮询 + 快照 ETag 静默重渲染 + 笔记防抖期跳过 + 搜索/输入态不重渲染",
               "setInterval(recapPollTick" in _rp2 and "loadSnapshot(viewing, true)" in _rpoll
@@ -410,7 +430,7 @@ def main():
         check("笔记日期白名单拒绝穿越", st in (400, 404), str(st))
 
         # 前端结构检查
-        rp = open(os.path.join(ROOT, "web", "recap", "index.html"), encoding="utf-8").read()
+        rp = _recap_page_src()
         ids = re.findall(r'\bid="([^"]+)"', rp)
         dup = {i for i in ids if ids.count(i) > 1}
         check("recap 页 id 唯一", not dup, str(dup))
@@ -516,7 +536,11 @@ def main():
               and '"所属概念"' in sp_src2 and '"所属概念"' in rp   # 输出行+前端展示
               and "GENERIC" in open(os.path.join(ROOT, "backend", "recap", "concept_map.py"),
                                     encoding="utf-8").read())  # 机械概念过滤（融资融券/沪深股通…）
-        pv0 = open(os.path.join(ROOT, "backend", "recap", "providers.py"), encoding="utf-8").read()
+        # 2026-09-27 起 providers 拆为包（方案 O-3a）：拼接包内全部源码做字符串检查，
+        # 对"检查目标在包内哪个文件"不敏感
+        pv_dir = os.path.join(ROOT, "backend", "recap", "providers")
+        pv0 = "".join(open(os.path.join(pv_dir, f), encoding="utf-8").read()
+                      for f in sorted(os.listdir(pv_dir)) if f.endswith(".py"))
         check("备选池概念数据链", '"concepts": _rows(concepts())' in pv0
               and '"concepts": rows("concepts")' in sp_src2  # 当日抓取与回填都带概念快照
               and "concept_map.json" in open(os.path.join(ROOT, "backend", "recap", "concept_map.py"),
@@ -592,7 +616,7 @@ def main():
         # 降级成空历史 —— 09-10 起快照 boards.history 只剩当天 1 条、前端画不出折线
         check("providers.boards 不再重复拼 .TI 后缀（防行业 5 日线静默丢失）",
               'index_hist_cache.series(code + ".TI"' not in pv0
-              and "index_hist_cache.series(code, DATE)" in pv0)
+              and re.search(r'index_hist_cache\.series\(code, (_prov\.)?DATE\)', pv0))
         # 轮动速度/持续强势展示新口径（2026-09-04 重定义，详见 derive.py）
         check("复盘页展示新口径（在榜X/10日·累计），旧「连续≥3日」文案不回潮",
               "在榜" in rp and "近10日在榜≥4日" in rp
@@ -603,7 +627,7 @@ def main():
               and '"10cm": 20.0' in sp_src and '"20cm": 30.0' in sp_src)
         check("投机基准指数口径", '"000001.SH"' in sp_src and '"399001.SZ"' in sp_src)
         check("投机 DuckDB 全市场扫描", "v_daily_qfq" in sp_src and "LAG(close,30)" in sp_src)
-        pv_src = open(os.path.join(ROOT, "backend", "recap", "providers.py"), encoding="utf-8").read()
+        pv_src = pv0   # providers 包拼接源码（见上文 pv_dir，方案 O-3a）
         check("providers 接线投机分析", "def speculation()" in pv_src and "speculate.compute" in pv_src)
         check("registry 收录投机分析", "speculation" in MODULES)
         check("recap 新鲜度胶囊槽", 'id="freshPillSlot"' in rp)
@@ -706,7 +730,7 @@ def main():
               _ld.landing_path(time.struct_time((2026, 9, 1, 14, 0, 0, 1, 1, -1))) == "/" and
               _ld.landing_path(time.struct_time((2026, 9, 5, 9, 20, 0, 5, 1, -1))) == "/" and
               _ld.landing_path(time.struct_time((2026, 9, 6, 9, 20, 0, 6, 1, -1))) == "/")
-        _sp = open(os.path.join(ROOT, "server.py"), encoding="utf-8").read()
+        _sp = _server_src()   # server 全家桶源码（方案 O-3b 拆分，见上文 helper）
         _kp = open(os.path.join(ROOT, "start.py"), encoding="utf-8").read()
         check("server 与 start 均仅引 landing（落点不各写一套）",
               _sp.count("landing_path") >= 2 and "from landing import landing_path" in _sp

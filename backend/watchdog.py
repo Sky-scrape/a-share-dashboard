@@ -24,25 +24,28 @@ import time
 import urllib.parse
 import urllib.request
 
+import logutil  # noqa: E402  统一 logging（backend/logutil.py）
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 STATUS_DIR = os.path.join(ROOT, ".status")
 STATE_PATH = os.path.join(STATUS_DIR, "watchdog.json")
 LOG_PATH = os.path.join(STATUS_DIR, "logs", "watchdog.log")
 
+LOGS_DIR = os.path.join(STATUS_DIR, "logs")
+LOGS_KEEP_DAYS = 30         # 杂项日志保留天数（方案 O-4，2026-09-27）
+
 FAILS_TO_ALERT = 2          # 连续失败 N 次才告警（单次失败可能是恰好重启窗口）
 RESTART_COOLDOWN_S = 6 * 3600   # 自动拉起后 6 小时内不再重复拉起（防拉起风暴）
 
 
 def _log(msg):
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    print(line, flush=True)
-    try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
+    """看门狗日志：stdout（.bat 重定向照旧）+ 追加 .status/logs/watchdog.log。
+
+    看门狗是 15 分钟一次的无状态单次运行，watchdog.log 是跨次运行的连续叙事
+    （连续失败计数在状态文件，过程在日志）；2026-09-27 并入 logutil 统一出口
+    （方案 O-2），此前为手写 print+open 双写。"""
+    logutil.get_file_logger("ak.watchdog", LOG_PATH).info(msg)
 
 
 def _load_state():
@@ -151,6 +154,40 @@ def _maybe_restart(cfg):
         return False
 
 
+def prune_logs(keep_days=None):
+    """.status/logs 杂项日志按 mtime 清理超期文件（方案 O-4，2026-09-27）。
+
+    server.log 由 start.py/gui.py 启动时轮转改名（server.log.<时间戳>），改名件与
+    backfill/debug 等杂项日志此前无限累积（实测 50+ 个文件）。看门狗每 15 分钟
+    单次运行，顺带清一次：mtime 早于 keep_days 天的删除；子目录（archive/）与
+    删除失败（Windows 上正被写/被占用的日志）静默跳过——清理是尽力而为，绝不
+    反过来影响探活主链路。保留天数可用 .status/config.json 的 logs_keep_days
+    覆盖（backend/app_config.py，方案 S-5）。"""
+    if keep_days is None:
+        try:
+            import app_config   # noqa: PLC0415  运营常量薄层（backend/app_config.py）
+            keep_days = app_config.get("logs_keep_days")
+        except Exception:  # noqa: BLE001 - 配置层故障回默认，清理照跑
+            keep_days = LOGS_KEEP_DAYS
+    cutoff = time.time() - keep_days * 86400
+    removed = 0
+    try:
+        names = os.listdir(LOGS_DIR)
+    except OSError:
+        return removed
+    for name in names:
+        p = os.path.join(LOGS_DIR, name)
+        if not os.path.isfile(p):
+            continue
+        try:
+            if os.path.getmtime(p) < cutoff:
+                os.remove(p)
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def run_once(port, config_path=None):
     cfg = {}
     try:
@@ -168,6 +205,7 @@ def run_once(port, config_path=None):
                      "consecutive_fails": 0,
                      "last_restart": st.get("last_restart")})
         _backup_alert()
+        prune_logs()
         return 0
 
     fails = int(st.get("consecutive_fails") or 0) + 1

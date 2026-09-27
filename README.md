@@ -80,56 +80,44 @@ http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/
 
 > **关于 hithink-finance**：主力数据源 CLI 已在 npm 公开发布（`@hithink-tech/hithink-finance-cli`，MIT），克隆者可直接安装；使用前按 https://fuyao.aicubes.cn 流程申请 API key，然后 `hithink-finance auth login` 配置。没有它时，量化引擎（quant/）、策略自迭代与全部测试可完整运行；复盘/竞价/轮动/全球四条采集链路会在抓取期报错（start.py 启动预检会提示）。
 
-## 更新日志（v1.0 · 2026-09-06 首版）
+## 更新日志
 
-> 首版发布。2026-08-28 以来的全部改动按主题归组如下，逐日开发明细见 git 提交历史。
+当前版本 **v1.3.0**（2026-09-27）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
+`version` 字段、桌面窗口标题、exe 产物名三处同源），发布时打同名 git tag。
+完整变更记录见 **[CHANGELOG.md](CHANGELOG.md)**；逐日明细见 git 提交历史。
 
-**时间线**：08-28 轮动+复盘合并 → 08-30 全球总览并入、量化平台整体迁入 → 08-31 实时竞价新增 → 09-01 全站切换同花顺板块口径 → 09-02~03 移动端/监护自愈/投机分析 → 09-04 工程加固/M_Final 备选池 → 09-05 全站双主题 → 09-06 策略 C_Final 收敛、备选池切换 → **v1.0 首版**。
-
-### 五大板块
-
-- **实时竞价（/auction）**：09:15–09:25 逐轮采集（自选 + 昨日涨停池/热股自动组池）；竞价热榜、高开低开分布、板块竞价强度（一级行业指数开盘缺口全成分口径）、强弱转换、涨停接力、高开兑现；异动提醒全天回算（盘后/刷新不丢）；逐轮采集体检面板
-- **日内轮动（/）**：板块热力图 + 钻取、蝶形多日轮动动画、双日对比、量价视图、强度矩阵与日内形态、布局预设、导出小结、隔夜外围预判
-- **盘后复盘（/recap）**：五叙事组 + 投机分析（情绪周期定位/题材核心识别/偏离值雷达/高位承接 A 杀监控/异动事件/方法论速查）
-- **全球总览（/global）**：五城时钟、世界地图点击看走势、中美轮动雷达、美/A 热力图（涨跌停感知色阶 + 自定义钻取）
-- **量化平台（/quant）**：造策略/回测/策略库/选股台/今日信号/参数研究（网格排名 + Walk-Forward），多策略对比与自包含 HTML 报告；涨停池与竞价标的可一键送入回测（引擎 115 项回归测试全绿）
-
-### 策略系统（自迭代与备选池）
-
-- **策略自迭代引擎**（strategy-iter）：三轮完整区间迭代收敛 **C_Final**——整体胜率 59.75%、均次日 +2.13%、最大回撤 -1.99%；主梯度是概念内涨停家数
-- **概念维度**：概念为主、行业为辅——全市场概念映射（390 概念、7 天新鲜度、机械概念黑名单、成分时点归档），驱动概念 = 所属概念中当日涨幅最高者
-- **明日交易备选池**：四档环境分档定配额，涨停组/低吸组双打分 + 次日买点与风险位；执行层常量单一来源（`backend/execution_layer.py`）
-- **每日验证自我优化闭环**：T-1 备选池逐票验证与归因（市场/买点/情绪/板块/概念/资金/随机），45 日滚动窗口内有界调门槛与因子惩罚；结构规则/环境配额/执行层永不自动改动，全部留痕可重放
-- **样本外追踪 + 20 日到期复审**：调参区间外的每日验证单独累积，胜率回落超阈值自动告警并建议重开迭代——防过拟合的最后防线
-- **资金曲线回测**：把条件期望换算成纪律执行的组合曲线（含触发率/开盘入场/空仓日）：累计 +62.03%、年化 +106.87%、最大回撤 -38.85%
-- **竞价缺口前瞻回验**：昨日涨停池今日竞价低开占比 >50% 的交易日，备选池均益转负 → 竞价页「情绪前瞻」警戒提示（只作执行层提示，不改规则）
-
-### 工程与可靠性
-
-- **安全**：全部写接口过跨源闸门（Origin/Referer 校验，异源 403）+ 可选 `AK_WRITE_TOKEN`；前端 esc() 单一来源，六处口径不一的转义实现收敛为一
-- **单一来源收敛**：交易日历（8 位口径）/thscode 映射/东财常量/HTTP 重试/涨跌区间分桶/执行层常量/顶栏页序/启动落点——每件事只存一处，改一处全站生效
-- **服务架构**：server.py 路由表化、进程内缓存全部带锁、静态资源 ETag 长缓存、API gzip（轮动统计 127KB→10.6KB）
-- **采集可靠性**：轮动防缺失三件套（死锁监护自愈拉起/盘外定格点并入/采样对齐整分钟），计划任务电源与空闲条件四坑修复，sector 采集退避重试，盘中停滞告警
-- **自愈运维**：监护式启动器（服务崩溃自动重启、指数退避），补跑/补抓不冒充时点、数据边界诚实标注
-- **移动端**：Tailscale 私有通道（防火墙仅 Private 配置放行）、390px 视口适配、gzip 省流量
-- **全站双主题**：晨报（暖纸色）/夜台（深色霓虹）一键切换，canvas 图表经 `web/lib/theme.js` 单一来源取值重绘，多标签页/iframe 自动跟随，选择持久化
+最近一版（v1.3.0 · 版本与治理批）要点：版本单一来源 + CHANGELOG 建立；SSRF 守卫收拢
+`http_retry`（guarded_get 单一出站入口 + CI 守卫脚本）；notify/watchdog 日志并入 logutil；
+`.status/logs` 杂项日志 30 天自动清理（rotation/screener 保留机制经核实已存在，销项）；
+`providers.py` 拆包、`server.py` 拆 context+handler mixin、复盘页 JS 抽 `app.js`（架构形态
+不变，smoke 防回退检查同步）；hithink CLI 健康探活入 `/api/health`（失败推手机）；
+运营常量薄层 `.status/config.json`；`docs/ARCHITECTURE.md` 架构总览；docs 两份板块 README
+重写为现行路径。
 
 ## 目录结构（五板块）
 
 ```
 A/
-├── server.py              统一服务（静态 /auction 与 / 与 /recap 与 /global 与 /quant + 全部数据 API；HTTP 层不做业务计算）
+├── server.py              统一服务（静态 /auction 与 / 与 /recap 与 /global 与 /quant + 全部数据 API；HTTP 层不做业务计算；路由表唯一真相）
 ├── start.py               一键启动（端口检测 + 按 landing 开浏览器，子进程固定 --no-open 不双开）
+├── CHANGELOG.md           版本变更记录（Keep a Changelog；版本号单一来源 backend/version.py）
+├── tools/
+│   └── check_outbound.py  CI 出站调用点守卫（backend 裸 requests 必须走 http_retry/netguard，方案 O-1）
 ├── backend/
 │   ├── derive.py          派生层：情绪指数/晋级率/轮动统计/强度矩阵/多日轮动动画 → data/*/panel/（带版本号，单日特征缓存增量计算）
 │   ├── landing.py         启动落点单一口径（竞价窗口→/auction，其余→/；server 与 start 共用，可 `python backend/landing.py` 自测）
 │   ├── lockutil.py        跨进程文件锁（手动重抓与计划任务不并发）
 │   ├── industry_common.py 个股→同花顺一级行业映射的跨子系统读取器（单一来源 data/auction/industry_map.json，超 5 天不可信则退回自建）
 │   ├── execution_layer.py 执行层常量单一来源（备选池买点窗口/风险位，speculate 与竞价执行卡共用）
+│   ├── version.py         版本单一来源（__version__；/api/health、桌面窗口标题、exe 产物名同源）
+│   ├── app_config.py      运营常量薄层（.status/config.json 可选覆盖保留天数/留存上限，缺省回代码默认）
+│   ├── http_retry.py      出站 HTTP 单一入口（指数退避重试 + netguard 守卫，guarded_get）
+│   ├── netguard.py        SSRF 防线单一来源（https+主机白名单+受限地址阻断，fake-IP 豁免裁决）
+│   ├── logutil.py         统一 logging（stdout 格式化 + get_file_logger 复合输出）
 │   ├── recap/             盘后复盘抓取（hithink-finance 主源 + akshare 辅源）
 │   │   ├── modules.py     模块契约单一来源（registry + 中文字段容错读取 fget/cget）
 │   │   ├── snapio.py      快照读写单一入口（自动兼容 .json / .json.gz 归档）
-│   │   ├── providers.py   13 个数据模块（清单引用 modules.MODULES）
+│   │   ├── providers/     14 个数据模块拆分的包（门面 re-export，清单引用 modules.MODULES；2026-09-27 起）
 │   │   ├── ht.py          hithink-finance CLI 封装
 │   │   ├── fetch_daily.py 每日抓取主脚本（文件锁 + 抓完自动重算派生面板）
 │   │   ├── backfill.py    历史缺口补抓（hithink 历史接口）
@@ -164,7 +152,7 @@ A/
 ├── strategy-iter/         ★ 策略自迭代（C7 固化口径：入选门槛 70 + 非涨停组市场量能闸门，全窗口重跑 61.88%/+2.47%）
 │   ├── engine/              数据/预计算/规则/选股/验证/出轮 引擎（概念与行业双口径单一来源）
 │   ├── scripts/             15 个脚本 + common.py（hithink 抓取公共库）：fetch_symbols 全市场标的表 / fetch_pools 涨停池+龙虎榜 / fetch_industries 行业指数成分与日线 / fetch_concepts 概念指数日线 / export_local 本地 DuckDB→parquet 日线导出 / analyze_round 轮末分析 / backtest_capital 资金曲线回测 / gap_ahead_study 竞价缺口前瞻回验 / exp_c6_variants C7 单变量变体实验 / exp_hold_sizing 持有期与资金管理实验 / c8_candidate_study C8 候选全窗口验证 / c8_factor_ablation C7 逐因素消融审计 / c9_exit_study C9 离场口径逐日推演 / c9_tp_study C9 止盈族否证研究 / c10_seal_study C10 封板日续持（右尾获取）研究
-│   ├── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》
+│   ├── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》；runs 为 git 跟踪的审计证据链，保留规则见 strategy-iter/README.md
 │   └── 自动选股与策略自迭代系统.md   系统总文档（验证区间以 engine/data.py 的 SEL_START/SEL_END 为唯一日期源）
 ├── data/
 │   ├── auction/           竞价产出：live.json 最新轮 + final.json 定盘 + series.json 当日轮次全量 + rounds_meta.json 逐轮元数据 + benchmark.json 基准 + sector.json 一级行业指数开盘缺口 + industry_map.json 个股→一级行业全量映射 + watchmap.json（行业/名称/来源）+ watchlist.txt（自选清单）
@@ -174,7 +162,7 @@ A/
 ├── web/                 五个页面（顶栏顺序 = 盯盘节奏：竞价 → 轮动 → 复盘 → 全球 → 量化）
 │   ├── auction/index.html 实时竞价（/auction）：阶段状态条 + 竞价热榜（全量渲染/排序/行业标注）+ 高开低开分布 + 板块竞价强度 + 09:25 定盘 + 强势候选/涨停接力/高开兑现/强弱转换 + 异动提醒 + 采集体检 + 单股竞价曲线弹窗 + 观察池编辑
 │   ├── index.html         日内轮动（/，根路径入口）：热力图/回放/榜单/自选/研究面板/板块钻取/双日对比/量价视图/导出小结 + 布局预设 + 新鲜度胶囊；页内 iframe 切复盘
-│   ├── recap/index.html   盘后复盘（/recap）：5 叙事组可折叠 + 情绪指数曲线/涨停池/龙虎榜 + 备选池验证与自我优化卡 + 笔记存服务器 + 投机分析
+│   ├── recap/index.html   盘后复盘（/recap）：5 叙事组可折叠 + 情绪指数曲线/涨停池/龙虎榜 + 备选池验证与自我优化卡 + 笔记存服务器 + 投机分析（脚本独立为 app.js，路由 /recap/app.js）
 │   ├── global/index.html  全球总览（/global）：五城时钟 + 世界地图 + 中美轮动雷达 + 美/A 热力图 + 走势图三形态（日内分时/折线/日线K线）
 │   ├── quant/index.html   量化平台（/quant）：六页签工作台—概览/造策略·回测/策略库/选股台/今日信号/参数研究；多策略对比、自包含报告归档直链、行情缓存新鲜度胶囊
 │   └── lib/
@@ -188,8 +176,8 @@ A/
 │   ├── smoke.py           冒烟测试：起临时 server 断言 API 契约 + 前端结构（改完跑这个）
 │   └── test_units.py      纯函数单测（环境分档/因子分桶/执行层/日历/重试等）
 ├── assets/                图标与 README 用图（docs/poster-*.jpg 双主题海报、roadmap.jpg 三层总览）
-├── docs/                  各板块文档（README-recap / README-rotation；开发日志 PROGRESS.md 仅本地保留，不入库）
-│   └── legacy/            合并前的旧版服务与脚本（仅归档，不再使用）
+├── docs/                  架构总览（ARCHITECTURE.md）+ 各板块文档（README-recap / README-rotation）+ 评审方案；开发日志 PROGRESS.md 仅本地保留，不入库
+│   └── legacy/            合并前的旧版服务与脚本 + 一次性修复脚本归档（仅留痕，不再使用）
 └── .github/               CI：量化引擎回归测试（python -m pytest quant/tests tests；smoke.py 文件名不入 pytest 收集，需本地起服务跑；data/、.status/、.context/ 为本地运行数据与个人笔记，不入库）
 ```
 
@@ -238,6 +226,27 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 
 另：hithink 本地 DuckDB sync 的内存上限默认 `min(1GiB, 总内存×25%)`，库变大后 commit 会报 failed to pin block；fetch_task.bat 已 `set HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT=4GiB`（官方环境变量入口），重建或换机时记得同样带上。
 
+## 手机看板（移动端访问）
+
+前端已做 390px 视口适配（五页零横向溢出，钻取抽屉在手机改底部抽屉 + safe-area）。
+手机访问的三条路径，按场景选：
+
+1. **同一 Wi-Fi（最快）**：`start.py` 启动的服务绑 `0.0.0.0`（`server.py` 直跑才默认
+   只绑回环），横幅会打印 `http://<局域网IP>:8000/`，手机浏览器直开。
+2. **任意网络（推荐）**：[Tailscale](https://tailscale.com) 组网后手机走 `http://<机器的100.x地址>:8000/`——
+   流量走端到端加密的私有通道，不暴露公网；家庭/办公防火墙只需放行 Private 配置
+   的入站（Windows 默认策略已够）。这是项目作者日常在用的路径。
+3. **exe 桌面形态**：默认单机窗口（不监听局域网）；手机要看时改用
+   `ak-dashboard-onefile-vX.Y.Z.exe --web --host 0.0.0.0` 跑浏览器模式。
+
+**暴露前的两道闸**（server 内建，2026-09-04 加固）：
+
+- 写接口跨源闸门：所有 POST 校验 Origin/Referer 同源，恶意网页借你浏览器打内网
+  接口会被 403（页面正常使用不受影响）；
+- 远程读保护：设置环境变量 `AK_READ_TOKEN` 后，非本机来源的所有请求必须携带
+  `?token=` 或 `X-AK-Token`（看板页面首次访问后 localStorage 记忆）。手机上
+  首次打开带一次 token 即可。
+
 ## 开发约定
 
 - **改完必跑**：`python tests/smoke.py`（API 契约 + 前端结构断言，含量化接线与竞价 API）；引擎级回归另跑 `python -m pytest quant/tests -q`（115 项）。
@@ -262,8 +271,24 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 - **全球总览**：新浪通道为主（环球指数/美股指数/美股个股实时；本网络环境东财 push2 系列接口不通，勿用）；美股个股 5/20 日窗口直接解析新浪 staticdata 日线；A股雷达动量复用本地复盘快照逐日复合，A股热力图行业窗口用快照复合、个股窗口用 hithink 前复权日线（限流自动重试）；世界地图 GeoJSON 已本地化在 web/lib/map/
 - **研究库**：hithink 本地 DuckDB（`hithink-finance db query` 可查 10 年日线），每日 data sync 增量（17:05 与次日 04:05 各一次防竞态）；上游未发布时日线层会整层缺口——投机分析验证侧 OHLC 缺行走腾讯前复权日线备源兜底（`spec_ohlc_fb`，行带备源标记；东财 push2 本网络直连不通故弃用），层探测状态落 `.status/duckdb.json`（/api/health `duckdb` 段 + 新鲜度弹窗告警）；全市场扫描（低吸组/偏离/量能）无备源，缺口日诚实降级（量能闸门不启用，`_market_amt_ratio` 拒用错日数据）
 
+### hithink CLI 排障（主力数据源，2026-09-27 起）
+
+`/api/health` 的 `hithink` 段每 10 分钟探活一次 `auth status`（失败推送手机告警）。
+症状 → 病因 → 处置：
+
+| 症状（health.hithink） | 病因 | 处置 |
+|---|---|---|
+| ok=false，error 含 ENOENT / FileNotFoundError | CLI 未安装 | `npm install -g hithink-finance` |
+| ok=false，error 含 auth / 401 / token 字样 | key 失效/过期 | `hithink-finance auth login` 重新认证 |
+| ok=false，error 含 timeout | CLI 卡死或系统代理异常 | 手动跑 `hithink-finance auth status` 验证；查代理配置 |
+| 个别复盘模块 error 但 hithink 绿 | 上游单模块故障 | 走项目自带降级兜底（如跌停池→快照近似），看 health.errors 明细 |
+
 详细文档见 `docs/README-recap.md`（复盘）与 `docs/README-rotation.md`（轮动）；实时竞价的接口契约与时间线参数以 `backend/auction/auc_config.py` 顶部注释为单一来源。
 
 ## 免责声明
 
 本项目仅用于个人学习与技术交流。所有行情数据来自第三方公开接口（同花顺 / 东财 / 新浪等），不保证数据的准确性与完整性；项目内容不构成任何投资建议，据此操作风险自负。
+
+## 许可证
+
+见根目录 [LICENSE](LICENSE)。

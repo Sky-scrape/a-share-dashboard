@@ -1,55 +1,85 @@
-﻿# arecap 路 A鑲＄洏鍚庡鐩樼湅鏉?
-鐩樺悗鑷姩鎶撳彇鍏ㄥ A 鑲″鐩樻暟鎹紝缃戦〉鐪嬫澘灞曠ず锛氬ぇ鐩樻寚鏁般€佸競鍦烘儏缁€佹澘鍧楁定璺屻€佽繛鏉挎闃熴€佹定鍋?璺屽仠/鐐告澘姹犮€侀緳铏庢锛堝惈娓歌祫/鏈烘瀯鍑€涔帮級銆佺儹鑲℃銆丒TF 椋庡悜銆佸寳鍚戞浛浠ｃ€佸鐩樼瑪璁般€?
-## 鏁版嵁婧?
-- **涓诲姏锛歨ithink-finance CLI**锛堝悓鑺遍『鍙ｅ緞锛夛細娑ㄥ仠/璺屽仠/鐐告澘姹犮€侀緳铏庢銆佺儹鑲℃銆佽涓?姒傚康鎸囨暟锛堝揩鐓?鍘嗗彶锛夈€佸叏甯傚満蹇収銆丒TF 蹇収銆佷及鍊笺€佷氦鏄撴棩鍘嗐€傚皝瑁呰 `backend/ht.py`锛岄渶宸插畨瑁呭苟璁よ瘉锛坄hithink-finance auth status`锛夈€?- **杈呭姪锛歛kshare**锛堟柊娴?涓滆储锛夛細澶х洏鎸囨暟銆佷袱甯傛垚浜ら銆佸ぇ灏忕洏銆佺洃绠″叕鍛娿€佸鍥村競鍦恒€?- 鍏ㄥ競鍦哄揩鐓ф湰鍦板鐢細瀹藉害缁熻/娑ㄨ穼鍒嗗竷/鎴愪氦棰濇/鏄ㄦ棩娑ㄥ仠浠婃棩琛ㄧ幇鍏变韩涓€娆℃姄鍙栥€?
-## 蹇€熷紑濮?
-```bash
-# 1. 鎶撴暟鎹紙鏀剁洏鍚庯級
-python backend/fetch_daily.py
+# 盘后复盘板块（/recap）
 
-# 2. 鍚姩鐪嬫澘锛堣嚜鍔ㄦ墦寮€娴忚鍣級
-python backend/serve.py
+盘后自动抓取全套 A 股复盘数据，网页看板展示：大盘指数、市场情绪、板块涨跌、连板梯队、
+涨停/跌停/炸板池、龙虎榜（含游资/机构净买）、热股榜、ETF 风向、监管榜单，以及投机分析
+（情绪周期定位/题材核心/偏离值雷达/A 杀监控/明日交易备选池）与复盘笔记。
+
+> 本文档 2026-09-27 重写对齐现行结构（项目合并进统一看板后的路径）。此前版本指向
+> `backend/fetch_daily.py`、`backend/serve.py` 等合并前路径，均已失效。
+
+## 数据源
+
+- **主力：hithink-finance CLI**（同花顺口径）：涨停/跌停/炸板池、龙虎榜、热股榜、行业/概念
+  指数（快照+历史）、全市场快照、ETF 快照、估值、交易日历。封装见 `backend/recap/ht.py`，
+  需安装并认证：`hithink-finance auth status`
+- **辅助：akshare**（新浪/东财）：大盘指数、两市成交、大小盘、监管公告、外围市场
+- **备源：腾讯前复权日线**（`backend/recap/spec_ohlc_fb.py`）：研究库日线层缺失时兜底
+  （2026-09-14 事故引入），缺失行如实标注 `src`
+- 全市场快照本地复用：宽度统计/涨跌分布/成交额榜/昨日涨停今日表现共享一次抓取
+
+## 快速开始
+
+```bash
+# 1. 抓取今日（收盘后；hithink 交易日历自动跳过非交易日，--force 可强制）
+python backend/recap/fetch_daily.py
+
+# 2. 启动统一看板（浏览器打开 http://127.0.0.1:8000/recap）
+python start.py
 ```
 
-## 鍛戒护
+## 命令
 
 ```bash
-# 鎶撳彇浠婂ぉ锛坔ithink 浜ゆ槗鏃ュ巻鑷姩璺宠繃闈炰氦鏄撴棩锛?-force 鍙己鍒讹級
-python backend/fetch_daily.py
+# 抓取今天
+python backend/recap/fetch_daily.py
 
-# 鎶撳彇鎸囧畾鏃ユ湡
-python backend/fetch_daily.py --date 20260805
+# 抓取指定日期
+python backend/recap/fetch_daily.py --date 20260805
 
-# 鍘嗗彶琛ユ姄锛氳嚜鍔ㄦ壘 data/ 缂哄彛锛岀敤 hithink 鍘嗗彶鎺ュ彛鍥炶ˉ鏍稿績妯″潡
-# 锛堟定鍋?璺屽仠/鐐告澘姹犮€佽涓氭澘鍧椼€侀緳铏庢銆佺洃绠″叕鍛婏紱褰撴棩蹇収绫绘ā鍧楁棤娉曞洖琛ワ級
-python backend/backfill.py
-python backend/backfill.py --date 20260825 --force
+# 快照保留天数（默认 400 天，更旧的自动清理，封盘库约 176MB）
+python backend/recap/fetch_daily.py --keep-days 400
 
-# 鏍￠獙蹇収锛堝叏杩囪繑鍥?0锛?python backend/check_snapshot.py data/20260805.json
+# 历史补抓：自动找 data/recap 缺口，用 hithink 历史接口回补核心模块
+# （涨停/跌停/炸板池、行业板块、龙虎榜、监管公告；当日快照类模块无法回补）
+python backend/recap/backfill.py
+python backend/recap/backfill.py --date 20260825 --force
 
-# 鐪嬫澘鏈嶅姟锛堝彲鎸囧畾绔彛锛?python backend/serve.py [--port 8000]
+# 校验快照（全过返回 0）
+python backend/recap/check_snapshot.py data/recap/20260805.json.gz
+
+# 凌晨美股收盘链（04:05 计划任务；us_market 因子 + T-1 备选池重建）
+python backend/recap/us_close_task.py
+
+# 统一服务（复盘页路由 /recap，亦可 --port 改端口）
+python server.py
 ```
 
-## 鑷姩鎶撳彇
+## 自动抓取
 
-宸查厤缃?Proma 瀹氭椂浠诲姟 + Windows 璁″垝浠诲姟鍙屼繚闄╋細**姣忎釜浜ゆ槗鏃?17:00/17:05** 鑷姩鎶撳彇骞舵牎楠岋紝闈炰氦鏄撴棩鑷姩璺宠繃銆?
-## 鏁版嵁鏍煎紡
+Windows 计划任务（bat 在 `backend/recap/`，任务搭建的四个静默坑见根 README「自动任务」节）：
 
-`data/<YYYYMMDD>.json` = `{ date, fetched_at, modules: { 13 涓ā鍧?}, prev }`
+- `fetch_task.bat`：每交易日 **17:05** 快照抓取 + 概念周更 + gzip 归档 + 补刷全球
+- `us_close_task.bat`：每日 **04:05** 美股收盘链（us_market 因子 + T-1 备选池重建）
 
-妯″潡锛歮arket_indices(澶х洏鎸囨暟) / breadth(娑ㄨ穼瀹舵暟路娑ㄥ仠路杩炴澘路涓ゅ競鎴愪氦棰澛峰ぇ灏忕洏路鐪熷疄娑ㄥ仠) /
-limit_up_pool(娑ㄥ仠姹犅峰惈娑ㄥ仠鍘熷洜) / limit_down_pool(璺屽仠姹? / limit_break_pool(鐐告澘姹? /
-boards(鍚岃姳椤?0琛屼笟路杩?鏃ュ惈褰撳ぉ) / concepts(姒傚康390路娑ㄨ穼骞?鎴愪氦棰?鎺掑悕) /
-extra(娑ㄨ穼骞呭垎甯?鎴愪氦棰漈OP20鍚玃E/PB) / hot_stock(鍚岃姳椤虹儹鑲℃) / etf(涓昏ETF椋庡悜) /
-global_market(澶栧洿鍙傝€兟锋腐鑲＄編鑲? / regulatory(鐩戠姒滃崟) / lhb(榫欒檸姒溌峰惈娓歌祫/鏈烘瀯鍑€涔?姒傚康)
+## 数据格式
 
-姣忎釜妯″潡锛歚{"status": "ok", "data": [...]}` 鎴?`{"status": "error", "error": "鐪熷疄寮傚父"}`
-鍘嗗彶琛ユ姄鐨勫揩鐓у惈 `"backfill": true`锛屼粎鍚笂杩?6 涓彲鍥炶ˉ妯″潡銆?
-## 娉ㄦ剰
+`data/recap/YYYYMMDD.json.gz` = `{ date, fetched_at, modules: { … }, prev }`
 
-- 鐩戠姒滃崟 = 褰撴棩鍏憡鎸変袱绫荤瓫閫夛細鑲＄エ浜ゆ槗寮傚父娉㈠姩 / 绾緥澶勫垎路鐩戠鎺柦锛堢旱鍚戜袱琛屽睍绀猴級
-- 琛屼笟鏉垮潡锛氬悓鑺遍『 90 涓竴绾ц涓氾紙hithink index锛屽巻鍙插惈褰撳ぉ鏃犳粸鍚庯級锛涚偣鍑诲乏渚ф澘鍧楀彸渚у睍绀鸿繎 5 鏃ヨ蛋鍔?- 姒傚康鏉垮潡锛氬悓鑺遍『 390 姒傚康鎸囨暟褰撴棩蹇収锛堟壒閲忕绾э級锛涙定璺屽箙鍒嗗竷/鎴愪氦棰濇鍩轰簬 hithink 鍏ㄥ競鍦哄揩鐓э紝TOP20 鍚?PE/PB
-- 娑ㄥ仠姹?/ 璺屽仠姹?/ 鐐告澘姹?/ 榫欒檸姒?鏀寔鐐瑰嚮琛ㄥご鎺掑簭锛涙定鍋滄睜鍙寜娑ㄥ仠鍘熷洜鎼滅储
-- 榫欒檸姒滃惈娓歌祫鍑€涔?鏈烘瀯鍑€涔?姒傚康/娑ㄥ仠鍘熷洜锛堝悓鑺遍『鍙ｅ緞锛?- 澶嶇洏绗旇淇濆瓨鍦ㄦ祻瑙堝櫒 localStorage锛屾寜鏃ユ湡鍒嗗紑锛屼粎鏈満鍙
-- 杈撳嚭鍏?UTF-8锛沇indows 鎺у埗鍙颁贡鐮佽璁?`PYTHONIOENCODING=utf-8`
-- hithink 缂撳瓨锛氳涓?姒傚康鐩綍缂撳瓨 7 澶┿€佷釜鑲¤涓氭槧灏勬寜鏃ョ紦瀛樹簬 `backend/.ht_cache/`
+模块清单与字段契约以 **`backend/recap/modules.py`（MODULE_REGISTRY）为单一来源**，当前
+14 个：market_indices / breadth / limit_up_pool / limit_down_pool / limit_break_pool /
+boards / concepts / extra / hot_stock / etf / global_market / regulatory / lhb / speculation。
+
+- 每个模块：`{"status": "ok", "data": [...]}` 或 `{"status": "error", "error": "真实异常"}`
+- 历史补抓的快照含 `"backfill": true`，仅含可回补模块
+- 派生面板（情绪指数序列等）在 `data/recap/panel/`；gzip 归档在 `data/recap/archive/`
+- 复盘笔记落盘 `data/recap/notes/`（`GET/POST /api/recap/note`），前端 localStorage 仅兜底
+
+## 注意
+
+- 监管榜单 = 当日公告按两类筛选：股票交易异常波动 / 纪律处分·监管措施（纵向两行展示）
+- 行业板块：同花顺 90 个一级行业指数（881xxx，历史含当天无滞后）；概念板块 390 个快照
+- 涨停/跌停/炸板池、龙虎榜支持点击表头排序；涨停池可按涨停原因搜索
+- 投机分析与备选池闭环：`speculate.py`（投机情绪加工）、`spec_pool.py`（备选池）、
+  `spec_validate.py`（T-1 逐票验证 + 45 日窗口有界调参 + 样本外漂移监控）
+- 输出全 UTF-8；Windows 控制台乱码请设 `PYTHONIOENCODING=utf-8`
+- hithink 缓存：行业/概念目录缓存 7 天、行业指数日线增量缓存于 `backend/recap/.ht_cache/`

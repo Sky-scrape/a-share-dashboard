@@ -18,6 +18,15 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest-cov
       - name: Run engine regression tests
-        run: python -m pytest quant/tests tests -q
+        run: python -m pytest quant/tests tests -q --cov=backend --cov=quant/quant_sim --cov-report=term-missing:skip-covered --cov-report=xml --no-cov-on-fail
+      - name: Outbound HTTP guard（出站调用点守卫，backend 裸 requests 必须走 http_retry/netguard）
+        if: runner.os == 'Linux'
+        run: python tools/check_outbound.py
+      - name: Upload coverage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

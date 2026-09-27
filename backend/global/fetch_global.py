@@ -33,7 +33,6 @@ sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-import requests
 
 import lockutil  # noqa: E402
 import logutil  # noqa: E402  统一 logging（时间戳/级别）
@@ -54,6 +53,9 @@ LOCK_PATH = os.path.join(ROOT, ".status", "fetch-global.lock")
 
 HIST_N = 250          # 每个指数保留的日点数（点击走势用）
 RETRY = 2             # 网络类失败重试次数
+
+# 出站主机白名单（字面量；2026-09-27 起新浪通道直连统一经 http_retry.guarded_get 过守卫）
+SINA_HOSTS = {"finance.sina.com.cn", "hq.sinajs.cn", "quotes.sina.cn"}
 
 
 def _retry(fn, tries=RETRY, delay=2):
@@ -369,9 +371,9 @@ def _us_daily_closes(sym, n=WIN20 + 3):
             closes.append(c)
     # 窗口内若有真实拆分/除权（factor≠1 或 adjust≠0），不复权口径失真 → 降级 None
     try:
-        rj = requests.get(
+        rj = http_retry.guarded_get(
             f"https://finance.sina.com.cn/us_stock/company/reinstatement/{sym.upper()}_qfq.js",
-            timeout=15)
+            allow_hosts=SINA_HOSTS, timeout=15)
         if rj.status_code == 200:
             data = (json.loads(rj.text.split("=", 1)[1].split(";")[0]) or {}).get("data") or []
             cut = str((pd.Timestamp.now() - pd.Timedelta(days=45)).date())
@@ -417,8 +419,9 @@ def fetch_heat_us():
     """
     syms = [s for lst in US_HEAT_SECTORS.values() for s in lst]
     qs = urlencode({"list": ",".join("gb_" + s for s in syms)}, safe=",")
-    r = _retry(lambda: requests.get(
+    r = _retry(lambda: http_retry.guarded_get(
         "https://hq.sinajs.cn/list",
+        allow_hosts=SINA_HOSTS,
         params=qs,
         headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
     r.encoding = "gbk"
@@ -632,8 +635,9 @@ def fetch_intraday():
     out = {}
     for idx_id, sym in INTRA_SPECS.items():
         try:
-            r = _retry(lambda: requests.get(
+            r = _retry(lambda: http_retry.guarded_get(
                 "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData",
+                allow_hosts=SINA_HOSTS,
                 params={"symbol": sym, "scale": 1, "ma": "no", "datalen": 250},
                 headers={"Referer": "https://finance.sina.com.cn"}, timeout=15))
             rows = json.loads(r.text)

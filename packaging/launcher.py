@@ -27,7 +27,14 @@ import sys
 
 APP_DIR_NAME = "ak-dashboard"
 SYNC_TREES = ("web", "backend", "quant")
-SYNC_FILES = ("server.py", "start.py")
+# server 拆分模块（2026-09-27 方案 O-3b）与 server.py 同目录，onefile 升级换版
+# 重同步时必须一起覆盖，否则旧目录缺新模块 → import server_context 直接失败。
+SYNC_FILES = ("server.py", "server_context.py",
+              "server_handlers_core.py", "server_handlers_www.py",
+              "server_handlers_rotation.py", "server_handlers_recap.py",
+              "server_handlers_auction.py", "server_handlers_global.py",
+              "server_handlers_quant.py", "server_handlers_ops.py",
+              "start.py")
 
 
 def _setup_console():

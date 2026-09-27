@@ -12,6 +12,12 @@ providers._retry（3 次/3s）与 fetch_global._retry（2 次/2s）是两套同�
   编程错误（TypeError/KeyError 等）首次即抛，不拿重试掩盖 bug；
 - 旧调用点不传新参数时行为兼容：重试次数/基础间隔语义不变，退避在多轮重试时
   才与旧的固定间隔有差异。
+
+2026-09-27 起（方案 O-1）：新增 guarded_get —— 出站 HTTP 的守卫+重试单一入口。
+netguard（SSRF 防线）此前只接了 3 个文件，其余调用点靠「URL 全字面量」约定兜
+第一层，约定挡不住未来赶工新加的动态拼 URL。全站出站 GET 统一走 guarded_get
+（https + 主机白名单 + 受限地址阻断 + 禁跟随重定向，重试走同一套退避）；
+tools/check_outbound.py 在 CI 挡住绕过本模块的裸 requests。
 """
 import random
 import time
@@ -64,3 +70,26 @@ def retry(fn, tries=2, delay=2.0, backoff=2.0, cap=30.0, jitter=0.25,
                     on_retry(i, e)
                 time.sleep(max(wait, 0.0))
     raise last
+
+
+def guarded_get(url, *, allow_hosts, params=None, headers=None, timeout=12.0,
+                tries=0, delay=1.5, retry_on=None):
+    """守卫后的出站 GET（netguard 校验 + requests，可选复用同一套退避重试）。
+
+    - allow_hosts：https 主机白名单，调用方传**字面量集合**（netguard.check_url
+      语义），禁从外部输入拼装；守卫判定（含 DNS 解析）只做一次，重试不重复解析；
+    - 禁跟随重定向（netguard 同款）：重定向换主机等于绕过白名单，必须显式失败；
+    - tries=0（默认）单次尝试不重试——适合已被调用方外层 retry 包住的主机轮换
+      场景（如 em_common.em_kline_raw 每次尝试换一台主机，各自过一次守卫）。
+    """
+    import netguard   # 延迟导入：本模块被纯计算脚本引入时不强拉 requests 之外的依赖
+
+    netguard.check_url(url, allow_hosts)
+
+    def _once():
+        return requests.get(url, params=params, headers=headers, timeout=timeout,
+                            allow_redirects=False)
+
+    if tries <= 0:
+        return _once()
+    return retry(_once, tries=tries, delay=delay, retry_on=retry_on)

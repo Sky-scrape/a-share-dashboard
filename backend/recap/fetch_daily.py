@@ -26,6 +26,7 @@ import snapio
 import fsutil
 import lockutil
 import logutil
+import app_config  # noqa: E402  运营常量薄层（backend/app_config.py，方案 S-5）
 
 LOG = logutil.get_logger("ak.recap")
 
@@ -69,8 +70,9 @@ def main():
     ap.add_argument("--out", default=None, help="输出 JSON 路径（默认 data/<日期>.json）")
     ap.add_argument("--force", action="store_true",
                     help="非交易日（涨停池为空）也强制抓取")
-    ap.add_argument("--keep-days", type=int, default=400,
-                    help="保留最近 N 天快照，更旧的自动清理（默认 400，需覆盖历史回补）")
+    ap.add_argument("--keep-days", type=int, default=app_config.get("recap_keep_days"),
+                    help="保留最近 N 天快照，更旧的自动清理（默认 400，可被 "
+                         ".status/config.json 的 recap_keep_days 覆盖）")
     args = ap.parse_args()
 
     date = args.date

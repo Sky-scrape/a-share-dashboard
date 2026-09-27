@@ -26,6 +26,11 @@ try:
 except Exception:  # noqa: BLE001  启动器不能因为一个辅助模块报错就打不开
     landing_path = lambda *a, **k: "/"  # noqa: E731
 
+try:
+    from version import version_string as _ver_str  # 版本单一来源 backend/version.py
+except Exception:  # noqa: BLE001  同上：启动器对辅助模块的失败免疫
+    _ver_str = lambda: ""  # noqa: E731
+
 
 def rotate_server_log():
     """启动前轮转：旧 server.log 改名为 server.log.<旧文件时间戳>，避免新旧日志混读。"""
@@ -161,7 +166,7 @@ def main():
         print("[看板] 提示：若页面功能异常（如接口 404），说明旧进程代码过老，")
         print("[看板] 请先结束旧 python 进程（任务管理器搜 python），再重新运行本脚本。")
     else:
-        print(f"[看板] 启动统一服务 -> http://127.0.0.1:{PORT}{landing}")
+        print(f"[看板] {_ver_str()} 启动统一服务 -> http://127.0.0.1:{PORT}{landing}")
         # --no-open：浏览器只由本启动器在端口就绪后开一个标签，不与 server 重复弹
         logf = rotate_server_log()
         # server 的 print 全部落到 .status/logs/server.log，崩溃输出可回查；

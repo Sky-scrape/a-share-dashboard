@@ -42,6 +42,7 @@ import trade_cal   # noqa: E402  交易日历判定单一来源（backend/trade_
 import logutil     # noqa: E402  统一 logging（时间戳/级别）
 import fsutil      # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 import http_retry  # noqa: E402  共享重试（backend/http_retry.py）
+import app_config  # noqa: E402  运营常量薄层（backend/app_config.py，方案 S-5）
 
 LOG = logutil.get_logger("ak.rotation")
 
@@ -447,7 +448,10 @@ if __name__ == "__main__":
     ap.add_argument("--date", default=None, help="写入日期 YYYY-MM-DD（默认今天，测试用）")
     ap.add_argument("--force", action="store_true", help="非交易日也采")
     ap.add_argument("--refresh-boards", action="store_true", help="强制刷新板块池")
-    ap.add_argument("--keep-days", type=int, default=120)
+    ap.add_argument("--keep-days", type=int,
+                    default=app_config.get("rotation_keep_days"),
+                    help="daily/intraday 保留天数（默认 120，可被 .status/config.json"
+                         " 的 rotation_keep_days 覆盖）")
     args = ap.parse_args()
     if args.refresh_boards:
         load_board_pool(refresh=True)

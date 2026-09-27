@@ -34,7 +34,7 @@
       blue: T("--blue", "#3D5A80"), accent: T("--accent", "#8C6D1F"), gold: T("--gold", "#8C6D1F"),
       warn: T("--warn", "#B4530A"), red2: T("--red2", "#CE7A6B"), green2: T("--green2", "#5F9B79"),
       text1: T("--text-1", "#21201C"), text2: T("--text-2", "#57534A"), text3: T("--text-3", "#8A8478"),
-      text4: T("--text-4", "#B0AAA0"),
+      text4: T("--text-4", "#9C9689"),   // 回退值随 tokens.css 2026-09-27 对比度修正同步
       line: T("--line", "#DDD5C6"), line2: T("--line-2", "#C4BBA6"), split: T("--split", "#E7E0D2"),
       panel: T("--bg-2", "#FDFBF6"), panel2: T("--bg-3", "#F1ECE1"), hover: T("--hover-row", "#F6F0E2"),
       bg0: T("--bg-0", "#EFEAE0"), bg1: T("--bg-1", "#F6F3EC"),

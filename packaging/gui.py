@@ -437,6 +437,10 @@ def _run(root, argv, keep_console, smoke):
     _trace("import webview ok")
     start_mod = _load_start(root)
     _trace("start module loaded")
+    try:
+        import version as ak_version   # 版本单一来源 backend/version.py（start.py 载入后 backend 已入 sys.path）
+    except Exception:
+        ak_version = None   # 版本缺失只影响标题展示，不阻塞窗口
 
     port = int(_argval(argv, "--port") or os.environ.get("AK_PORT") or 8000)
     own = True
@@ -493,9 +497,11 @@ def _run(root, argv, keep_console, smoke):
 
     # 启动页直显：own=True 时窗口先加载内联启动页（毫秒级 loaded → show），
     # 服务由后台线程 _goto 等就绪后导航过去；own=False（附身模式）服务本就在跑，直达。
+    title = "AK 看板" + ((" " + ak_version.version_string()) if ak_version else "")
+    splash = _SPLASH_HTML.replace("AK 看板", title) if (own and ak_version) else _SPLASH_HTML
     win = webview.create_window(
-        "AK 看板",
-        _SPLASH_HTML if own else url,
+        title,
+        splash if own else url,
         js_api=_ThemeApi(),   # 页面经此上报主题，标题栏跟随染色
         min_size=MIN_SIZE,
         hidden=True,   # 先藏后显：等首屏 loaded 再 show，避免白屏闪

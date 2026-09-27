@@ -19,16 +19,15 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import requests
-
 import config
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BACKEND_ROOT not in sys.path:
     sys.path.insert(0, BACKEND_ROOT)
 
-import em_common  # noqa: E402  东财直连共享封装（backend/em_common.py）
-import fsutil     # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import em_common    # noqa: E402  东财直连共享封装（backend/em_common.py）
+import fsutil       # noqa: E402  原子写盘单一来源（backend/fsutil.py）
+import http_retry   # noqa: E402  出站守卫+重试单一入口（backend/http_retry.py）
 
 os.environ.setdefault("HTTP_PROXY", "")
 os.environ.setdefault("HTTPS_PROXY", "")
@@ -52,8 +51,9 @@ def em_kline(secid, klt, lmt):
 def trading_dates_calendar():
     """hithink 交易日历（8 位），失败退周末判断。"""
     try:
-        cal = requests.get(
+        cal = http_retry.guarded_get(
             "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+            allow_hosts=em_common.EM_HOSTS,
             params={"secid": "1.000001", "klt": "101", "fqt": "0",
                     "lmt": "40", "end": "20500101",
                     "fields1": "f1,f2,f3", "fields2": "f51"},

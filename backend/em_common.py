@@ -8,9 +8,7 @@ rotation/fetch_day.py、rotation/config.py 四处复制（上游改字段/换主
 """
 import os
 
-import requests
-
-import http_retry  # noqa: E402  共享重试（backend/http_retry.py：指数退避+可重试判定）
+import http_retry  # noqa: E402  共享重试+出站守卫单一入口（backend/http_retry.py）
 
 # 直连东财：坏系统代理会导致请求挂起（与 server/providers 同一约定）
 os.environ.setdefault("HTTP_PROXY", "")
@@ -41,8 +39,11 @@ def em_kline_raw(secid, klt, lmt, tries=3, timeout=12,
     def _attempt():
         host = EM_HOSTS[state["i"] % len(EM_HOSTS)]
         state["i"] += 1
-        r = requests.get(f"https://{host}/api/qt/stock/kline/get",
-                         params=params, headers=EM_HEADERS, timeout=timeout)
+        # 每次尝试换一台主机、各自过一次守卫（guarded_get tries=0 不内嵌重试，
+        # 主机轮换由外层 retry 驱动；2026-09-27 起出站统一收口 http_retry.guarded_get）
+        r = http_retry.guarded_get(
+            f"https://{host}/api/qt/stock/kline/get",
+            allow_hosts=EM_HOSTS, params=params, headers=EM_HEADERS, timeout=timeout)
         d = r.json().get("data")
         if d and d.get("klines"):
             return d

@@ -859,6 +859,74 @@ def test_validate_prev_pool_marks_em_source_and_note(monkeypatch):
     assert "全市场日线" in (val["note"] or "") and "备源" in (val["note"] or "")
 
 
+# ------------------------------------------------- 出站守卫入口（O-1 · 2026-09-27）
+
+def test_guarded_get_allows_and_blocks(monkeypatch):
+    """guarded_get：白名单内放行到 requests；白名单外/http 明文在守卫层挡下。"""
+    import netguard
+    import http_retry
+    calls = []
+    monkeypatch.setattr(http_retry.requests, "get", lambda url, **k: calls.append(url))
+    monkeypatch.setattr(netguard.socket, "getaddrinfo",
+                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    hosts = ("push2his.eastmoney.com",)
+    http_retry.guarded_get("https://push2his.eastmoney.com/api", allow_hosts=hosts)
+    assert calls and calls[0].startswith("https://push2his")
+    with pytest.raises(ValueError):   # 白名单外主机
+        http_retry.guarded_get("https://evil.example.com/api", allow_hosts=hosts)
+    with pytest.raises(ValueError):   # http 明文（守卫要求 https）
+        http_retry.guarded_get("http://push2his.eastmoney.com/api", allow_hosts=hosts)
+    assert len(calls) == 1            # 两次拦截都未到达 requests
+
+
+# ------------------------------------------------- 看门狗日志清理（O-4 · 2026-09-27）
+
+def test_watchdog_prune_logs_removes_only_expired(tmp_path, monkeypatch):
+    """prune_logs：只删 mtime 超期文件；新日志与子目录（archive/）不动。"""
+    import time as _time
+    import watchdog
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    old, new = logs / "backfill.log", logs / "fetch-rotation.log"
+    sub = logs / "archive"
+    old.write_text("x")
+    new.write_text("x")
+    sub.mkdir()
+    stale = _time.time() - 40 * 86400
+    os.utime(old, (stale, stale))
+    monkeypatch.setattr(watchdog, "LOGS_DIR", str(logs))
+    removed = watchdog.prune_logs(keep_days=30)
+    assert removed == 1
+    assert not old.exists() and new.exists() and sub.exists()
+
+
+# ------------------------------------------------- 运营常量薄层（S-5 · 2026-09-27）
+
+def test_app_config_defaults_bad_file_and_override(tmp_path, monkeypatch):
+    """app_config：缺文件/坏 JSON 全回落默认；未知键滤掉；合法键覆盖；未知键取值抛。"""
+    import app_config
+    cases = [
+        (str(tmp_path / "missing.json"), None),          # 缺文件
+        (None, "{not json"),                              # 坏 JSON
+    ]
+    for fname, content in cases:
+        p = tmp_path / ("cfg.json" if content is not None else "none.json")
+        if content is not None:
+            p.write_text(content, encoding="utf-8")
+        monkeypatch.setattr(app_config, "CONFIG_PATH", str(p))
+        monkeypatch.setattr(app_config, "_cache", None)
+        assert app_config.get("recap_keep_days") == 400
+        assert app_config.get("logs_keep_days") == 30
+    ok = tmp_path / "ok.json"
+    ok.write_text('{"recap_keep_days": 200, "unknown_key": 1}', encoding="utf-8")
+    monkeypatch.setattr(app_config, "CONFIG_PATH", str(ok))
+    monkeypatch.setattr(app_config, "_cache", None)
+    assert app_config.get("recap_keep_days") == 200   # 合法覆盖
+    assert app_config.get("quant_jobs_keep") == 30    # 未覆盖键仍默认
+    with pytest.raises(KeyError):                     # 未知键必须炸
+        app_config.get("no_such_key")
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))

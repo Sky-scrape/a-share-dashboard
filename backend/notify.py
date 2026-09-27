@@ -32,6 +32,7 @@ import urllib.parse
 import requests
 
 import netguard  # noqa: E402  SSRF 防线单一来源（backend/netguard.py）
+import logutil   # noqa: E402  统一 logging（backend/logutil.py）
 
 os.environ.setdefault("HTTP_PROXY", "")
 os.environ.setdefault("HTTPS_PROXY", "")
@@ -52,13 +53,13 @@ _TIMEOUT = 8                   # 单渠道推送超时（秒）：告警是尽�
 
 
 def _log(msg):
-    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
+    """告警日志：stdout + 追加 .status/logs/notify.log（logutil 统一出口）。
+
+    notify 被 server 巡检线程 / fetch_task / us_close_task / watchdog 多进程共用，
+    notify.log 是跨进程聚合出口，故用 get_file_logger 复合 logger——notify 被
+    哪个进程拉起、推没推成，一个文件看全（2026-09-27 并入 logutil，方案 O-2，
+    此前为手写 open/append，时间戳格式与 stdout 双轨）。"""
+    logutil.get_file_logger("ak.notify", LOG_PATH).info(msg)
 
 
 def _post(host, path, data=None, json_body=None, extra_url=""):
