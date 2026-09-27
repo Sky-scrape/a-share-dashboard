@@ -82,17 +82,12 @@ http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/
 
 ## 更新日志
 
-当前版本 **v1.3.0**（2026-09-27）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
+当前版本 **v1.3.1**（2026-09-27）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
 `version` 字段、桌面窗口标题、exe 产物名三处同源），发布时打同名 git tag。
 完整变更记录见 **[CHANGELOG.md](CHANGELOG.md)**；逐日明细见 git 提交历史。
 
-最近一版（v1.3.0 · 版本与治理批）要点：版本单一来源 + CHANGELOG 建立；SSRF 守卫收拢
-`http_retry`（guarded_get 单一出站入口 + CI 守卫脚本）；notify/watchdog 日志并入 logutil；
-`.status/logs` 杂项日志 30 天自动清理（rotation/screener 保留机制经核实已存在，销项）；
-`providers.py` 拆包、`server.py` 拆 context+handler mixin、复盘页 JS 抽 `app.js`（架构形态
-不变，smoke 防回退检查同步）；hithink CLI 健康探活入 `/api/health`（失败推手机）；
-运营常量薄层 `.status/config.json`；`docs/ARCHITECTURE.md` 架构总览；docs 两份板块 README
-重写为现行路径。
+最近一版（v1.3.1 · 拆分收尾批）要点：五页内联 JS 全部抽出为各页 `app.js`（O-3c 推广，
+零构建不变）；smoke 页面源检查泛化；hithink 断源演练固化为常驻回归。
 
 ## 目录结构（五板块）
 
@@ -160,11 +155,11 @@ A/
 │   ├── rotation/          轮动 daily/*.json（同花顺口径，src=ths）+ intraday/（逐轮原始快照）+ panel/（stats.json + matrix.json）+ boards.json；daily_legacy_eastmoney/ 为东财旧口径归档（不接派生层）
 │   └── global/            global.json（全球总览：15 指数×250日历史 + 雷达 + 双市场热力图）
 ├── web/                 五个页面（顶栏顺序 = 盯盘节奏：竞价 → 轮动 → 复盘 → 全球 → 量化）
-│   ├── auction/index.html 实时竞价（/auction）：阶段状态条 + 竞价热榜（全量渲染/排序/行业标注）+ 高开低开分布 + 板块竞价强度 + 09:25 定盘 + 强势候选/涨停接力/高开兑现/强弱转换 + 异动提醒 + 采集体检 + 单股竞价曲线弹窗 + 观察池编辑
-│   ├── index.html         日内轮动（/，根路径入口）：热力图/回放/榜单/自选/研究面板/板块钻取/双日对比/量价视图/导出小结 + 布局预设 + 新鲜度胶囊；页内 iframe 切复盘
+│   ├── auction/index.html 实时竞价（/auction）：阶段状态条 + 竞价热榜（全量渲染/排序/行业标注）+ 高开低开分布 + 板块竞价强度 + 09:25 定盘 + 强势候选/涨停接力/高开兑现/强弱转换 + 异动提醒 + 采集体检 + 单股竞价曲线弹窗 + 观察池编辑（脚本在 app.js）
+│   ├── index.html         日内轮动（/，根路径入口）：热力图/回放/榜单/自选/研究面板/板块钻取/双日对比/量价视图/导出小结 + 布局预设 + 新鲜度胶囊；页内 iframe 切复盘（脚本在 app.js）
 │   ├── recap/index.html   盘后复盘（/recap）：5 叙事组可折叠 + 情绪指数曲线/涨停池/龙虎榜 + 备选池验证与自我优化卡 + 笔记存服务器 + 投机分析（脚本独立为 app.js，路由 /recap/app.js）
-│   ├── global/index.html  全球总览（/global）：五城时钟 + 世界地图 + 中美轮动雷达 + 美/A 热力图 + 走势图三形态（日内分时/折线/日线K线）
-│   ├── quant/index.html   量化平台（/quant）：六页签工作台—概览/造策略·回测/策略库/选股台/今日信号/参数研究；多策略对比、自包含报告归档直链、行情缓存新鲜度胶囊
+│   ├── global/index.html  全球总览（/global）：五城时钟 + 世界地图 + 中美轮动雷达 + 美/A 热力图 + 走势图三形态（日内分时/折线/日线K线）（脚本在 app.js）
+│   ├── quant/index.html   量化平台（/quant）：六页签工作台—概览/造策略·回测/策略库/选股台/今日信号/参数研究；多策略对比、自包含报告归档直链、行情缓存新鲜度胶囊（脚本在 app.js）
 │   └── lib/
 │       ├── tokens.css     设计 token + 统一顶栏样式（五页共用，晨报/夜台双主题变量）
 │       ├── theme.js       主题状态单一来源（canvas 图表取值 + akthemechange 重绘事件）

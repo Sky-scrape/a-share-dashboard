@@ -159,13 +159,19 @@ def main():
                 parts.append(open(f, encoding="utf-8").read())
             return "\n".join(parts)
 
-        def _recap_page_src():
-            base = os.path.join(ROOT, "web", "recap")
+        def _page_src(*parts):
+            """页面源码 = index.html + 同目录 app.js（2026-09-27 方案 O-3c 起内联 JS
+            逐页抽出为 app.js，静态根 web/ 直接下发；对"检查目标在 html 还是 js"
+            不敏感——app.js 不存在时等价于只读 html）。"""
+            base = os.path.join(ROOT, *parts)
             out = open(os.path.join(base, "index.html"), encoding="utf-8").read()
             appjs = os.path.join(base, "app.js")
             if os.path.isfile(appjs):
                 out += "\n" + open(appjs, encoding="utf-8").read()
             return out
+
+        def _recap_page_src():
+            return _page_src("web", "recap")
 
         _srv2 = _server_src()
         check("轮动采样节拍对齐整分钟（固定 sleep 漂移跳分钟防回退）",
@@ -285,7 +291,7 @@ def main():
               and len(bds.get("industry") or []) >= 80
               and all(str(b.get("code", "")).startswith("881") for b in bds.get("industry") or []),
               f"src={bds.get('src')} n={len(bds.get('industry') or [])}")
-        rot_html = open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8").read()
+        rot_html = _page_src("web")
         rot_py = open(os.path.join(ROOT, "backend", "derive.py"), encoding="utf-8").read()
         st, dts = get(base, "/api/dates")
         check("日K回填后日期列表覆盖 7 月", st == 200 and any(d <= "2026-07-10" for d in (dts or {}).get("dates") or []),
@@ -634,7 +640,7 @@ def main():
         check("recap 笔记走服务器 API", "/api/recap/note" in rp)
         check("recap 引用共享 tokens", "lib/tokens.css" in rp)
 
-        rot = open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8").read()
+        rot = _page_src("web")
         check("rotation 布局预设按钮", rot.count("laybtn") >= 4)
         check("rotation 研究面板", 'id="matrixPanel"' in rot and "/api/rotation-matrix" in rot)
         check("rotation 覆盖度标注", "coverageNote" in rot)
@@ -647,10 +653,9 @@ def main():
         # esc 单一来源（2026-09-04 收敛）：global/quant 旧副本不转义单引号，而龙虎榜/热股
         # 上游文本直接进 innerHTML——那是实际注入面；此后只许 lib/util.js 一处定义
         _usrc = open(os.path.join(ROOT, "web", "lib", "util.js"), encoding="utf-8").read()
-        _esc_holders = [rot] + [
-            open(os.path.join(ROOT, *pp), encoding="utf-8").read() for pp in (
-                ("web", "recap", "index.html"), ("web", "global", "index.html"),
-                ("web", "quant", "index.html"), ("web", "auction", "index.html"))]
+        _esc_holders = [_page_src(*pp) for pp in (
+            ("web",), ("web", "recap"), ("web", "global"),
+            ("web", "quant"), ("web", "auction"))]
         _esc_libs = [
             open(os.path.join(ROOT, "web", "lib", ff), encoding="utf-8").read()
             for ff in ("appbar.js", "freshness.js")]
@@ -678,7 +683,7 @@ def main():
               "header.appbar { flex-wrap: wrap" in _tok and ".panel .head b" in _tok)
         check("rotation 引用共享 tokens", "lib/tokens.css" in rot)
 
-        gp = open(os.path.join(ROOT, "web", "global", "index.html"), encoding="utf-8").read()
+        gp = _page_src("web", "global")
         gids = re.findall(r'\bid="([^"]+)"', gp)
         gdup = {i for i in gids if gids.count(i) > 1}
         check("global 页 id 唯一", not gdup, str(gdup))
@@ -760,7 +765,7 @@ def main():
                   str(qn["backtests"][-1:])[:120])
             check("quant 报告行含指标", (not qn["reports"]) or all(k in qn["reports"][-1] for k in
                   ("name", "window", "cum_ret", "max_dd", "benchmark", "html")), str(qn["reports"][-1:])[:120])
-        qp = open(os.path.join(ROOT, "web", "quant", "index.html"), encoding="utf-8").read()
+        qp = _page_src("web", "quant")
         qids = re.findall(r'\bid="([^"]+)"', qp)
         qdup = {i for i in qids if qids.count(i) > 1}
         check("quant 页 id 唯一", not qdup, str(qdup))
@@ -770,7 +775,7 @@ def main():
         check("quant 页引用共享 tokens", "/lib/tokens.css" in qp)
         check("五页导航均有量化入口", "navQuant" in ab_src and "appbar.js" in rot
               and "appbar.js" in rp and "appbar.js" in gp and "appbar.js" in qp)
-        auc_html = open(os.path.join(ROOT, "web", "auction", "index.html"), encoding="utf-8").read()
+        auc_html = _page_src("web", "auction")
         check("五页导航均有竞价入口", "navAuction" in ab_src and 'active: "/auction"' in auc_html)
         # 竞价量比昨必须读全量存在的 auction_yesterday_ratio_pct（volume_ratio 仅首轮残留偶发，
         # 误用会让强势候选永远 0 命中 —— 2026-09-02 实查修复，防回潮）
@@ -833,7 +838,7 @@ def main():
         st, hth = get(base, "/api/health")
         check("/api/health 含 auction 段", st == 200 and "auction" in (hth or {}),
               str(list((hth or {}).keys()))[:100])
-        ap = open(os.path.join(ROOT, "web", "auction", "index.html"), encoding="utf-8").read()
+        ap = _page_src("web", "auction")
         aids = re.findall(r'\bid="([^"]+)"', ap)
         adup = {i for i in aids if aids.count(i) > 1}
         check("auction 页 id 唯一", not adup, str(adup))

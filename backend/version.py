@@ -12,7 +12,7 @@ README 更新日志自称 v1.0。exe 是分发形态，「拿到的是哪版、�
 根目录 CHANGELOG.md（README 只留最近一版 + 指向）。
 """
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 
 def version_string():

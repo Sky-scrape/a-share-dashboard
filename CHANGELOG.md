@@ -3,6 +3,17 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号单一来源
 `backend/version.py`，发布时打同名 git tag `vX.Y.Z`。逐日开发明细见 git 提交历史。
 
+## [1.3.1] · 2026-09-27 · 拆分收尾批
+
+- **O-3c 推广至全部五页**：继复盘页之后，轮动（/）、竞价、全球、量化四页的内联 JS
+  以同一纪律抽出为各页 `app.js`（逐字符保留 + 字节级对账，CRLF 保持）；web/ 静态根
+  直接下发（`/app.js`、`/auction/app.js`…），零构建架构不变
+- **smoke 页面源检查泛化**：`_page_src()` 读「index.html + 同目录 app.js」拼接源，
+  对检查目标在 html 还是 js 不敏感
+- **S-4 断源演练固化**：新增常驻回归 `test_hithink_down_drill_and_recovery`——桩掉
+  ht CLI 模拟 401 断源 → probe 如实记录 → `hithink.down` 告警含 `auth login` 处置指引
+  → 恢复后告警消失
+
 ## [1.3.0] · 2026-09-27 · 版本与治理批
 
 按 `docs/产品优化方案-20260927.md` 三批落地（版本管理 / 防线加固 / 结构拆分）：

@@ -927,6 +927,34 @@ def test_app_config_defaults_bad_file_and_override(tmp_path, monkeypatch):
         app_config.get("no_such_key")
 
 
+# ------------------------------------------------- hithink 断源演练（S-4 · 2026-09-27）
+
+def test_hithink_down_drill_and_recovery(monkeypatch):
+    """断源演练固化为常驻回归：auth status 失败（key 失效的等效形态，桩掉 ht CLI，
+    不依赖真实 CLI/网络/推送渠道）→ probe 如实记录 → 健康告警触发且带处置指引；
+    恢复后告警消失。"""
+    import types
+    import server_context   # noqa: F401  需要真实 _hithink_probe/_health_alerts 口径
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("ht auth status 失败: 401: token expired (drill)")
+    monkeypatch.setitem(sys.modules, "ht", types.SimpleNamespace(ht=_boom))
+    rec = server_context._hithink_probe()
+    assert rec["present"] is True and rec["ok"] is False
+    assert "401" in (rec.get("error") or "")
+    alerts = server_context._health_alerts({"hithink": dict(rec)})
+    assert "hithink.down" in [k for k, _ in alerts]
+    assert any("auth login" in m for _, m in alerts)   # 处置指引随告警下发
+
+    # 恢复路径：探活成功 → 不再告警
+    monkeypatch.setitem(sys.modules, "ht", types.SimpleNamespace(
+        ht=lambda *a, **k: {"user": "drill", "plan": "pro"}))
+    rec2 = server_context._hithink_probe()
+    assert rec2["ok"] is True
+    assert "hithink.down" not in [k for k, _ in
+                                  server_context._health_alerts({"hithink": dict(rec2)})]
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))
