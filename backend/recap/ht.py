@@ -13,7 +13,6 @@
 import datetime
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -30,7 +29,8 @@ def _exe():
     """定位 hithink-finance 可执行文件（Windows npm 全局是 .cmd）。"""
     global _EXE
     if _EXE is None:
-        _EXE = shutil.which("hithink-finance") or "hithink-finance.cmd"
+        import hithink_cli  # 定位单一来源：PATH 缺 %APPDATA%\npm 时兜底
+        _EXE = hithink_cli.find_exe() or "hithink-finance.cmd"
     return _EXE
 
 

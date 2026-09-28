@@ -82,12 +82,14 @@ http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/
 
 ## 更新日志
 
-当前版本 **v1.3.1**（2026-09-27）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
+当前版本 **v1.3.2**（2026-09-28）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
 `version` 字段、桌面窗口标题、exe 产物名三处同源），发布时打同名 git tag。
 完整变更记录见 **[CHANGELOG.md](CHANGELOG.md)**；逐日明细见 git 提交历史。
 
-最近一版（v1.3.1 · 拆分收尾批）要点：五页内联 JS 全部抽出为各页 `app.js`（O-3c 推广，
-零构建不变）；smoke 页面源检查泛化；hithink 断源演练固化为常驻回归。
+最近一版（v1.3.2 · hithink 定位修复批）要点：注册表用户 PATH 补回 `%APPDATA%\npm`
+（被整段粘贴覆盖而丢失，自启进程找不到 CLI、抓取全断的根因）；新增
+`backend/hithink_cli.py` 定位单一来源（PATH 优先 + npm 目录兜底），start.py 预检、
+ht.py、quant 桥接三处同口径；兜底逻辑固化为常驻回归。
 
 ## 目录结构（五板块）
 

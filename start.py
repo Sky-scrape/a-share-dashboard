@@ -109,8 +109,8 @@ def precheck_deps():
             print(f"!! 缺少依赖 {mod}：请先运行  pip install -r requirements.txt")
             ok = False
     try:
-        import shutil
-        if not (shutil.which("hithink-finance") or shutil.which("hithink-finance.cmd")):
+        from hithink_cli import find_exe  # 与 ht.py 同口径：PATH 缺 %APPDATA%\npm 时兜底
+        if not find_exe():
             print("!! 未找到 hithink-finance CLI（全站主力数据源）：请先  npm install -g hithink-finance")
             print("!!   （看板仍可启动，但复盘/竞价/轮动的抓取都会失败）")
     except Exception:  # noqa: BLE001

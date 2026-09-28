@@ -955,6 +955,37 @@ def test_hithink_down_drill_and_recovery(monkeypatch):
                                   server_context._health_alerts({"hithink": dict(rec2)})]
 
 
+# ------------------------------------------------- hithink CLI 定位兜底（2026-09-28）
+
+def test_hithink_cli_find_exe(monkeypatch, tmp_path):
+    """PATH 缺 %APPDATA%\\npm 的事故形态（2026-09-28）：which 落空时兜底显式查
+    npm 全局目录应能找到；PATH 正常时优先 which；目录真没有则如实返回 None。"""
+    import hithink_cli
+
+    # ① PATH 正常：直接命中，不走到兜底
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    f = fake_bin / "hithink-finance.cmd"
+    f.write_text("@echo off\r\n", encoding="utf-8")
+    f.chmod(0o755)                       # Linux CI 腿 which 需要 X_OK
+    monkeypatch.setenv("PATH", str(fake_bin))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "nope"))
+    # Windows 的 which 按环境变量 PATHEXT 的书写大小写拼扩展名（.CMD），比路径用 normcase
+    assert os.path.normcase(hithink_cli.find_exe()) == os.path.normcase(str(f))
+
+    # ② PATH 落空、APPDATA\npm 下有 → 兜底命中
+    npm = tmp_path / "npm"
+    npm.mkdir()
+    (npm / "hithink-finance.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert hithink_cli.find_exe() == str(npm / "hithink-finance.cmd")
+
+    # ③ 两处都没有 → None（CLI 确实未安装）
+    monkeypatch.setenv("APPDATA", str(tmp_path / "nope"))
+    assert hithink_cli.find_exe() is None
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))

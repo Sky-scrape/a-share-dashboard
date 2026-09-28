@@ -97,3 +97,20 @@ def test_etf_timezone_and_calendar_filter(monkeypatch, tmp_path):
     df = pd.read_parquet(written["588000"])
     assert [str(d.date()) for d in df.index] == ["2024-10-08", "2024-10-09"]
     assert df["pre_close"].iloc[1] == pytest.approx(df["close"].iloc[0])
+
+
+# ------------------------------------------------- CLI 定位兜底（2026-09-28）
+
+def test_find_exe_fallback(monkeypatch, tmp_path):
+    """PATH 缺 %APPDATA%\npm 时兜底显式查 npm 全局目录；真没有则 None。
+    与 backend/hithink_cli.py 同口径（本包独立于 backend，内联版）。"""
+    npm = tmp_path / "npm"
+    npm.mkdir()
+    f = npm / "hithink-finance.cmd"
+    f.write_text("@echo off\r\n", encoding="utf-8")
+    f.chmod(0o755)                       # Linux CI 腿 which 需要 X_OK
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert hithink._find_exe() == str(f)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "nope"))
+    assert hithink._find_exe() is None

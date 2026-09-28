@@ -3,6 +3,19 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号单一来源
 `backend/version.py`，发布时打同名 git tag `vX.Y.Z`。逐日开发明细见 git 提交历史。
 
+## [1.3.2] · 2026-09-28 · hithink 定位修复批
+
+- **根因修复（PATH）**：注册表用户 PATH 补回 `%APPDATA%\npm`——该目录此前被一次
+  整段粘贴的 PATH 覆盖丢失，开机自启/计划任务拉起的进程（只带注册表 PATH）因而
+  定位不到 `hithink-finance` CLI：启动横幅告警「未找到 hithink-finance」，
+  复盘/竞价/轮动抓取全断
+- **定位单一来源**：新增 `backend/hithink_cli.py` `find_exe()`——PATH 优先、
+  兜底显式查 `%APPDATA%\npm`；`start.py` 预检与 `backend/recap/ht.py` 迁入同一
+  口径；quant 桥接（`quant_sim/data/hithink.py`，独立包根无法平级导入）内联同款
+  `_find_exe()`
+- **常驻回归**：`test_hithink_cli_find_exe` / `test_find_exe_fallback` 覆盖
+  PATH 正常 / 兜底命中 / 真未安装 三分支（离线，不依赖真实 CLI）
+
 ## [1.3.1] · 2026-09-27 · 拆分收尾批
 
 - **O-3c 推广至全部五页**：继复盘页之后，轮动（/）、竞价、全球、量化四页的内联 JS

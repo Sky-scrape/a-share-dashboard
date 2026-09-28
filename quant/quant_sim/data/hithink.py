@@ -65,6 +65,24 @@ def _is_index_code(raw: str) -> bool:
     return code in KNOWN_INDEX_CODES
 
 
+def _find_exe() -> Optional[str]:
+    """定位 CLI：PATH 优先，兜底显式查 npm 全局目录（%APPDATA%\\npm）。
+
+    注册表 PATH 缺该目录时（开机自启/计划任务拉起的进程只带注册表 PATH，
+    2026-09-28 实测曾被整段粘贴覆盖丢失），which 落空但文件其实在。
+    与 backend/hithink_cli.py 同口径；本包独立于 backend，无法平级导入故内联。"""
+    exe = shutil.which("hithink-finance") or shutil.which("hithink-finance.cmd")
+    if exe:
+        return exe
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        for name in ("hithink-finance.cmd", "hithink-finance"):
+            cand = os.path.join(appdata, "npm", name)
+            if os.path.isfile(cand):
+                return cand
+    return None
+
+
 def _cli(args: Sequence[str], timeout: int = 300, retries: int = 3) -> dict:
     """执行 hithink-finance CLI 并解析 JSON 输出（末行）。
 
@@ -76,7 +94,7 @@ def _cli(args: Sequence[str], timeout: int = 300, retries: int = 3) -> dict:
     import random
     import time
 
-    exe = shutil.which("hithink-finance") or shutil.which("hithink-finance.cmd")
+    exe = _find_exe()
     if exe is None:
         raise RuntimeError("未找到 hithink-finance CLI，请先安装（见 hithink-finance-shared skill）")
     last_err: Optional[Exception] = None
