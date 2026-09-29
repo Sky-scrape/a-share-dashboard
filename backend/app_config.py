@@ -31,6 +31,12 @@ DEFAULTS = {
 
 _cache = None
 
+# 保留天数/份数的统一下限（2026-09-30 审查）：当前键集全部是「保留多少天/份」
+# 语义，写 0 或负数会让清理 cutoff 落在当前/未来时刻——fetch_daily/ths_collect/
+# watchdog 的清理循环把复盘快照、轮动分时（不可回补）和日志整目录删光。
+# 钳到 ≥1（语义=「至少保留最近 1 天/1 份」）；想清空数据应删数据文件。
+MIN_KEEP = 1
+
 
 def _load():
     global _cache
@@ -51,6 +57,8 @@ def _load():
                 merged[k] = int(merged[k])
             except (TypeError, ValueError):
                 merged[k] = DEFAULTS[k]
+            if merged[k] < MIN_KEEP:
+                merged[k] = MIN_KEEP   # 0/负数一律钳到下限（见 MIN_KEEP 注）
         _cache = merged
     return _cache
 

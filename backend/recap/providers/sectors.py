@@ -70,17 +70,24 @@ def boards():
             pct = None
             if hist and hist[-1]["日期"] == today_s:
                 pct = hist[-1]["涨跌幅"]
-            if pct is None:
+            if pct is None and not _prov.HISTORICAL:
+                # 实时快照兜底仅限当天实时抓取：历史补抓模式（backfill /
+                # fetch --date 历史日）下 index.snapshot 是纯实时接口，把实时
+                # last_price/涨跌幅贴上历史日期标签等于用今天行情冒充历史日，
+                # 会污染回补数据——宁可留空（2026-09-30 修复）
                 pct = _round2(row.get("price_change_ratio_pct"))
             item = {"名称": name, "涨跌幅": pct, "history": hist[-5:]}
-            if not hist or hist[-1]["日期"] != today_s:
-                # 历史缺当天兜底（与旧版逻辑一致）
+            if not _prov.HISTORICAL and (not hist or hist[-1]["日期"] != today_s):
+                # 历史缺当天兜底（与旧版逻辑一致；仅实时模式，理由同上）
                 item["history"] = hist[-4:] + [{
                     "日期": today_s, "收盘价": row.get("last_price"), "涨跌幅": pct}]
             result.append(item)
         if not result:
             return {"status": "error", "error": "ValueError: 行业数据为空"}
-        result.sort(key=lambda x: x["涨跌幅"], reverse=True)
+        # 涨跌幅可能为 None（历史模式下单行业日线失败/数据源缺当天）：
+        # None 直接参与比较会 TypeError 把整模块打挂，沉底处理（与 concepts 同口径）
+        result.sort(key=lambda x: x["涨跌幅"] if x["涨跌幅"] is not None else -999,
+                    reverse=True)
         return {"status": "ok", "data": result}
     except Exception as e:
         return _err(e)

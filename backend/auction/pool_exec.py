@@ -73,21 +73,28 @@ def _series():
 
 
 def _final_round(series):
-    """可信定盘轮：final.json 与 series 同日且 09:26 前抓取（前端 renderFlip 同款门卫）。
+    """可信定盘轮：返回 (定盘轮 or None, 拒因 or None)。
 
-    午后补抓写进 final 的是现价快照（2026-09-04 实测 65/70 只被现价污染），绝不能当
-    09:25 撮合值；不可信时返回 None（判定退回窗口内最后一轮的暂定值，诚实标注）。
+    门卫三道：① final.json 与 series 同日；② 09:26 前抓取——午后补抓写进 final 的是
+    现价快照（2026-09-04 实测 65/70 只被现价污染）；③ 非盘前——09:15 前的 --once 补抓
+    拿到的是上一交易日终态却以今日落盘（auc_collector._pre_market 的 docstring 自认），
+    pre_market 标记或 09:15 前的 fetched_at（旧版文件无标记）都算盘前，绝不能当今日
+    09:25 撮合值给出 final=true 的执行指令（2026-09-30 审查 auction-1）。
+    盘前拒因回传给执行卡展示（payload.final_note）；不可信时判定退回窗口内最后一轮
+    的暂定值，诚实标注。
     """
     try:
         with open(FINAL_PATH, encoding="utf-8") as f:
             fin = json.load(f)
     except Exception:  # noqa: BLE001
-        return None
+        return None, None
     t = str(fin.get("fetched_at") or "")[11:19]
     if fin.get("date") != series.get("date") or not t or t > "09:26:00":
-        return None
+        return None, None
+    if fin.get("pre_market") or t < "09:15:00":
+        return None, "盘前补抓的 final 不作定盘（可能为上一交易日口径）"
     rnd = fin.get("round") or {}
-    return rnd if (rnd.get("items") or []) else None
+    return (rnd if (rnd.get("items") or []) else None), None
 
 
 def _in_window(r):
@@ -118,10 +125,15 @@ def _latest_pcts(series, extra_round=None):
     return out, last_ts, bool(extra_round) and rounds and rounds[-1] is extra_round
 
 
-def _ahead_signal(series, watchmap, extra_round=None):
+def _ahead_signal(series, watchmap, extra_round=None, l_date=None):
     """情绪前瞻：昨日涨停池（watchmap 来源含 L）今日竞价低开/深低开占比。
 
     watchmap 键为完整 thscode（如 601086.SH，auc 侧写入口径），6 位代码兜底一次。
+    l_date：L 池应属的快照日（上一交易日）。auto_pool_rows 在涨停池缺失/冰点时会回看
+    2-3 个快照补 L 标注（条目带 ld=来源快照日），「昨日」口径消费必须剔除旧样本——
+    否则警戒占比会基于几天前的涨停池算出，还挂着「昨涨停池」文案（2026-09-30 审查
+    auction-5）。剔除的旧样本数经 stale/stale_date 回传给前端明示；无 ld 的旧文件
+    按原行为计入（下次采集重建 watchmap 即带 ld，自然收敛）。
     """
     rounds = sorted((r for r in (series.get("rounds") or []) if _in_window(r)),
                     key=lambda r: str(r.get("ts") or ""))
@@ -131,21 +143,35 @@ def _ahead_signal(series, watchmap, extra_round=None):
     if not rounds:
         return None
     items = (rounds[-1].get("items") or [])
-    lu = []
+    lu, stale = [], []
     for it in items:
         tc = str(it.get("thscode") or "")
-        src = str(((watchmap or {}).get(tc)
-                   or (watchmap or {}).get(tc.split(".")[0]) or {}).get("s") or "")
-        if "L" in src:
-            lu.append(it)
+        e = (watchmap or {}).get(tc) or (watchmap or {}).get(tc.split(".")[0]) or {}
+        if "L" not in str(e.get("s") or ""):
+            continue
+        ld = e.get("ld")
+        if l_date and ld and ld != l_date:
+            stale.append((it, str(ld)))
+            continue
+        lu.append(it)
     pcts = [it.get("auction_pct") for it in lu if it.get("auction_pct") is not None]
+    stale_n, stale_date = len(stale), (stale[0][1] if stale else None)
     if not pcts:
-        return None
+        if not stale:
+            return None
+        # 只有旧样本：不给占比数字（旧池算出的「低开 X%」口径失真），只明示标注过期
+        return {"lu_n": 0, "open_down": 0.0, "open_deep": 0.0, "warn": False,
+                "warn_threshold": AHEAD_OPEN_DOWN_WARN, "stale": stale_n,
+                "stale_date": stale_date, "study": AHEAD_STUDY_NOTE}
     down = sum(1 for p in pcts if p < 0) / len(pcts)
     deep = sum(1 for p in pcts if p <= -2) / len(pcts)
-    return {"lu_n": len(pcts), "open_down": round(down, 3), "open_deep": round(deep, 3),
-            "warn_threshold": AHEAD_OPEN_DOWN_WARN,
-            "warn": down > AHEAD_OPEN_DOWN_WARN, "study": AHEAD_STUDY_NOTE}
+    out = {"lu_n": len(pcts), "open_down": round(down, 3), "open_deep": round(deep, 3),
+           "warn_threshold": AHEAD_OPEN_DOWN_WARN,
+           "warn": down > AHEAD_OPEN_DOWN_WARN, "study": AHEAD_STUDY_NOTE}
+    if stale:
+        out["stale"] = stale_n
+        out["stale_date"] = stale_date
+    return out
 
 
 def _window_text(grp):
@@ -167,8 +193,11 @@ def _verdict(grp, pct):
     return "ok", "窗内·挂上穿", "价格上穿 max(开盘,昨收) 再接；收盘站不上不买"
 
 
-def compute(picks, series, watchmap=None, final_round=None):
-    """纯函数：昨日池 picks × 今日竞价 series（+可选可信定盘轮）→ 执行卡 payload。"""
+def compute(picks, series, watchmap=None, final_round=None, l_date=None):
+    """纯函数：昨日池 picks × 今日竞价 series（+可选可信定盘轮）→ 执行卡 payload。
+
+    l_date：L 标注应属的快照日，透传情绪前瞻剔除旧涨停池样本（见 _ahead_signal）。
+    """
     if not picks:
         return {"ok": False, "note": "上一交易日无备选池标的（冰点/缺快照）", "rows": []}
     pcts, last_ts, is_final = _latest_pcts(series, extra_round=final_round)
@@ -185,7 +214,8 @@ def compute(picks, series, watchmap=None, final_round=None):
                      "pct": pct, "kind": kind, "verdict": verdict, "plan": plan})
     return {"ok": True, "rows": rows, "counts": counts,
             "last_ts": last_ts, "final": is_final,
-            "signal": _ahead_signal(series, watchmap, extra_round=final_round),
+            "signal": _ahead_signal(series, watchmap, extra_round=final_round,
+                                    l_date=l_date),
             "note": "窗口=冻结执行层（与验证器/最终方案同一份）；竞价未结束时涨幅为暂定值"}
 
 
@@ -219,10 +249,13 @@ def payload(today8=None):
         except Exception:  # noqa: BLE001
             pass
         series = _series()
-        data = compute(picks, series, watchmap, final_round=_final_round(series))
+        fr, fr_note = _final_round(series)
+        data = compute(picks, series, watchmap, final_round=fr, l_date=pool_date)
         if data.get("ok"):
             data["pool_date"] = pool_date
             data["env_cn"] = pool.get("env_cn")
+            if fr_note:
+                data["final_note"] = fr_note   # 盘前污染警示：执行卡不得把旧口径当定盘
         with _LOCK:
             _CACHE["key"], _CACHE["payload"] = key, data
         return data

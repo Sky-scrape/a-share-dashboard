@@ -4,7 +4,8 @@
 
     1. 撮合昨日提交的委托（next_open：以今日开盘价成交）
     2. T+1 解锁（昨日及以前买入的份额今日可卖）
-    3. 记录当日期初权益，跑风控熔断
+    3. 记录当日权益（按当日收盘估值），跑风控熔断——熔断属收盘后决策，
+       清仓单在 next_open 模式下次日开盘才撮合（与普通信号同口径，杜绝未来函数）
     4. 调用 strategy.on_bar(ctx) —— 策略只能看到截至**昨日**的成交与截至**今日收盘**的行情
     5. 提交委托：close 模式下立即以今日收盘价撮合；next_open 模式下进入队列等明日撮合
     6. 记录当日期末权益、持仓快照
@@ -113,9 +114,14 @@ class Context:
 
     # ---------------------------------------------------------------- 下单
     def buy(self, symbol: str, quantity: float = 0, percent: float = 0.0, limit: Optional[float] = None, reason: str = "") -> Order:
+        """买入。quantity>0 按显式股数；否则 percent>0 按**总权益**（cash+持仓市值）×
+        percent ÷ 现价折算股数——与 target_percent/rebalance 的权益口径一致
+        （现金不足由风控缩量），不是「剩余现金的 percent」。"""
         return self._submit(symbol, Side.BUY, quantity, percent, limit, reason)
 
     def sell(self, symbol: str, quantity: float = 0, percent: float = 0.0, limit: Optional[float] = None, reason: str = "") -> Order:
+        """卖出。quantity>0 按显式股数；否则 percent>0 按**当前持仓股数**×percent 折算
+        （percent=1 即清仓）。"""
         return self._submit(symbol, Side.SELL, quantity, percent, limit, reason)
 
     def target_percent(self, symbol: str, target_percent: float, reason: str = "") -> List[Order]:
@@ -135,7 +141,10 @@ class Context:
             px = self.price(symbol) or self._e.last_price(symbol)
             if not px:
                 return self._e.record_rejected_order(symbol, side, 0, "无行情，无法按金额换算股数")
-            qty = int(self._e.account.cash * percent / px) if side is Side.BUY else int(self.holding(symbol) * percent)
+            # percent 口径单一来源：买入按**总权益**（与 target_percent/rebalance_to 的
+            # equity 口径一致；旧实现按现金折算，持仓状态下两种 API 仓位差可达持仓市值）；
+            # 卖出按当前持仓股数（percent=1 清仓）。现金不足由风控层缩量兜底。
+            qty = int(self.equity * percent / px) if side is Side.BUY else int(self.holding(symbol) * percent)
         return self._e.submit_order(Order(symbol=symbol, side=side, quantity=qty, limit_price=limit, reason=reason))
 
     # ---------------------------------------------------------------- 其它
@@ -292,7 +301,9 @@ class BacktestEngine:
             if self.pending and self.config.execution == "next_open":
                 self._process_pending(bars, date)
 
-            # 3) 期初权益 + 熔断
+            # 3) 权益 + 熔断。equity 实为按**当日收盘**估值（_last_prices 已更新为今日收盘，
+            #    且已含今日开盘撮合结果），并非日初口径——因此熔断属「收盘后决策」，
+            #    next_open 模式下熔断清仓单必须次日开盘才撮合（见 halt 分支）。
             equity_open = self.account.equity(self._last_prices)
             events = self.risk.check_circuit_breaker(date, equity_open, self._peak_equity, self._day_start_equity, self.config.initial_cash)
             for ev in events:
@@ -300,9 +311,12 @@ class BacktestEngine:
                 if ev.action == "halt":
                     self._halted = True
                     ctx = self._ctx(date, bars)
+                    # 熔断依据是**当日收盘**权益（见上），属「收盘后决策」：next_open 模式下
+                    # 清仓单必须进队列等**次日开盘**撮合（与普通信号同口径）。禁止当根 bar
+                    # 立即 _process_pending——那是「用今日收盘才知的信息在今日开盘逃顶」，
+                    # 时间倒置的未来函数，暴跌日会凭收盘信息按开盘价卖出、系统性虚增净值。
+                    # close 模式不受影响：决策与成交同为收盘，仍由第 5 步当日撮合。
                     ctx.flat(reason="max_drawdown_halt")
-                    if self.config.execution == "next_open":
-                        self._process_pending(bars, date)
                 elif ev.action == "reject_buy":
                     self._buy_forbidden = True
 

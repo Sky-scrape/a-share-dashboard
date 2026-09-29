@@ -562,9 +562,26 @@ def strategies_get(name):
 
 def _prune_jobs():
     try:
+        # 只按结果文件计窗口（与 jobs_list 同口径）：*.params.json 每任务多占 1 个
+        # 槽位，会让 30 个窗口实际只容 15 个任务。
         files = sorted((os.path.join(JOBS_DIR, f) for f in os.listdir(JOBS_DIR)
-                        if f.endswith(".json")), key=os.path.getmtime)
+                        if f.endswith(".json") and not f.endswith(".params.json")),
+                       key=os.path.getmtime)
+        # 运行中任务的结果文件 mtime 停在提交时刻（收尾才整体覆写），连发新任务
+        # 会把它挤出窗口 → job_get not_found、任务从历史面板消失。running 且
+        # 24h 内的文件跳过不删；更老的视为孤儿进程残留照删，防 running 文件永久堆积。
+        cutoff = time.time() - 86400
+        to_remove = []
         for f in files[:-JOBS_KEEP]:
+            try:
+                if os.path.getmtime(f) >= cutoff:
+                    with open(f, encoding="utf-8") as fh:
+                        if json.load(fh).get("status") == "running":
+                            continue
+            except (OSError, ValueError):
+                pass  # 读不了/读不出 JSON 的按普通旧文件处理
+            to_remove.append(f)
+        for f in to_remove:
             os.remove(f)
     except OSError:
         pass

@@ -309,10 +309,10 @@ def main():
         if "market_indices" in miss:
             mods["market_indices"] = build_market_indices(idx_series, date)
         if "breadth" in miss:
-            idx = dates_sorted.index(datetime.datetime.strptime(
-                date, "%Y%m%d").strftime("%Y-%m-%d")) if \
-                datetime.datetime.strptime(date, "%Y%m%d").strftime(
-                    "%Y-%m-%d") in dates_sorted else None
+            # daily_map/dates_sorted 键为 8 位日期（duckdb_rows 里 replace("-","")），
+            # 探测必须用同一形态——旧代码误转 'YYYY-MM-DD'，`in dates_sorted` 恒
+            # False，昨日两市成交额永远算不出（2026-09-30 修复）
+            idx = dates_sorted.index(date) if date in dates_sorted else None
             prev_amount = (float(daily_map[dates_sorted[idx - 1]]
                                  ["sh_sz_amount"])
                            if idx and idx > 0 else None)

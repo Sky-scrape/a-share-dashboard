@@ -779,18 +779,21 @@ function setPill(cls, txt) {
   const p = $('gpPill'); p.className = 'fresh-pill ' + cls;
   p.innerHTML = `<span class="dot"></span>${esc(txt)}`;
 }
+/* 返回状态字符串供重抓轮询判定成败：布尔会把「缺失/过期/服务不可达」一律折叠成 false，
+   轮询侧「非 busy 即完成」就会在抓取失败时弹绿色假成功——按真实状态区分 */
 async function checkFresh() {
   try {
     const h = await AK.getJson('/api/health');   // JSON 请求统一走 lib 包装（catch 降级不变）
     const g = h.global || {};
-    if (g.fetching) { setPill('warn', '全球数据抓取中…'); return true; }
-    if (!g.last_date) { setPill('bad', '全球数据缺失'); return false; }
+    if (g.fetching) { setPill('warn', '全球数据抓取中…'); return 'fetching'; }
+    if (!g.last_date) { setPill('bad', '全球数据缺失'); return 'missing'; }
     const age = g.age_hours;
     const bad = age == null || age > (new Date().getDay() % 6 === 0 ? 120 : 60);
-    setPill(bad ? 'bad' : (g.errors && g.errors.length ? 'warn' : 'ok'),
-      `${fmtCn(g.last_date)} · ${age == null ? '-' : age + 'h'}前` + (g.errors && g.errors.length ? ` · ${g.errors.length}项降级` : ''));
-    return false;
-  } catch (e) { setPill('bad', '服务不可达'); return false; }
+    const errs = (g.errors && g.errors.length) || 0;
+    setPill(bad ? 'bad' : (errs ? 'warn' : 'ok'),
+      `${fmtCn(g.last_date)} · ${age == null ? '-' : age + 'h'}前` + (errs ? ` · ${errs}项降级` : ''));
+    return bad ? 'stale' : (errs ? 'degraded' : 'ok');
+  } catch (e) { setPill('bad', '服务不可达'); return 'unreachable'; }
 }
 let fetchTimer = null;
 $('btnFetch').onclick = async function () {
@@ -802,13 +805,30 @@ $('btnFetch').onclick = async function () {
   try {
     const r = await fetch('/api/fetch-global', { method: 'POST' });
     const j = await r.json().catch(() => ({}));
-    if (j.status === 'running') showMsg('已有抓取任务在运行，等待完成…');
-    setPill('warn', '全球数据抓取中…');
-    fetchTimer = setInterval(async () => {
-      const busy = await checkFresh();
-      if (!busy) { clearInterval(fetchTimer); fetchTimer = null;
-        await loadData(); showMsg('全球数据已更新', true); }
-    }, 15000);
+    if (j.status === 'started' || j.status === 'running') {
+      if (j.status === 'running') showMsg('已有抓取任务在运行，等待完成…');
+      setPill('warn', '全球数据抓取中…');
+      fetchTimer = setInterval(async () => {
+        const st = await checkFresh();
+        if (st === 'fetching') return;   // 任务仍在跑：继续等
+        clearInterval(fetchTimer); fetchTimer = null;
+        if (st === 'ok' || st === 'degraded') {
+          try { await loadData(); } catch (e) { showMsg('数据已更新但页面加载失败：' + e); return; }
+          showMsg(st === 'degraded' ? '全球数据已更新，但存在数据降级（见状态胶囊与页脚）' : '全球数据已更新', true);
+        } else if (st === 'missing') {
+          // 不弹成功横幅：loadData 404 分支自带「尚无全球数据：点重新抓取」引导，别盖掉它
+          try { await loadData(); } catch (e) { showMsg('数据加载失败：' + e); }
+        } else {
+          // 任务已结束但数据缺失/过期/服务不可达 = 失败终态（后端 health 无失败字段可判，
+          // 不自动重试避免空转）：如实告知并引导手动重试
+          showMsg(st === 'stale' ? '抓取已结束但数据仍过期，重抓可能失败，点右上角「重新抓取」重试'
+                                 : '服务不可达，无法确认重抓结果；服务恢复后点右上角「重新抓取」重试');
+        }
+      }, 15000);
+    } else {
+      // 启动失败（500 spawn 失败/响应异常）：如实报错、不进轮询——旧版照常起轮询，15s 后必弹假「已更新」
+      showMsg('重抓启动失败：' + (j.error || j.status || ('HTTP ' + r.status)) + '，可稍后重试');
+    }
   } catch (e) { showMsg('重抓请求失败：' + e); }
   this.disabled = false;
 };

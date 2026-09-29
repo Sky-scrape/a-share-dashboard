@@ -201,9 +201,12 @@ def run_once(port, config_path=None):
     if ok:
         if st.get("consecutive_fails"):
             _log(f"恢复：服务已响应（此前连续失败 {st['consecutive_fails']} 次）")
-        _save_state({"ok": True, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                     "consecutive_fails": 0,
-                     "last_restart": st.get("last_restart")})
+        # 2026-09-30 修：成功分支改 update（与失败分支同一模式）——此前用全新
+        # dict 整体覆写，把用户写在同一文件里的 autostart=true 静默抹掉，自愈
+        # 拉起在首次健康探测后必然自关（告警文案还引导用户去写这个文件）。
+        st.update({"ok": True, "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "consecutive_fails": 0})
+        _save_state(st)
         _backup_alert()
         prune_logs()
         return 0

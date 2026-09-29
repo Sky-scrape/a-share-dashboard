@@ -62,6 +62,23 @@ def _log(msg):
     logutil.get_file_logger("ak.notify", LOG_PATH).info(msg)
 
 
+def _safe_float(v, default):
+    """宽松数值解析：None/非数字（如 "6h"）/NaN/inf → default。
+
+    2026-09-30 审查：配置 .status/notify.json 与状态 notify_state.json 都是
+    gitignored 手编文件，写错类型不能在消费端炸——send() 契约「绝不抛错」
+    （watchdog 失联告警裸调本模块，status() 还被 /api/health 直调），本模块
+    内所有数值解析统一走这里（与 app_config 的归一口径一致）。
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if f != f or f in (float("inf"), float("-inf")):
+        return default
+    return f
+
+
 def _post(host, path, data=None, json_body=None, extra_url=""):
     """白名单主机的 https POST。返回 (requests.Response|None, 失败原因|None)。
 
@@ -114,8 +131,9 @@ def status():
         if filled:
             channels.append(name)
     return {"configured": bool(channels), "channels": channels,
-            "min_interval_hours": float(cfg.get("min_interval_hours")
-                                        or DEFAULT_MIN_INTERVAL_H),
+            "min_interval_hours": _safe_float(
+                cfg.get("min_interval_hours") or DEFAULT_MIN_INTERVAL_H,
+                DEFAULT_MIN_INTERVAL_H),
             "config_path": CONFIG_PATH}
 
 
@@ -132,7 +150,7 @@ def _throttled(key, min_h):
     if not key:
         return False
     st = _state()
-    last = float((st.get("keys") or {}).get(key) or 0)
+    last = _safe_float((st.get("keys") or {}).get(key) or 0, 0.0)
     return (time.time() - last) < min_h * 3600
 
 
@@ -142,7 +160,7 @@ def _mark(key):
     st = _state()
     st.setdefault("keys", {})[key] = time.time()
     st["keys"] = {k: v for k, v in st["keys"].items()
-                  if time.time() - float(v) < 7 * 24 * 3600}   # 7 天外的记忆清理
+                  if time.time() - _safe_float(v, 0.0) < 7 * 24 * 3600}   # 7 天外的记忆清理
     st["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
         os.makedirs(STATUS_DIR, exist_ok=True)
@@ -205,7 +223,8 @@ def send(title, text="", key=None, min_interval_hours=None):
     if not st["configured"]:
         return {"sent": False,
                 "reason": "未配置推送渠道（.status/notify.json，模板 backend/notify.example.json）"}
-    if _throttled(key, float(min_interval_hours or st["min_interval_hours"])):
+    if _throttled(key, _safe_float(min_interval_hours or st["min_interval_hours"],
+                                   st["min_interval_hours"])):
         return {"sent": False, "reason": "throttled"}
     text = text or ""
     results = {}

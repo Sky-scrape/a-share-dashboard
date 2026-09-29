@@ -64,6 +64,18 @@ def signal_report(sig: Dict[str, object], name: str = "", note: str = "") -> str
         "",
         f"- 总权益 **{eq:,.0f}** ｜ 现金 {cash:,.0f}（{cash / eq:.1%}）" if eq else "- 权益数据缺失",
     ]
+    # 数据新鲜度兜底：取数链路已把 end 钉到今天（陈旧缓存会自动重导），但本地
+    # hithink 库未 sync / 远端拉取失败时重导后数据依然陈旧——清单照常产出，
+    # 必须在报告里醒目告警，不能只靠总览胶囊（总览不进信号报告）。阈值 4 个
+    # 自然日与概览胶囊的新鲜度变红口径一致，覆盖春节/国庆长假。
+    stale_days = (pd.Timestamp.today().normalize() - pd.Timestamp(d)).days
+    if stale_days > 4:
+        lines += [
+            "",
+            f"> ⚠️ **数据新鲜度告警：行情数据止于 {d}（距今 {stale_days} 天）。**",
+            "> 本清单可能基于陈旧数据生成，请先更新数据（量化页「刷新数据」或 `hithink-finance data sync`）",
+            "> 并重新生成信号，再核对下单！",
+        ]
     pos: pd.DataFrame = sig["positions"]
     if len(pos):
         lines.append(f"- 当前持仓 {len(pos)} 个标的")
@@ -84,13 +96,16 @@ def signal_report(sig: Dict[str, object], name: str = "", note: str = "") -> str
         for _, o in ord_.iterrows():
             px = None
             try:
-                px = float(res.panel.bar(o["symbol"], last).close) if res.panel is not None else None
+                # BarPanel 无 bar() 方法（曾在此 AttributeError 被吞、参考现价恒 '-'），
+                # 用 price_at 取末日收盘；标的当日无行情时返回 None 显示 '-'
+                if res.panel is not None and res.panel.has_symbol(str(o["symbol"])):
+                    px = res.panel.price_at(res.panel.date_index(last), str(o["symbol"]), "close")
             except Exception:
                 pass
             side = "🟢 买入" if "buy" in str(o["side"]).lower() else "🔴 卖出"
             lines.append(f"| {side} | {o['symbol']} | {int(o['quantity'])} | {px if px else '-'} | {o.get('reason', '')} |")
         lines.append("")
-        lines.append("> 参考现价为今日收盘；明日以开盘价撮合，涨跌停封板/资金不足可能被拒单。")
+        lines.append(f"> 参考现价为数据最后交易日（{last.date()}）收盘；明日以开盘价撮合，涨跌停封板/资金不足可能被拒单。")
     if len(pos):
         lines.append("")
         lines.append("## 当前持仓")
@@ -147,7 +162,12 @@ def run_signal_for_name(name: str, codes: Optional[List[str]] = None, start: str
         raise ValueError("存档没记标的池且未传 --codes；信号需要明确数据范围")
     from quant_sim.data.hithink import load_panel as ht_load
 
-    panel = ht_load(list(codes), start=start, adjust="qfq", auto=True)
+    # 盘后信号要求数据新鲜：end 钉到今天，让 _cache_covers 的右界判据生效——
+    # 缓存 last 落后今天即判「未覆盖」→ auto 重导。不传 end 会命中「end 缺省视为
+    # 不设右界」的网页回测快路，本地缓存再旧也直接读盘，清单可能在数周前的
+    # 陈旧数据上静默生成（实盘照单下单，事故级）。
+    today = pd.Timestamp.today().normalize().strftime("%Y-%m-%d")
+    panel = ht_load(list(codes), start=start, end=today, adjust="qfq", auto=True)
     strategy = build_saved(saved, universe=panel.symbols, allow_exec=allow_exec)
     cfg = BacktestConfig(start_date=start, initial_cash=initial_cash,
                          benchmark="000300" if "000300" in panel.symbols else None)

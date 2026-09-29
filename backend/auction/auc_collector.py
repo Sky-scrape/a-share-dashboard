@@ -108,7 +108,11 @@ def _fetch_chunk(chunk, stage):
             mid = len(chunk) // 2
             a, ma, ea = _fetch_chunk(chunk[:mid], stage)
             b, mb, eb = _fetch_chunk(chunk[mid:], stage)
-            return a + b, (ma or mb), (ea or eb)
+            # 两侧错误都要保留：or-合并会让 b 侧坏码静默消失，错误批计数与
+            # 排障信息缺一边（2026-09-30 审查 auction-4；docstring「单只仍错则
+            # 丢弃并记录」的「记录」必须双侧成立）
+            errs = "; ".join(e for e in (ea, eb) if e)
+            return a + b, (ma or mb), errs or None
         return [], None, f"{chunk[:3]}…: {msg[:120]}"
 
 
@@ -248,7 +252,24 @@ def _skip_status(date8, note):
 
 
 def run_once(date8):
-    """手动/盘后补抓：final + benchmark（不进 live 轮询）。"""
+    """手动/盘后补抓：final + benchmark（不进 live 轮询）。
+
+    交易日闸门（fail-closed，口径同 server_handlers_auction._maybe_auto_sector_backfill）：
+    非交易日/日历不可用一律不落盘——09:15 前或非交易日跑到这里，接口返回的都是上一
+    交易日终态（data_status=final，见 _pre_market docstring），以今日 date8 写 final.json
+    会让执行卡把昨日口径当今日定盘、归档把错日数据写进今日归档（2026-09-30 审查
+    auction-2）。与 _timeline 的取舍不同：定时任务日历不可用（None）时继续采，宁可
+    多跑不静默停摆（README 2026-08-31 事故）；手动补抓宁可拒绝，原因写进状态与日志，
+    操作者看到后可等日历恢复再点。
+    """
+    trade = is_trade_today()
+    if trade is not True:
+        reason = ("non-trade-day" if trade is False
+                  else "trade-calendar-unavailable")
+        LOG.info(f"{date8}: 手动补抓跳过（{reason}）：接口返回的是上一交易日终态，"
+              "不能写成今日 final。")
+        _skip_status(date8, f"{reason}：补抓拒绝把上一交易日终态写成今日 final")
+        return
     codes, meta = C.build_watchlist()
     if not codes:
         LOG.info("观察池为空（无自选且无复盘快照），跳过。")
@@ -346,7 +367,9 @@ def _timeline(date8):
     except Exception as e:  # noqa: BLE001
         # 终态抓不到也要把状态写清楚（ok=False + 原因），页面与体检面板才有据可查
         LOG.info(f"[fail] 终态抓取意外失败: {type(e).__name__}: {str(e)[:150]}")
-        C.save_status({"last_run": _now(), "date": date8, "rounds": n_live + 1,
+        # rounds 只计已真实落盘的 n_live：终态没抓到就不存在 +1，虚报会把失败日
+        # 当满轮数日（2026-09-30 审查 auction-3；对照成功路径 375 行，那里 final 已落盘）
+        C.save_status({"last_run": _now(), "date": date8, "rounds": n_live,
                        "mode": "timeline", "ok": False,
                        "note": f"终态抓取异常({type(e).__name__})，无 09:25 定盘"})
         # 终态失败 ≠ 当日无数据：live 轮已在 series/rounds_meta 里，归档按缺省

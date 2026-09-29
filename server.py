@@ -58,7 +58,12 @@ server_context.py——依赖方向 server.py → server_handlers_* → server_c
     - 所有 POST 过写接口闸门：浏览器跨站 POST 的 Origin/Referer 与本服务 Host 不同源 → 403
       （拦 CSRF：恶意网页借用户浏览器打内网接口）；看板页面同源访问与手机 Tailscale 访问不受影响。
     - 非本机来源的无 Origin 客户端（curl/脚本）：配置环境变量 AK_WRITE_TOKEN 后必须携带
-      X-AK-Token 头（或 ?token=）才能写；未配置时行为同旧版（放行），启动横幅会提示如何开启。
+      X-AK-Token 头（或 ?token=）才能写；未配置而绑定非回环地址时，自动生成随机令牌
+      （持久化 .status/lan_token）启用同一闸门——局域网写面不再零鉴权（2026-09-30）。
+    - 入站 Host 校验（2026-09-30）：Host 头必须是本服务合法名（回环/本机地址/
+      AK_ALLOWED_HOSTS 追加），封 DNS rebinding 对 CSRF 同源判定的整体绕过。
+    - 读闸门（2026-09-15 起，do_GET/do_POST 同口径）：配置 AK_READ_TOKEN 后非本机对
+      /api、/data、/quant-results 的全部请求（读+写，POST 亦然）都须携带 token。
 
 设计边界：
 - 全站板块口径统一为同花顺一级行业指数（881xxx，90 个，2026-09-01 起）：轮动采集 backend/rotation/ths_collect.py、竞价板块强度 sector.json、复盘行业模块与钻取、个股行业归属 industry_map.json 全部同一目录同一名单；东财口径仅存归档 daily_legacy_eastmoney/ 与 legacy 脚本，不再接入任何链路与文案。
@@ -70,6 +75,7 @@ server_context.py——依赖方向 server.py → server_handlers_* → server_c
 import argparse
 import os
 import re
+import secrets
 import socketserver
 import sys
 import threading
@@ -86,7 +92,8 @@ if _HERE not in sys.path:
 from server_context import (_HEALTH_SCAN_INTERVAL, _hithink_probe,             # noqa: E402
                             _health_alerts, health_payload, notify,
                             rot_dates, recap_dates, auction_brief,
-                            landing_describe, landing_path)
+                            landing_describe, landing_path,
+                            STATUS_DIR, LAN_TOKEN_FILE, WRITE_TOKEN_ENV)
 from server_handlers_core import HandlerCore          # noqa: E402  公共 HTTP 管线
 from server_handlers_rotation import HandlerRotation  # noqa: E402  轮动域
 from server_handlers_recap import HandlerRecap        # noqa: E402  复盘域
@@ -161,6 +168,8 @@ class Handler(HandlerCore, HandlerRotation, HandlerRecap, HandlerAuction,
 
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path
+        if not self._host_allowed():   # 防 DNS rebinding（CWE-350）：Host 必须指向本服务
+            return self._reject_bad_host()
         if path.startswith(("/api/", "/data/", "/quant-results/")) \
                 and self._read_gate_ok() is None:
             return
@@ -176,6 +185,17 @@ class Handler(HandlerCore, HandlerRotation, HandlerRecap, HandlerAuction,
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+        if not self._host_allowed():   # 防 DNS rebinding（CWE-350）：Host 必须指向本服务
+            return self._reject_bad_host()
+        self._drain_body()   # keep-alive：入口先消费请求体（含拒绝路径，防残留污染下个请求）
+        if getattr(self, "_rejected", False):
+            return   # 体超限：413 已发送、连接已判死，handler 不再执行
+        # 读闸门对 POST 同样生效（与 do_GET 同口径）：配置 AK_READ_TOKEN 后非本机
+        # 对 /api、/data、/quant-results 的全部请求（读+写）都须携带——策略库/回测/
+        # 对比等 POST 数据接口不能只靠写闸门（写闸门未配 AK_WRITE_TOKEN 时放行）。
+        if path.startswith(("/api/", "/data/", "/quant-results/")) \
+                and self._read_gate_ok() is None:
+            return
         for pat, fn in POST_ROUTES:
             m = pat.fullmatch(path)
             if m:
@@ -187,6 +207,34 @@ class Handler(HandlerCore, HandlerRotation, HandlerRecap, HandlerAuction,
 
 class ThreadingServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    # 同时在连上限（2026-09-30）：桌面浏览器（~6 连接）+ 手机 + 轮询脚本余量足够；
+    # 满员后新连接直接关闭不占线程——防「批量慢连接无限占线程」（60s 超时只兜
+    # 单个僵死连接，不限制同时在连数量）。
+    _MAX_CONNS = 32
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._conn_slots = threading.BoundedSemaphore(self._MAX_CONNS)
+
+    def process_request(self, request, client_address):
+        if not self._conn_slots.acquire(blocking=False):
+            self.shutdown_request(request)   # 满员：直接断新连接，不进线程
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            # 线程未启动（如 Thread.start 句柄耗尽抛 RuntimeError）时
+            # process_request_thread 的 finally 不会执行，槽位由本层归还，
+            # 否则每次失败永久减一、32 次后对新连接全部 shutdown_request。
+            # 成功路径的归还仍归 process_request_thread 的 finally，不重复释放。
+            self._conn_slots.release()
+            raise   # 上层 _handle_request_noblock 会 handle_error 并 shutdown_request
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._conn_slots.release()
 
 
 def _health_monitor_loop():
@@ -210,6 +258,39 @@ def _health_monitor_loop():
             sys.stderr.write(f"[health-monitor] {type(e).__name__}: {e}\n")
 
 
+def _ensure_lan_write_token():
+    """非回环绑定时自动启用局域网写鉴权（2026-09-30，原为「未配 token 无条件放行」）。
+
+    未显式配置 AK_WRITE_TOKEN 时生成随机令牌并持久化到 .status/lan_token
+    （重启不变，局域网脚本一次配置长期有效），写进进程环境变量后写闸门即生效：
+    非本机+无 Origin/Referer 的直连客户端（curl/脚本）必须携带 X-AK-Token。
+    浏览器/手机页面同源访问带 Origin，不受影响。显式配置的环境变量永远优先。
+    返回 True 表示本次启用了自动令牌（横幅据此提示）。"""
+    if os.environ.get(WRITE_TOKEN_ENV, "").strip():
+        return False
+    tok = ""
+    try:
+        if os.path.isfile(LAN_TOKEN_FILE):
+            with open(LAN_TOKEN_FILE, encoding="utf-8") as f:
+                tok = (f.readline() or "").strip()
+    except OSError:
+        tok = ""
+    if not tok:
+        tok = secrets.token_urlsafe(24)
+        try:
+            os.makedirs(STATUS_DIR, exist_ok=True)
+            with open(LAN_TOKEN_FILE, "w", encoding="utf-8") as f:
+                f.write(tok + "\n")
+            try:
+                os.chmod(LAN_TOKEN_FILE, 0o600)
+            except OSError:
+                pass
+        except OSError:
+            pass   # 落盘失败也照常启用会话内令牌（本次运行仍受保护，横幅可见值）
+    os.environ[WRITE_TOKEN_ENV] = tok
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(description="A股看板统一服务（竞价/轮动/复盘/全球/量化）")
     ap.add_argument("--host", default="127.0.0.1")
@@ -219,11 +300,15 @@ def main():
     args = ap.parse_args()
 
     if args.host not in ("127.0.0.1", "localhost", "::1"):
-        print("!! 绑定了非本机地址：接口将暴露给局域网。写接口已有跨源防护（Origin/Referer）,")
-        print("!! 但局域网内的脚本直连仍无鉴权；如需收紧，设置环境变量 AK_WRITE_TOKEN=随机串，")
-        print("!! 之后非本机写请求必须携带 X-AK-Token 头。")
-        print("!! 若经内网穿透等远程暴露：建议同时设置 AK_READ_TOKEN=随机串，")
-        print("!! 届时非本机访问 /api、/data 全部数据接口都须携带 X-AK-Token 头或 ?token=。")
+        if _ensure_lan_write_token():
+            print("!! 绑定了非本机地址：已自动启用局域网写鉴权（随机令牌持久化在 .status/lan_token，重启不变）。")
+            print("!!   局域网脚本直连写接口（curl 等）须带 X-AK-Token 头；浏览器/手机页面同源访问不受影响。")
+            print("!!   如想固定令牌，改为设置环境变量 AK_WRITE_TOKEN=随机串（优先于自动令牌）。")
+        else:
+            print("!! 绑定了非本机地址：写接口令牌鉴权已启用（AK_WRITE_TOKEN），非本机写请求须带 X-AK-Token。")
+        print("!! 读接口仍对局域网开放（行情/笔记/健康数据）。若经内网穿透等远程暴露：建议设置")
+        print("!! AK_READ_TOKEN=随机串，届时非本机访问 /api、/data 全部数据接口都须携带 X-AK-Token")
+        print("!! 头或 ?token=（页面暂不透传 token，主要供脚本/反向代理场景）。")
 
     # health 巡检推送线程（0914 事故复盘：「打开看板才知道」→「手机先知道」）
     threading.Thread(target=_health_monitor_loop, daemon=True,

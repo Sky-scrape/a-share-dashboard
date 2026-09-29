@@ -72,6 +72,7 @@ GLOBAL_FETCH_SCRIPT = os.path.join(ROOT, "backend", "global", "fetch_global.py")
 GLOBAL_FETCH_CWD = os.path.join(ROOT, "backend", "global")
 STATUS_DIR = os.path.join(ROOT, ".status")
 LOG_DIR = os.path.join(STATUS_DIR, "logs")
+LAN_TOKEN_FILE = os.path.join(STATUS_DIR, "lan_token")  # 非回环绑定时自动启用的写令牌（持久化，重启不变）
 LOCK_RECAP = os.path.join(STATUS_DIR, "fetch-recap.lock")
 LOCK_ROT = os.path.join(STATUS_DIR, "fetch-rotation.lock")
 LOCK_GLOBAL = os.path.join(STATUS_DIR, "fetch-global.lock")

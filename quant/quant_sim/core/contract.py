@@ -144,8 +144,12 @@ class Contract:
         code = self.clean_symbol(symbol)
         if code in self.limit_overrides:
             return float(self.limit_overrides[code])
-        if code in {self.clean_symbol(k) for k in self.limit_overrides}:
-            return float(self.limit_overrides[code])
+        # 带交易所后缀的键（如 "159915.SZ"，hithink thscode 即此形态）：命中 cleaned
+        # 形态后必须回查**命中的原始键**取值。旧写法按裸 code 取原 dict——能走到这里
+        # 说明 code 必然不是直接键，是确定性 KeyError，撮合/风控路径直接崩。
+        for raw_key, pct in self.limit_overrides.items():
+            if self.clean_symbol(raw_key) == code:
+                return float(pct)
         fund = self.is_fund(code)
         if is_st and not (fund and not self.st_applies_to_etf):
             return float(self.st_limit_pct)

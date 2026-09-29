@@ -10,6 +10,7 @@ from server_context import ...，绝不 import server（防循环）。
 """
 import gzip
 import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -50,6 +51,11 @@ class HandlerCore:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         body, enc = self._maybe_gzip(body)
         self.send_response(status)
+        if self.close_connection:
+            # 请求体无法安全消费时（见 _drain_body）提前判死连接：响应头告知客户端
+            # 断连（send_header("Connection","close") 同时会置 close_connection），
+            # 客户端不再在此连接上追加请求，残留 body 无从污染。
+            self.send_header("Connection", "close")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self._cc("no-store")
         if enc:
@@ -153,10 +159,58 @@ class HandlerCore:
     def _read_json(self, path):
         return _read_json_file(path)
 
-    def _body(self):
+    _MAX_DRAIN = 32 * 1024 * 1024   # 请求体预读上限：超限不读、直接判死连接
+
+    def _drain_body(self):
+        """keep-alive 纪律：do_POST 入口先把请求 body 读完缓冲（self._req_body）。
+
+        HTTP/1.1 同连接串行复用：任何 POST 路径——写闸门 403/401、读闸门 401、
+        抓取 409/200（fetch 系 handler 不读 body）、未知路由 404——只要响应前没把
+        body 消费掉，残留字节就会被同一连接的下一个请求当成请求行（实测 501/400
+        错乱）。统一在 do_POST 入口按 Content-Length 预读，_body() 改从缓冲取，
+        handler 零改动。无法确定长度（chunked）、长度异常或超过 _MAX_DRAIN 时
+        置 close_connection（_json 会随之带 Connection: close），宁可断连也不
+        污染下一请求。
+        """
+        self._req_body = b""
+        self._rejected = False   # 本请求已被拒绝并响应（413），do_POST 据此短路 handler
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            if self.headers.get("Transfer-Encoding"):
+                self.close_connection = True   # chunked 等无法按长度预读
+            return
         try:
-            n = int(self.headers.get("Content-Length") or 0)
-            return json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            n = int(raw)
+        except ValueError:
+            self.close_connection = True
+            return
+        if n <= 0:
+            return
+        if n > self._MAX_DRAIN:
+            # 超限不读（防内存膨胀，2026-09-30）：413 拒绝并判死连接，handler 不再执行
+            self.close_connection = True
+            self._json({"error": "payload too large"}, 413)
+            self._rejected = True
+            return
+        try:
+            data = self.rfile.read(n)
+        except OSError:
+            self.close_connection = True
+            return
+        if len(data) < n:   # 客户端中途断开：流已不可信
+            self.close_connection = True
+        self._req_body = data
+
+    def _body(self):
+        raw = getattr(self, "_req_body", None)
+        if raw is None:   # 防御：未经 do_POST 预读的入口，按旧逻辑自读
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(n)
+            except Exception:
+                return None
+        try:
+            return json.loads(raw.decode("utf-8") or "{}")
         except Exception:
             return None
 
@@ -174,8 +228,10 @@ class HandlerCore:
         1) CSRF：浏览器跨站 POST 必带 Origin（部分场景只带 Referer），与本服务
            Host 不同源 → 403。看板页面同源访问、手机经 Tailscale 同源访问不受影响。
         2) 局域网/外网直连（curl 等无浏览器头的客户端）：非本机来源在配置了
-           AK_WRITE_TOKEN 时必须携带 X-AK-Token 头（或 ?token=）；未配置时保持
-           旧行为放行（启动横幅提示如何开启）。本机来源始终放行。
+           AK_WRITE_TOKEN 时必须携带 X-AK-Token 头（或 ?token=）；绑定非回环
+           地址而未显式配置时，server 启动会自动生成随机令牌并注入环境变量
+           （见 server._ensure_lan_write_token），写面不再零鉴权；仅回环绑定
+           且未配置时保持旧行为放行。本机来源始终放行。
         """
         host = self.headers.get("Host") or ""
         origin = self.headers.get("Origin") or ""
@@ -186,7 +242,7 @@ class HandlerCore:
             if host and src_netloc.lower() != host.lower():
                 self._json({"error": "cross-origin write rejected"}, 403)
                 self.log_message("write rejected: cross-origin %s -> %s %s",
-                                 src_netloc, host, self.path)
+                                 src_netloc, host, self._safe_path(self.path))
                 return None
             return True   # 同源浏览器请求，放行
         # 无 Origin/Referer：非浏览器客户端
@@ -197,10 +253,15 @@ class HandlerCore:
             return True   # 未配置 token：保持旧行为（启动横幅已提示）
         got = (self.headers.get("X-AK-Token") or ""
                or self._query().get("token", [""])[0])
-        if got == token:
+        # 常数时间比较（与读闸门同口径，2026-09-30）：普通 == 在局域网可按计时逐字节爆破。
+        # 编码成 bytes 再比：compare_digest 对含非 ASCII 码点的 str 抛未捕获
+        # TypeError（X-AK-Token 头经 latin-1 解码可含任意码点、?token= 经
+        # parse_qs 可解出非 ASCII），401 会变成连接异常中断；bytes 比较无此
+        # 限制，非 ASCII token 正常判不匹配落 401。
+        if got and hmac.compare_digest(got.encode("utf-8"), token.encode("utf-8")):
             return True
         self._json({"error": "write token required"}, 401)
-        self.log_message("write rejected: missing token %s", self.path)
+        self.log_message("write rejected: missing token %s", self._safe_path(self.path))
         return None
 
     # ---------------- 读接口闸门（2026-09-15，远程暴露场景可选） ----------------
@@ -216,14 +277,79 @@ class HandlerCore:
         token = os.environ.get(READ_TOKEN_ENV, "").strip()
         if not token:
             return True
-        import hmac as _hmac
         got = (self.headers.get("X-AK-Token") or ""
                or self._query().get("token", [""])[0])
-        if got and _hmac.compare_digest(got, token):
+        if got and hmac.compare_digest(got.encode("utf-8"), token.encode("utf-8")):
             return True
         self._json({"error": "read token required"}, 401)
-        self.log_message("read rejected: missing token %s", self.path)
+        self.log_message("read rejected: missing token %s", self._safe_path(self.path))
         return None
+
+    # ---------------- 入站 Host 校验（2026-09-30，防 DNS rebinding · CWE-350） ----------------
+
+    def _host_allowed(self):
+        """Host 头必须指向本服务，否则拒绝。这是 CSRF 同源判定的前置防线：
+
+        rebinding 攻击把攻击者域名 TTL=0 解析到 127.0.0.1，浏览器发来的
+        Origin 与 Host 天然同值，写闸门的「Origin==Host 即同源」判定被整体
+        绕过——所以先校验 Host 本身是否本服务合法名。合法名三类：
+          - 回环（127.0.0.1 / localhost / ::1 / 0.0.0.0）
+          - 本次连接的服务端地址（accepted socket 的 getsockname：手机同
+            Wi-Fi 访问 LAN IP、Tailscale 访问 100.x 段均天然覆盖，DHCP
+            换网也不用维护白名单）
+          - 环境变量 AK_ALLOWED_HOSTS 追加（逗号分隔；内网穿透自有域名用）
+        HTTP/1.0 客户端可不带 Host（rebinding 由浏览器发起必带），空头放行。
+        """
+        host = self.headers.get("Host") or ""
+        if not host:
+            return True
+        hostname = urllib.parse.urlparse(f"//{host}").hostname
+        if not hostname:
+            return False
+        hostname = hostname.lower()
+        if hostname in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+            return True
+        extra = os.environ.get("AK_ALLOWED_HOSTS", "")
+        if extra and hostname in {h.strip().lower() for h in extra.split(",") if h.strip()}:
+            return True
+        try:
+            return hostname == (self.connection.getsockname()[0] or "").lower()
+        except OSError:
+            return False
+
+    def _reject_bad_host(self):
+        # 拒绝发生在 do_POST 的 _drain_body 之前：判死连接，防残留 body 污染
+        # keep-alive 下一请求（与 _drain_body 的 keep-alive 纪律同一口径）。
+        self.close_connection = True
+        self._json({"error": "bad host"}, 403)
+        self.log_message("rejected: bad host %r", self.headers.get("Host") or "")
+
+    # ---------------- 日志脱敏（token 不落盘，2026-09-30） ----------------
+
+    def _safe_path(self, raw):
+        """路径+查询串，token 参数值替换为 ***：拒绝日志与访问日志都会整行写
+        stderr（→ .status/logs/server.log），?token= 是 README 文档化用法，
+        令牌不能明文落盘。"""
+        parts = urllib.parse.urlparse(raw)
+        if not parts.query:
+            return raw
+        q = [(k, "***" if k.lower() == "token" else v)
+             for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)]
+        return urllib.parse.urlunparse(parts._replace(query=urllib.parse.urlencode(q, safe="*")))
+
+    def _safe_requestline(self):
+        parts = (self.requestline or "").split()
+        if len(parts) >= 2:
+            parts[1] = self._safe_path(parts[1])
+            return " ".join(parts)
+        return self.requestline or ""
+
+    def log_request(self, code="-", size="-"):
+        # BaseHTTPRequestHandler 默认把整行 requestline（含 ?token=<真值>）写日志；
+        # 成功请求同样落 server.log，这里脱敏后复用 log_message。字段与位次须与
+        # CPython 默认实现一致：requestline + 状态码 + size（此前漏传 code，访问
+        # 日志的状态码恒为 "-"，200/304/401/403 无法区分）。
+        self.log_message('"%s" %s %s', self._safe_requestline(), str(code), str(size))
 
     # ---------------- 后台抓取（各 fetch POST 与自愈共用） ----------------
 
@@ -243,11 +369,15 @@ class HandlerCore:
             return True
         with _PROC_LOCK:
             proc = _fetch_procs.get(key)
-            if proc is not None and proc.poll() is None:
-                if respond:
-                    self._json({"status": "running"}, 409)
-                return True
-            _fetch_procs[key] = None   # 占位：同 key 并发请求在此等价于「已在跑」
+            running = proc is not None and proc.poll() is None
+            if not running:
+                _fetch_procs[key] = None   # 占位：同 key 并发请求在此等价于「已在跑」
+        if running:
+            # 409 写 socket 必须在锁外（上方锁纪律）：慢客户端阻塞发送时不能拖住
+            # _PROC_LOCK，否则 health 轮询与全部抓取接口的进程簿记一并卡死。
+            if respond:
+                self._json({"status": "running"}, 409)
+            return True
         try:
             os.makedirs(os.path.dirname(logfile), exist_ok=True)
             log = open(logfile, "a", encoding="utf-8")

@@ -93,9 +93,12 @@ def _sent_day_feat(d):
     mod = snap.get("modules") or {}
     # 模块级失败闸（2026-09-14 审查）：核心模块 status=error 时该日返回 None（跳过，
     # 不进情绪序列）——否则异常会被当 0 处理，把假 0 静默算进情绪指数/晋级率。
+    # 2026-09-30 修：循环变量原遮蔽同名 mtime 变量 m，模块 dict 被当 mtime 存进
+    # 缓存，(date, mtime) 命中判断 dict==float 恒 False，缓存永不命中、每轮全量
+    # 重解析——改名 mod_st，m 保持为快照文件的 float mtime。
     for need in ("limit_up_pool", "limit_down_pool", "breadth"):
-        m = mod.get(need)
-        if m is not None and str(m.get("status") or "") not in ("", "ok"):
+        mod_st = mod.get(need)
+        if mod_st is not None and str(mod_st.get("status") or "") not in ("", "ok"):
             return None
     zt_rows = (mod.get("limit_up_pool") or {}).get("data") or []
     max_lb = 0

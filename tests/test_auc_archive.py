@@ -136,7 +136,10 @@ def test_n8_path_and_int_date(iso):
 
 
 def test_n9_integration_real_data_copies(iso, monkeypatch):
-    """集成：真实 data/auction 产物复制到 tmp 后完整归档-读回（不触碰生产文件）。"""
+    """集成：真实 data/auction 产物复制到 tmp 后完整归档-读回（不触碰生产文件）。
+
+    2026-09-30 审查 auction-2 起，build_archive 校验产物内部 date 与归档日一致，
+    故复制时把带日期字段的产物归一到归档日（内容仍真实），混合旧日期会被跳过。"""
     src = C.DATA_DIR
     names = [n + ".json" for n in auc_archive.FILES]
     have = {n: os.path.exists(os.path.join(src, n)) for n in names}
@@ -148,6 +151,8 @@ def test_n9_integration_real_data_copies(iso, monkeypatch):
     for n in names:
         with open(os.path.join(src, n), encoding="utf-8") as f:
             obj = json.load(f)
+        if isinstance(obj, dict) and obj.get("date"):
+            obj["date"] = "20260924"
         fsutil.save_json_atomic(os.path.join(str(tmp_data), n), obj)
     monkeypatch.setattr(C, "load_json",
                         lambda name: json.load(open(os.path.join(str(tmp_data), name),
@@ -158,6 +163,20 @@ def test_n9_integration_real_data_copies(iso, monkeypatch):
     assert back["v"] == 1 and back["date"] == "20260924"
     n_rounds = len(back["files"]["series"]["rounds"])
     assert n_rounds == len(back["files"]["rounds_meta"]["rounds"]) > 0
+
+
+def test_n10_build_archive_skips_wrong_date(iso):
+    """auction-2：产物内部日期与归档日不符时跳过，不把错日数据写进今日归档。
+
+    场景即「非交易日/盘前把上一交易日终态错落成今日」的兜底：归档 date8=今日、
+    工作区还是上一交易日内容——跳过并告警，而不是幂等覆盖出一个错日归档文件。"""
+    FIX.clear(); FIX.update(SIX)
+    FIX["series"] = {"date": "20260918", "rounds": [{"label": "09:15:30"}]}
+    FIX["final"] = {"date": "2026-09-18", "round": {"count": 2}}   # 带横杠格式也按数字比
+    p = auc_archive.build_archive("20260925")
+    assert "series" not in p["files"] and "final" not in p["files"]
+    assert set(p["files"]) == set(SIX) - {"series", "final"}   # benchmark/sector/watchmap 照收
+    assert p["date"] == "20260925"
 
 
 # ---------------------------------------------------------------- TC 组：F1/F2 修复行为

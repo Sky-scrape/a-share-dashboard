@@ -32,15 +32,18 @@ def _safe_dst(dst: str) -> str:
     return dst
 
 
-def _replace_retry(tmp: str, dst: str) -> None:
-    for i in range(_REPLACE_RETRIES):
+def _replace_retry(tmp: str, dst: str, retries: Optional[int] = None,
+                   wait: Optional[float] = None) -> None:
+    n = _REPLACE_RETRIES if retries is None else retries
+    w = _REPLACE_RETRY_WAIT if wait is None else wait
+    for i in range(n):
         try:
             os.replace(tmp, dst)
             return
         except OSError:
-            if i == _REPLACE_RETRIES - 1:
+            if i == n - 1:
                 raise
-            time.sleep(_REPLACE_RETRY_WAIT)
+            time.sleep(w)
 
 
 def _atomic_write(dst: str, write_fn: Callable[[IO], None],
@@ -77,3 +80,27 @@ def save_json_atomic(path: str, obj: Any, indent: Optional[int] = None,
     text = json.dumps(obj, ensure_ascii=ensure_ascii, indent=indent,
                       sort_keys=sort_keys, default=default)
     return save_text_atomic(path, text, encoding=encoding)
+
+
+def save_bytes_atomic(path: str, data: bytes) -> str:
+    """二进制原子写（parquet 等已编码 payload 用；与 backend/fsutil.py 同名同语义，
+    2026-09-30 为 hithink 共享目录 parquet 原子写补齐——直写覆写会让并发的
+    read_parquet 读到撕裂文件）。
+
+    replace 重试用比文本写更长的窗口（20×100ms）：JSON 读方是「with open 短暂
+    读」，pyarrow 读 parquet 持句柄可达几十至几百毫秒——50ms×3 实测在高频
+    并发覆写下仍 PermissionError（WinError 5）。默认骨架的重试参数不变。"""
+    dst = _safe_dst(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst),
+                               prefix=f".{os.path.basename(dst)}.tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        _replace_retry(tmp, dst, retries=20, wait=0.1)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return dst

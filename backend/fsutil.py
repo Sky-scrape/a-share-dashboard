@@ -19,9 +19,11 @@ Path/str 路径与内容，不再各自拼 tmp/replace。
 
 【fork 注记（2026-09-27 方案 M-2）】quant/quant_sim/core/fsutil.py 是本模块的
 **有意的同构副本**：quant_sim 是独立包、不反向依赖 backend（其文件头有同样的
-声明）。两边落盘产物逐字节兼容；分叉点只有——本模块多 save_bytes_atomic /
-save_gzip_json_atomic（快照归档用），quant 侧多类型标注与公共写入骨架。
-修改 replace/重试/临时文件语义时必须同步两边。
+声明）。两边落盘产物逐字节兼容；分叉点——本模块多 save_gzip_json_atomic
+（快照归档用）；2026-09-30 起 quant 侧补齐了同名 save_bytes_atomic（hithink
+共享目录 parquet 原子写用），但其 replace 重试用更长窗口（20×100ms，pyarrow
+读句柄比 JSON 读方长），本模块仍为 3×50ms——两边 `_replace_retry` 默认行为
+一致，仅 quant 侧新增可选参数。修改 replace/重试/临时文件语义时必须同步两边。
 """
 import gzip
 import json

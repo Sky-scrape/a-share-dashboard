@@ -154,7 +154,10 @@ class BarPanel:
                 elif field_name == "amount":
                     mat[:] = 0.0
             arrays[field_name] = mat
-        # pre_close 缺失时用上一交易日收盘（前复权口径下等价于真实涨跌幅基准）
+        # pre_close 缺失时用上一交易日收盘（前复权口径下等价于真实涨跌幅基准）。
+        # 兜底对 ffill 后的收盘序列取 shift(1)：停牌行 close 为 NaN，直接 shift 会让
+        # 复牌日取到停牌行 NaN → 复牌日昨收缺失 → 引擎按当日收盘当昨收，涨跌停
+        # 永不触发、复牌一字板放行。ffill 跳过停牌行=真实昨收（停牌期间无成交）。
         pc = arrays.get("pre_close")
         close = arrays["close"]
         if pc is None:
@@ -163,12 +166,12 @@ class BarPanel:
         if empty:
             pc[:, :] = np.nan
             for j in range(close.shape[1]):
-                series = pd.Series(close[:, j])
+                series = pd.Series(close[:, j]).ffill()
                 pc[:, j] = series.shift(1).to_numpy()
         else:
             for j in range(close.shape[1]):
                 mask = np.isnan(pc[:, j]) & ~np.isnan(close[:, j])
-                series = pd.Series(close[:, j])
+                series = pd.Series(close[:, j]).ffill()
                 pc[mask, j] = series.shift(1).to_numpy()[mask]
         arrays["pre_close"] = pc
         panel = cls(dates, symbols, arrays, metadata)

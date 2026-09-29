@@ -57,6 +57,16 @@ async function loadDay(date){
     DATA = await r.json(); demoMode = false;
     DATA._etag = (r.headers && r.headers.get) ? (r.headers.get('ETag') || null) : null;
   }catch(e){
+    // 失败 ≠ 无数据：网络瞬断/后端重启/手选缺失日期（404）都会进这里。手头已有真实数据时
+    // 绝不整体替换成 genDemo 的捏造行情（真实板块名拼的伪走势会被当成实时行情看），也不停摆——
+    // badge 如实标注失败并保留上次数据，轮询下一拍自动重试；仅启动期（尚无任何数据）才落演示模式。
+    if (demoMode) return;   // 已在演示模式且仍未取到数据：保持现状，不每拍重绘演示页
+    if (DATA) {
+      const b = $('modeBadge');
+      if (b) { b.textContent = '加载失败：' + (e.message || e) + '（仍展示 ' + DATA.date + ' 真实数据）'; b.className = 'badge demo'; }
+      flashStat('行情加载失败（' + (e.message || e) + '），仍展示 ' + DATA.date + ' 的真实数据，恢复后自动刷新');
+      return;
+    }
     DATA = genDemo(); demoMode = true;
   }
   lastSigKey = '';      // 手动切换日期：重置告警信号基准
@@ -1035,7 +1045,7 @@ function checkPersistentAlert(){
 let histView = false;   // 用户是否正在主动浏览历史日（是则 autoTick 不跨日强拉回今天）
 async function autoTick(){
   if (document.hidden) return;   // 后台标签页停轮询（竞价页同先例；回前台 visibilitychange 立即补拉一次）
-  if (demoMode) return;
+  if (demoMode) { loadDay(); return; }   // 演示模式持续探测：采集任务跑出当日数据后自动恢复真实视图（旧 return 短路 = 永久停摆，只能手动刷新）
   if (DATA.date !== localToday()) {
     if (!histView) loadDay();   // 跨日/新交易日：整页自动跳到最新日（旧 bug：直接 return，页面永远停在前一日）
     return;
@@ -1048,6 +1058,9 @@ async function autoTick(){
     if (r.status === 304) { checkWatchAlert(); return; }
     if (!r.ok) return;
     const j = await r.json();
+    // 在途期间用户可能已点日历切到历史日（onChange 设 histView 并 loadDay）：
+    // 过期响应不得覆盖用户正在看的日期，否则整页+日历被拽回今天
+    if (histView || DATA.date !== localToday()) return;
     if (!j.fetched_at || (DATA.fetched_at && j.fetched_at === DATA.fetched_at)) {
       checkWatchAlert();
       return;

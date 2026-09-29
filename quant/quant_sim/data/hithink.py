@@ -10,7 +10,9 @@
     —— qfq/hfq 序列相邻两日之比恒等于真实涨跌幅，除权日也成立，
        因此 ±10%/20% 涨跌停判定与除权参考价一致，无需因子表
   * 停牌 = 当日整行缺失（库里 volume=0 行为 0 条，已验证）
-  * raw 视图自带 prev_close 但有空洞，桥接层统一用 shift 补齐
+  * raw 视图的 prev_close 列实测全空（仅 schema 存在、无数据），桥接层统一用
+    shift(1) 补齐——除权日会把分红/送转跳空当成真实跌幅（当日涨跌停价与涨幅类
+    计算失真），故 raw 导出时打印告警；生产口径请用 qfq/hfq（相邻比值守恒）
 
 已知限制：
   * 本地库无 ETF/LOF/指数（asset_type 仅 a-share）——ETF 需另行接入（akshare 或
@@ -27,13 +29,17 @@ CLI：
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
 import subprocess
+import tempfile
 from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
+
+from ..core.fsutil import save_bytes_atomic
 
 _VIEW = {"qfq": "v_daily_qfq", "hfq": "v_daily_hfq", "raw": "v_daily"}
 
@@ -151,6 +157,18 @@ def _quote(value: str) -> str:
     return str(value).replace("'", "''")
 
 
+def _write_parquet_atomic(frame: pd.DataFrame, path: str) -> None:
+    """parquet 原子写：内存缓冲 → fsutil.save_bytes_atomic（同目录随机临时文件
+    + os.replace 短重试，读者要么旧文件要么新文件）。
+
+    共享目录 data/cn_a/daily 会被 server 同步回测线程与后台任务子进程并发
+    读/写：to_parquet 直写覆写时，并发的 read_parquet 会读到撕裂文件
+    （ArrowInvalid 'Parquet magic bytes not found' 等）直接炸穿回测请求。"""
+    buf = io.BytesIO()
+    frame.to_parquet(buf)
+    save_bytes_atomic(path, buf.getvalue())
+
+
 def export_daily(
     symbols: Sequence[str],
     start: str = "2018-01-01",
@@ -163,6 +181,15 @@ def export_daily(
         raise ValueError(f"adjust 只支持 {list(_VIEW)}")
     if not symbols:
         raise ValueError("symbols 为空")
+    if adjust == "raw":
+        # raw 是未复权序列，pre_close 只能 shift(1) 推算（库表 prev_close 列无数据）：
+        # 除权日会把分红/送转跳空当成真实跌幅，当日涨跌停价与涨幅类计算失真且无法
+        # 自动识别。qfq/hfq 不受影响（复权序列相邻比值守恒）。导出可用，但必须让
+        # 用户知道这个口径坑，不能静默。
+        print(
+            "[warn] adjust=raw：未复权 pre_close 为上一收盘 shift 推算，除权日涨跌幅/涨跌停价失真"
+            "（无运行时识别）；生产回测请用 qfq 或 hfq。"
+        )
     view = _VIEW[adjust]
     codes = [str(s).split(".")[0] for s in symbols]
     code_list = ",".join(f"'{_quote(c)}'" for c in dict.fromkeys(codes))
@@ -176,10 +203,20 @@ def export_daily(
     from .manifest import entry_for, update_manifest
 
     _man_entries: Dict[str, dict] = {}
-    tmp = os.path.join(out_dir, "_hithink_export.parquet")
-    result = _cli(["db", "export", "--sql", sql, "--file-format", "parquet", "--output", tmp], timeout=600)
-    df = pd.read_parquet(tmp)
-    os.remove(tmp)
+    # CLI 中间产物放系统临时目录 + mkstemp 随机名：曾用共享目录固定名
+    # _hithink_export.parquet，两个并发导出进程互写同一文件（PermissionError/
+    # 撕裂/消失），且导出窗口内会被数据目录的 *.parquet glob 误认成一个"标的"。
+    fd, tmp = tempfile.mkstemp(prefix="_hithink_export_", suffix=".parquet")
+    os.close(fd)
+    os.remove(tmp)  # 留名不留文件：CLI 对已存在文件的覆写策略不可控
+    try:
+        result = _cli(["db", "export", "--sql", sql, "--file-format", "parquet", "--output", tmp], timeout=600)
+        df = pd.read_parquet(tmp)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
     if df.empty:
         raise RuntimeError(f"导出 0 行：检查代码是否正确/日期区间是否在库范围内（{coverage()}）")
     df["ticker"] = df["thscode"].str.slice(0, 6)
@@ -193,7 +230,7 @@ def export_daily(
             ["open", "high", "low", "close", "volume", "amount", "pre_close", "is_st"]
         ].astype({"is_st": "bool"})
         path = os.path.join(out_dir, f"{ticker}.parquet")
-        frame.to_parquet(path)
+        _write_parquet_atomic(frame, path)
         written[ticker] = path
         _man_entries[f"{ticker}.parquet"] = entry_for(
             frame, adjust=adjust, source=f"hithink-local:{view}",
@@ -437,7 +474,7 @@ def export_etf_daily(
                     p = float(frame["close"].loc[d]) / float(frame["pre_close"].loc[d]) - 1
                     print(f"  [warn] {code} {pd.Timestamp(d).date()} 涨跌幅 {p:+.1%} 超出 ±{lim:.1%} 容差（疑似厂商错价，已保留原始数据）")
         path = os.path.join(out_dir, f"{code}.parquet")
-        frame.to_parquet(path)
+        _write_parquet_atomic(frame, path)
         written[code] = path
         note = f"{n_div}笔分红复权" if n_div else ("已含派息复权" if already else ("未复权" if not adjust_dividends else "无分红记录"))
         _man_entries[f"{code}.parquet"] = entry_for(
@@ -510,7 +547,7 @@ def export_index_daily(
         frame["pre_close"] = frame["close"].shift(1)
         frame["is_st"] = False
         path = os.path.join(out_dir, f"{code}.parquet")
-        frame.to_parquet(path)
+        _write_parquet_atomic(frame, path)
         written[code] = path
         from .manifest import entry_for as _entry, update_manifest as _upd
 

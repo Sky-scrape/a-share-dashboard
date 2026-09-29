@@ -161,7 +161,10 @@ def _run(args, date):
             pp = snapio.load(prev_dates[0], DATA_DIR) or {}
             rows = pp.get("modules", {}).get("limit_up_pool", {}).get("data", []) or []
             prev_zt = {
-                "date": prev_dates[-1],
+                # list_dates 倒序（最新在前）：取数用的是 prev_dates[0]（最近一
+                # 交易日），日期标签必须同源——旧代码误取 prev_dates[-1]（约 9
+                # 个月前的最老快照日期），标签与数据来源错位（2026-09-30 修复）
+                "date": prev_dates[0],
                 "zt_codes": [str(r["代码"]) for r in rows if r.get("代码") is not None],
                 "zt_count": len(rows),
                 "max_lb": max((int(r.get("连板数") or 0) for r in rows), default=0),

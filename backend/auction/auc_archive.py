@@ -17,6 +17,7 @@
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -46,15 +47,28 @@ def archive_path(date8):
 def build_archive(date8, load=None):
     """组装归档 payload；缺失的产物按缺省跳过（只收当日真实落盘的部分）。
 
+    带内部 date 的产物（final/series/rounds_meta/sector 及上游给日期的 benchmark）
+    日期与归档日不符时跳过：工作区在次日 09:14 才覆盖式落盘，此前对今日调归档
+    会把上一交易日的数据错标成今日（幂等覆盖，且文件名按日命名会被未来回测直接
+    取用）——日期比对只取数字（口径同 trade_cal，容忍带横杠格式）；
+    watchmap 无日期字段，无从校验照收（2026-09-30 审查 auction-2）。
+
     load 可注入（测试用），缺省走 auc_config.load_json。
     """
     load = load or C.load_json
+    date8 = str(date8)
     files = {}
     for name in FILES:
         obj = load(name + ".json")
-        if obj is not None:
-            files[name] = obj
-    return {"v": ARCHIVE_VERSION, "date": str(date8),
+        if obj is None:
+            continue
+        inner = re.sub(r"\D", "", str((obj or {}).get("date") or ""))
+        if inner and inner != date8:
+            LOG.warning(f"[archive] {date8}: 跳过 {name}.json"
+                        f"（内容日期 {inner} 与归档日不符，不把错日数据写进今日归档）")
+            continue
+        files[name] = obj
+    return {"v": ARCHIVE_VERSION, "date": date8,
             "archived_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "files": files}
 

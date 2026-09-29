@@ -76,7 +76,11 @@ function renderFreshness(slotId) {
     return html;
   }
 
-  function closePop() { if (pop) { pop.remove(); pop = null; } }
+  var awayHandler = null;   // 外部点击关闭监听：由 closePop 统一摘除，任何关闭路径（胶囊再点/重抓按钮/点外部）都不泄漏
+  function closePop() {
+    if (pop) { pop.remove(); pop = null; }
+    if (awayHandler) { document.removeEventListener("click", awayHandler); awayHandler = null; }
+  }
   function openPop(h) {
     closePop();
     pop = document.createElement("div");
@@ -88,9 +92,10 @@ function renderFreshness(slotId) {
     if (rBtn) rBtn.onclick = function () { fetch("/api/fetch-rotation", { method: "POST" }).then(function () { closePop(); }); };
     if (cBtn) cBtn.onclick = function () { fetch("/api/fetch", { method: "POST" }).then(function () { closePop(); }); };
     setTimeout(function () {
-      document.addEventListener("click", function away(e) {
-        if (pop && !pop.contains(e.target) && !slot.contains(e.target)) { closePop(); document.removeEventListener("click", away); }
-      });
+      awayHandler = function (e) {
+        if (pop && !pop.contains(e.target) && !slot.contains(e.target)) closePop();   // 摘除逻辑收拢在 closePop
+      };
+      document.addEventListener("click", awayHandler);
     }, 0);
   }
 

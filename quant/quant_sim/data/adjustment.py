@@ -53,8 +53,12 @@ def clean_bars(
         out.loc[out["volume"].fillna(0) <= 0, ["open", "high", "low", "close", "volume"]] = np.nan
     out["amount"] = out["amount"].fillna(0.0)
     out["volume"] = out["volume"].astype("float64")
-    # 昨收：优先用数据自带，缺失则用上一交易日收盘（同股）
-    out["pre_close"] = out["pre_close"].where(out["pre_close"] > 0, out["close"].shift(1))
+    # 昨收：优先用数据自带，缺失则用上一交易日收盘（同股）。
+    # 兜底取 close.ffill().shift(1) 而非 close.shift(1)：volume<=0 的停牌行 OHLC
+    # 已被置 NaN，直接 shift 会在复牌日取到停牌行的 NaN → 复牌日昨收缺失 →
+    # 引擎回退用当日收盘当昨收，涨跌停价永远不触发，复牌一字板封板判定失效
+    # （真实买不进的封板单被成交）。ffill 跳过停牌行取停牌前最后有效收盘=真实昨收。
+    out["pre_close"] = out["pre_close"].where(out["pre_close"] > 0, out["close"].ffill().shift(1))
     if symbol:
         out["symbol"] = symbol
     return out
@@ -73,7 +77,10 @@ def apply_adjustment(
     """用复权因子调整价格列。
 
     约定 `adj_factor` 为**累计后复权因子**（越大代表历史除权越多），
-    满足：hfq_price = raw_price × adj_factor / adj_factor[base]。
+    满足：hfq_price = raw_price × adj_factor / adj_factor[base]，base 为锚定日处的因子：
+      * hfq（后复权）：base 默认取**最早**有效因子——历史是不变量，锚点日价格 = raw；
+      * qfq（前复权）：base 默认取**最新**有效因子——最新价不动，历史价整体缩小；
+      * `base_date` 显式指定锚点（两模式通用）：锚点日价格 = raw，其余按因子比缩放。
     若你手上是「除权除息比例表」，先用 `factor_from_ratios` 转成累计因子。
     """
     mode = (mode or "qfq").lower()
@@ -83,10 +90,13 @@ def apply_adjustment(
     f = pd.to_numeric(adj_factor, errors="coerce").reindex(out.index).ffill().bfill()
     if f.isna().all():
         return out
-    if mode == "hfq":
-        base = f[f.last_valid_index()] if base_date is None else f.loc[:base_date].dropna().iloc[-1]
+    if base_date is not None:
+        # 显式锚点：两模式同一语义——锚定 base_date 处因子，锚点日价格 = raw
+        base = f.loc[:base_date].dropna().iloc[-1]
+    elif mode == "hfq":
+        base = f.iloc[0]   # 锚定最早因子：后复权，历史价随因子放大（不变量，可复现）
     elif mode == "qfq":
-        base = f[f.last_valid_index()]
+        base = f.iloc[-1]  # 锚定最新因子：前复权，历史价整体缩小
     else:
         raise ValueError(f"未知复权方式: {mode}")
     ratio = (f / base).to_numpy(dtype=float)

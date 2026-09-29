@@ -18,10 +18,12 @@
     industry_map.json {built_at, date8, industries, stocks, map: {thscode: 一级行业}}
                    由 auc_industry 扫 90 个一级行业成分维护；build_watchlist 落盘时用它
                    回填缺失行业，server 展示层再对 items 老池代码内存兑底（不回写）。
-    watchmap.json  {thscode: {i: 行业, n: 名称, s: 来源}}
+    watchmap.json  {thscode: {i: 行业, n: 名称, s: 来源, ld?: 涨停池来源快照日}}
                    s 为 U（自选）/L（上一交易日涨停池）/H（热股榜）的可叠加串（如 "UL"）。
                    接力类展示（涨停股今日溢价 vs 池内其余）完全依赖这个字段，
                    没标就会把整个观察池当成涨停股算，结论错。
+                   ld 仅带 L 的条目有：涨停池回看补池（缺池/冰点日）时 L 可能来自
+                   更早的快照日，按「昨日」口径消费的一端靠 ld 识别并剔除旧样本。
     rounds_meta.json {date, rounds: [{ts,label,stage,count,codes_total,in_window,errors,phase,data_status}]}
                    与 series.json 同序同过滤，但不含 items：体检面板画逐轮覆盖条不该
                    为此读几百 KB 大文件。由 auc_collector.append_series 统一写。
@@ -194,26 +196,34 @@ def save_status(obj):
 
 
 def auto_pool_rows():
-    """从最近复盘快照取补充池候选行：[(thscode, 行业, 名称, 来源)]。
+    """从最近复盘快照取补充池候选行：返回 (rows, l_date8)。
+
+    rows = [(thscode, 行业, 名称, 来源)]；l_date8 = 涨停池（L）实际来源的快照日。
 
     涨停池（含行业标注）优先，其次热股榜 TopN；同时供 watchmap 行业映射用。
     来源标必须带：前端要靠它算「上一交易日涨停股今日竞价溢价（情绪接力）」，
     没标就只能把整个观察池当涨停股看，结论会错。L=涨停池，H=热股榜。
+    涨停池缺失/冰点时会回看最多 3 个快照，此时 L 实际来自更早的快照日——契约是
+    「上一交易日涨停池」，所以必须把真实来源日带回给 build_watchlist 落进 watchmap.ld，
+    让按「昨日」口径消费的一端（pool_exec 情绪前瞻等）能识别并剔除旧样本
+    （2026-09-30 审查 auction-5）。
     """
     sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend", "recap"))
     import snapio
     rows = []
+    l_date = None
     dates = snapio.list_dates()
     if not dates:
-        return rows
+        return rows, l_date
     for d in dates[:3]:          # 最多回看 3 个快照找涨停池
         snap = snapio.load(d) or {}
         data = ((snap.get("modules") or {}).get("limit_up_pool") or {}).get("data") or []
         got = [(c, (r.get("所属行业") or r.get("行业") or ""),
                 (r.get("名称") or r.get("name") or ""), "L")
                for r in data if (c := row_code(r))]
-        rows += got
         if got:
+            rows += got
+            l_date = d
             break
     for d in dates[:2]:          # 热股榜取最近有数据的快照
         snap = snapio.load(d) or {}
@@ -224,14 +234,16 @@ def auto_pool_rows():
         rows += got
         if got:
             break
-    return rows
+    return rows, l_date
 
 
 def build_watchlist():
     """合并自选与自动池：自选在前，去重封顶；同时落盘 watchmap.json。
 
     watchmap 结构 {thscode: {i: 行业, n: 名称, s: 来源}}，s 由 U（自选）/L（涨停池）/H（热股榜）
-    拼接，一只股可同时命中多个来源（如 "UL"）。自选里手写但不在自动池的代码也要进 watchmap，
+    拼接，一只股可同时命中多个来源（如 "UL"）；带 L 的条目附 ld=涨停池来源快照日
+    （auto_pool_rows 缺池回看时 ld 会早于上一交易日，消费端据此识别并剔除旧样本）。
+    自选里手写但不在自动池的代码也要进 watchmap，
     否则前端分不清「自选但无行业标注」和「根本不认识这只」。
 
     行业口径（两层）：优先用池子行自带标注（涨停池），缺失的从 industry_map.json
@@ -240,10 +252,13 @@ def build_watchlist():
     """
     user = read_watchlist()
     watchmap = {}
-    for tc, ind, nm, src in auto_pool_rows():
+    pool_rows, l_date = auto_pool_rows()
+    for tc, ind, nm, src in pool_rows:
         e = watchmap.setdefault(tc, {"i": ind, "n": nm, "s": ""})
         if src not in e["s"]:
             e["s"] += src
+        if src == "L" and l_date:
+            e["ld"] = l_date   # L 来源快照日：回看补池时≠上一交易日，消费端须剔除
     for tc in user:
         e = watchmap.setdefault(tc, {"i": "", "n": "", "s": ""})
         if "U" not in e["s"]:

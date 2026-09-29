@@ -102,7 +102,10 @@ async function loadDates() {
   }
 }
 
+let SNAP_SEQ = 0;   // 请求序号：切日期/刷新/轮询并发时，旧请求的慢响应不得覆盖新选日期的快照
+                    // （否则整页渲染 A 日、日历停在 B 日，轮询还跟着 SNAP=A 自我延续；同 NOTE_SEQ 的防污染思路）
 async function loadSnapshot(date, quiet) {
+  const seq = ++SNAP_SEQ;
   try {
     // quiet：轮询重拉时带 ETag，快照未变就 304 空回（~1.2MB 全量包不再每 5 分钟重解一次）
     const etag = (quiet && SNAP && SNAP.date === date && SNAP._etag) ? SNAP._etag : null;
@@ -112,6 +115,7 @@ async function loadSnapshot(date, quiet) {
     const prevFetched = (quiet && SNAP && SNAP.date === date) ? SNAP.fetched_at : null;
     const newEtag = (r.headers && r.headers.get) ? (r.headers.get("ETag") || null) : null;
     const j = await r.json();
+    if (seq !== SNAP_SEQ) return false;   // 等待期间已有更新的请求发出（切日期/刷新/轮询）：过期响应整份丢弃，不渲染
     // 双保险：服务端无 ETag（异常/旧版）时按业务时间戳判等价，不拿相同内容重渲染
     if (quiet && prevFetched && !newEtag && j.fetched_at === prevFetched) return false;
     SNAP = j;

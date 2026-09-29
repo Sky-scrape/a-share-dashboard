@@ -60,10 +60,22 @@ def is_restricted_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def check_url(url: str, allowed_hosts, port: int = 443) -> None:
-    """校验协议与主机白名单，并阻断解析到受限地址的目标。不通过抛 ValueError。"""
+    """校验协议/主机白名单/端口，并阻断解析到受限地址的目标。不通过抛 ValueError。
+
+    2026-09-30 补端口与 userinfo 校验（与 notify._send_wecom 同口径）：白名单
+    语义按「主机 + 标准端口」理解，https://白名单主机:8443/ 或携带 userinfo
+    （https://user:pass@host/）的变形一律拒绝。注：本函数解析 DNS 校验 IP 后，
+    requests 仍会重新独立解析（DNS TOCTOU），彻底闭合需按 IP 直连并固定
+    Host/SNI，第 1 层字面量白名单 + 禁重定向是实际控制，此处不再重复加固。
+    """
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.hostname not in allowed_hosts:
         raise ValueError(f"非白名单主机: {parts.hostname!r}")
+    if parts.port not in (None, port):
+        # 非法端口串（如 :abc）访问 parts.port 时同样抛 ValueError，语义一致
+        raise ValueError(f"非白名单端口: {parts.port!r}")
+    if parts.username or parts.password:
+        raise ValueError("URL 不允许携带 userinfo")
     for info in socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP):
         ip = ipaddress.ip_address(info[4][0])
         if is_restricted_ip(ip):

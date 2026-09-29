@@ -3,6 +3,55 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号单一来源
 `backend/version.py`，发布时打同名 git tag `vX.Y.Z`。逐日开发明细见 git 提交历史。
 
+## [1.3.3] · 2026-09-30 · 对抗性审查修复批
+
+8 路红队子代理（服务层/后端基础设施/竞价/采集/量化引擎/前端六个分片 + 安全渗透 +
+资金口径两个跨切面）对全项目发起对抗性审查，共报告 43 个问题；每条由独立防守子代理
+读代码驳斥复核——确认 42、驳回 1；39 条已最小改动修复（3 条同根因合并处理），修复后
+283 项回归 + 出站守卫全绿，终审员换人复核全部改动未发现新引入问题。
+
+- **回测资金口径**：回撤熔断改「收盘决策、次日开盘撮合」——原实现凭当日收盘权益
+  触发熔断、清仓单却按当日开盘价成交（未来函数，实测单日净值虚高约 33%）；hfq 后
+  复权方向做反（输出与 qfq 全等）重写锚点逻辑；停牌复牌日昨收回退当日收盘致封板
+  判定失效（pre_close 兜底链补 ffill）；`Contract.limit_overrides` 带交易所后缀
+  代码 KeyError；`buy(percent=)` 改按总权益口径与 target_percent/rebalance 一致；
+  signals「参考现价」列由不存在的 `panel.bar` 恢复为 `price_at` 有值
+- **信号数据新鲜度**：盘后信号管线 `ht_load` 补 `end=今天`，堵「end 缺省视为不设
+  右界」的缓存快路——执行清单不再可能在数周前陈旧数据上静默生成；报告顶部加数据
+  陈旧醒目告警（>4 自然日先刷新再下单）
+- **数据完整性**：backfill 缺口探测改走 `snapio.list_dates`（.json 与 .json.gz 归档
+  并为同一日期键），归档日不再被当缺口重抓出 6 模块半成品遮蔽完整归档，`--force`
+  亦不覆盖归档；backfill 全模块失败不再落盘（保持缺口可自动重试，退出码 1）；
+  backfill_full「昨日两市成交额」日期格式失配恒空修复；sectors 历史补抓模式不再用
+  实时行情冒充历史日板块价与涨跌幅；fetch_daily「昨日涨停」日期标签与取数来源对齐；
+  auc_collector 补抓加交易日 fail-closed 闸门 + 归档产物内部日期比对 + 终态异常
+  轮数不再虚报
+- **安全**：server 入口统一 Host 头白名单（回环名 / 本机网卡地址 / `AK_ALLOWED_HOSTS`）
+  封 DNS rebinding 对 CSRF 闸门的整体绕过（CWE-350）；0.0.0.0 绑定且未配
+  `AK_WRITE_TOKEN` 时自动生成 `.status/lan_token` 随机写令牌——局域网脚本直连写
+  不再零鉴权（显式环境变量永远优先，读面保持 README 显式开启口径避免锁死手机看板）；
+  do_POST 补读闸门（配 `AK_READ_TOKEN` 后 POST 数据接口不再绕过）；写 token 比较改
+  `hmac.compare_digest` 且访问日志对 `?token=` 脱敏；POST body 32MB 上限（413）+
+  32 连接并发上限；netguard check_url 补端口与 userinfo 校验；`tools/check_outbound.py`
+  扫描面扩至 requests 别名导入 / urllib.request / httpx
+- **并发与资源**：`lockutil` 过期锁接管重构为「内核字节锁仲裁 + 内容世代锚定 +
+  原地改写」，消除 TOCTOU 双持（8 进程压测稳定区 0 双持；调用方接口签名不变）；
+  共享行情 parquet 收口原子写 + manifest 读改写加跨进程锁（双进程压测 300 条零丢失，
+  修复前丢 38%）；`_spawn_fetch` 409 响应移出 `_PROC_LOCK`（不再被慢客户端拖死全部
+  抓取接口与 /api/health）；keep-alive 下拒绝路径统一预读请求体（不再污染同连接
+  下一请求）；derive.py 循环变量遮蔽致快照缓存永不命中（每轮全量重读）修复；
+  quant_api 任务清理不再误删运行中任务的结果文件
+- **前端诚实性**：loadDay 瞬时失败不再把真实行情整体替换为演示数据（三分支诚实
+  降级 + 盘中自动恢复探测，轮询死锁解除）；autoTick 与 recap 快照加载加过期响应
+  守卫（不再把历史日视图拽回今天/旧日期覆盖新日期）；global 页重抓失败不再弹
+  「全球数据已更新」假成功（六态如实提示）；freshness 弹层 document 级监听器泄漏
+  修复；竞价执行卡盘前/错日拒绝时前端 ⚠ 警示明示
+- **运维自愈**：watchdog 健康探测改 `st.update`（`autostart=true` 不再被静默抹除、
+  自愈拉起不再必然自关）；app_config 各保留天数钳制 ≥1（配置手滑写 0/负数不再在
+  下一计划任务周期不可逆清库）；notify `min_interval_hours` 非数字不再炸穿
+  「send 绝不抛错」契约
+- 附带收编：`打开看板.bat` 编码修复与 `py` 启动器（本批审查开始前工作区既有改动）
+
 ## [1.3.2] · 2026-09-28 · hithink 定位修复批
 
 - **根因修复（PATH）**：注册表用户 PATH 补回 `%APPDATA%\npm`——该目录此前被一次

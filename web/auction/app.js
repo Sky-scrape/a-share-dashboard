@@ -947,18 +947,30 @@ function renderPoolExec() {
       '<div class="sub-ind" title="' + esc(r.window) + " · " + esc(r.plan) + '">' +
       esc(r.plan) + "</div></td></tr>";
   }).join("");
-  note.textContent = (pe.pool_date ? mdOf(pe.pool_date) + " 池" + (pe.env_cn ? "·" + pe.env_cn : "") + " · " : "") +
+  note.textContent = (pe.final_note ? "⚠ " + pe.final_note + " · " : "") +
+    (pe.pool_date ? mdOf(pe.pool_date) + " 池" + (pe.env_cn ? "·" + pe.env_cn : "") + " · " : "") +
     "可观察 " + pe.counts.ok + " · 放弃 " + pe.counts.skip +
     (pe.counts.missing ? " · 未入池 " + pe.counts.missing : "") +
     (pe.last_ts ? " · 截至 " + pe.last_ts : "");
+  note.className = "note" + (pe.final_note ? " warn-txt" : "");
   if (sig) {
     var s = pe.signal;
-    sig.textContent = s
-      ? ("情绪前瞻：昨涨停池低开 " + (s.open_down * 100).toFixed(0) + "%（深低开≤-2% 占 " +
-         (s.open_deep * 100).toFixed(0) + "%，n=" + s.lu_n + "）" +
-         (s.warn ? " ⚠ 已过 50% 警戒（回验：该桶当日备选池均益 -1.08%）" : "") + " · " + s.study)
-      : "情绪前瞻：池内无昨涨停股或暂无竞价轮次";
-    sig.className = "note" + (s && s.warn ? " warn-txt" : "");
+    if (!s) {
+      sig.textContent = "情绪前瞻：池内无昨涨停股或暂无竞价轮次";
+      sig.className = "note";
+    } else if (!s.lu_n && s.stale) {
+      // L 标注来自回看补池的旧快照（非上一交易日涨停池）：不给占比数字，只明示标注过期
+      sig.textContent = "情绪前瞻：涨停池标注来自 " + (s.stale_date ? mdOf(s.stale_date) : "更早") +
+        " 快照（非上一交易日涨停池），旧样本不计入 · " + (s.study || "");
+      sig.className = "note warn-txt";
+    } else {
+      sig.textContent = "情绪前瞻：昨涨停池低开 " + (s.open_down * 100).toFixed(0) + "%（深低开≤-2% 占 " +
+        (s.open_deep * 100).toFixed(0) + "%，n=" + s.lu_n + "）" +
+        (s.stale ? " · 另有 " + s.stale + " 只 L 标注来自 " +
+          (s.stale_date ? mdOf(s.stale_date) : "更早") + " 旧快照未计入" : "") +
+        (s.warn ? " ⚠ 已过 50% 警戒（回验：该桶当日备选池均益 -1.08%）" : "") + " · " + s.study;
+      sig.className = "note" + (s.warn ? " warn-txt" : "");
+    }
   }
 }
 $("pexTable").addEventListener("click", function (ev) {
