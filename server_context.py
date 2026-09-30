@@ -94,6 +94,55 @@ _auto_sector_ts = [0.0]  # sector 自愈补抓上次试探时刻（10 分钟节�
 _auto_rot_ts = [0.0]     # 轮动断流自愈上次试探时刻（同上，10 分钟节流）
 
 
+# ---------------- 端口共享绑定检测（2026-09-30 事故：双实例同绑 8000，回环流量被劫持） ----------------
+
+def _parse_netstat_listeners(text, port, mine_pid):
+    """从 netstat -ano 输出解析「监听 port 且非 mine_pid」的 PID 列表（纯函数，便于单测）。
+
+    只认五列 TCP 行（协议/本地/远端/状态/PID）：本地地址以 ":port" 结尾（冒号进
+    后缀，:18000 不会误配 :8000；IPv6 的 [::]:8000 同样命中）、状态必须 LISTENING
+    （TIME_WAIT/ESTABLISHED 不算占用监听位）、排除自身 PID 后去重排序。"""
+    suffix = ":%d" % port
+    pids = set()
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) != 5 or parts[0] != "TCP" or parts[3] != "LISTENING":
+            continue
+        if not parts[1].endswith(suffix):
+            continue
+        try:
+            pid = int(parts[4])
+        except ValueError:
+            continue
+        if pid != mine_pid:
+            pids.add(pid)
+    return sorted(pids)
+
+
+def _foreign_listeners(port):
+    """本机还有哪些别的进程与 port 共享绑定监听（Windows netstat；失败返回 []）。
+
+    背景（2026-09-30 打不开事故）：http.server 的 allow_reuse_address=1 在 Windows
+    上即 SO_REUSEADDR——第二个进程可把同一端口静默绑走，回环流量（浏览器/watchdog
+    探活）被更精确的 127.0.0.1 绑定劫持，健康实例还在、页面却全部空响应。硬封手段
+    SO_EXCLUSIVEADDRUSE 与 SO_REUSEADDR 互斥（实测 WSAEINVAL），弃用后者又会让
+    重启撞 TIME_WAIT（实测 WSAEADDRINUSE 卡半分钟以上）——故改为启动时自查：
+    发现外来监听者即报错退出（server.py server_activate 接线），把「静默劫持」
+    变成「响亮失败」。netstat 扫描失败只告警不拦启动：这是安全网，不是主闸门。
+    非 Windows 无此事故面（SO_REUSEADDR 不允许覆压活动绑定），直接放行。"""
+    if os.name != "nt":
+        return []
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"], capture_output=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except Exception as e:  # noqa: BLE001 - 扫不出就退回放行（与全球各平台一致）
+        print(f"!! [warn] 端口占用扫描失败，跳过共享绑定检查: {type(e).__name__}")
+        return []
+    return _parse_netstat_listeners(out.decode("latin-1"), int(port), os.getpid())
+
+
 # ---------------- 小工具 ----------------
 
 def rot_dates():

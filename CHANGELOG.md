@@ -3,6 +3,18 @@
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号单一来源
 `backend/version.py`，发布时打同名 git tag `vX.Y.Z`。逐日开发明细见 git 提交历史。
 
+## [1.3.4] · 2026-09-30 · 端口劫持防御批
+
+- **服务**：启动时端口共享绑定自查——http.server 的 `allow_reuse_address` 在
+  Windows 上即 SO_REUSEADDR，第二个进程可把同端口静默绑走、回环流量（浏览器/
+  watchdog 探活）被更精确的 127.0.0.1 绑定劫持，健康实例还在、页面却全部
+  ERR_EMPTY_RESPONSE（本日实际事故：僵尸实例劫持 127.0.0.1:8000 达 6.5 小时，
+  watchdog 连续 25 次「服务失联」）。实测 SO_EXCLUSIVEADDRUSE 与 SO_REUSEADDR
+  互斥（WSAEINVAL）、弃用后者重启又撞 TIME_WAIT（WSAEADDRINUSE）——改为
+  listen 后 netstat 自查，发现外来监听者即关套接字响亮退出（指名对方 PID，
+  监护循环按既有退避重试）；netstat 扫描失败只告警不拦启动。回归：netstat
+  解析器纯函数单测 + 活体双绑定复刻测试 + smoke 源码防回退断言
+
 ## [1.3.3] · 2026-09-30 · 对抗性审查修复批
 
 8 路红队子代理（服务层/后端基础设施/竞价/采集/量化引擎/前端六个分片 + 安全渗透 +

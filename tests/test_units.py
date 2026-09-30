@@ -986,6 +986,74 @@ def test_hithink_cli_find_exe(monkeypatch, tmp_path):
     assert hithink_cli.find_exe() is None
 
 
+# ---------------- server_context：端口共享绑定检测（2026-09-30 打不开事故防回退） ----------------
+# 事故形状：旧实例绑 0.0.0.0:8000，新实例 SO_REUSEADDR 静默再绑 127.0.0.1:8000，
+# 回环流量（浏览器/watchdog）被新实例劫持成空响应。防线：启动时 netstat 自查，
+# 见「同端口外来监听者」即拒绝启动——解析器与活体双绑定各一层保护。
+
+from server_context import _parse_netstat_listeners, _foreign_listeners  # noqa: E402
+
+_NETSTAT_SAMPLE = "\r\n".join([
+    "  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       19184",
+    "  TCP    127.0.0.1:8000         0.0.0.0:0              LISTENING       3008",
+    "  TCP    127.0.0.1:8000         127.0.0.1:7212         TIME_WAIT       0",
+    "  TCP    127.0.0.1:18000        0.0.0.0:0              LISTENING       555",
+    "  TCP    [::]:8000              [::]:0                 LISTENING       19184",
+    "  UDP    127.0.0.1:8000         *:*                                    666",
+    "  TCP    127.0.0.1:8000         0.0.0.0:0              LISTENING       3008",
+])  # 末行 = 自身 PID（v4），应被排除
+
+
+def test_parse_netstat_foreign_listeners_finds_hijacker():
+    # 自身 3008（新实例）视角：v4 通配 + v6 通配都是旧实例 19184 → 去重后正好点名它
+    assert _parse_netstat_listeners(_NETSTAT_SAMPLE, 8000, 3008) == [19184]
+
+
+def test_parse_netstat_foreign_listeners_symmetry_and_noise():
+    # 反向视角（旧实例自查时新实例已绑上）：同样能看见对方
+    assert _parse_netstat_listeners(_NETSTAT_SAMPLE, 8000, 19184) == [3008]
+    # 无外来者（端口上只有自己）→ 空表，正常启动放行
+    assert _parse_netstat_listeners(_NETSTAT_SAMPLE.replace("19184", "3008"), 8000, 3008) == []
+    # 端口无监听 → 空
+    assert _parse_netstat_listeners(_NETSTAT_SAMPLE, 9999, 3008) == []
+    # :18000 不得因 endswith 误配 :8000
+    assert _parse_netstat_listeners(_NETSTAT_SAMPLE, 18000, 999) == [555]
+    # TIME_WAIT / UDP / 残缺行不算监听占用
+    assert _parse_netstat_listeners(
+        "TCP 1.2.3.4:8000 5.6.7.8:9 TIME_WAIT 42\r\n"
+        "UDP 1.2.3.4:8000 *:* 42\r\ngarbage\r\n\r\n", 8000, 3008) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="netstat -ano 为 Windows 口径")
+def test_foreign_listeners_live_double_bind():
+    # 活体复刻事故：本进程持端口在先，子进程以 SO_REUSEADDR 再绑同端口（与
+    # 2026-09-30 的僵尸实例完全同款）→ 自查必须把子进程 PID 点名报出来。
+    import socket
+    import subprocess
+    import sys
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # 先绑者也带 SO_REUSEADDR：与 http.server（allow_reuse_address=1）同款——
+    # Windows 上后者能压上来重复绑定的前提正是先绑者开了它（实测不带则 10013）。
+    holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+    child = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket,time;"
+         f"s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);"
+         f"s.bind(('127.0.0.1',{port}));s.listen(1);"
+         "print('ok',flush=True);time.sleep(15)"],
+        stdout=subprocess.PIPE)
+    try:
+        assert child.stdout.readline().strip() == b"ok"   # 子进程已绑定完成
+        assert _foreign_listeners(port) == [child.pid]
+    finally:
+        child.kill()
+        child.wait()
+        holder.close()
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))

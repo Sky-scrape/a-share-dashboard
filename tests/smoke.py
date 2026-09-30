@@ -186,6 +186,10 @@ def main():
               and _srv2.count("self._maybe_auto_rotation_revive()") >= 2)
         check("rotation_stall 午休豁免（11:30–13:00 停采正常，不误报断流/诱发摘活锁）",
               "午间休市" in _srv2 and "11 * 60 + 30 < hm < 13 * 60 + 5" in _srv2)
+        # 2026-09-30 双实例劫持事故：同端口共享绑定让回环流量全部空响应 6.5 小时。
+        check("端口共享绑定自查（listen 后 netstat 点名外来监听者，拒绝共存防劫持）",
+              "def server_activate" in _srv2 and "_foreign_listeners(" in _srv2
+              and "self.server_close()" in _srv2 and "_parse_netstat_listeners" in _srv2)
         check("health.global 字段齐", all(k in (h.get("global") or {}) for k in
               ("last_date", "fetched_at", "age_hours", "errors", "fetching")), str(list(h.get("global") or {})))
         _umh = h.get("us_market") or {}

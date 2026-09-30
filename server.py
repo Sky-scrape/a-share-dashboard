@@ -93,6 +93,7 @@ from server_context import (_HEALTH_SCAN_INTERVAL, _hithink_probe,             #
                             _health_alerts, health_payload, notify,
                             rot_dates, recap_dates, auction_brief,
                             landing_describe, landing_path,
+                            _foreign_listeners,
                             STATUS_DIR, LAN_TOKEN_FILE, WRITE_TOKEN_ENV)
 from server_handlers_core import HandlerCore          # noqa: E402  公共 HTTP 管线
 from server_handlers_rotation import HandlerRotation  # noqa: E402  轮动域
@@ -215,6 +216,20 @@ class ThreadingServer(socketserver.ThreadingMixIn, HTTPServer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._conn_slots = threading.BoundedSemaphore(self._MAX_CONNS)
+
+    def server_activate(self):
+        # 端口共享绑定自查（2026-09-30 打不开事故，详见 _foreign_listeners）：
+        # allow_reuse_address 在 Windows 上放任第二个进程把本端口静默绑走、回环
+        # 流量被劫持成空响应。listen() 之后 netstat 才显示 LISTENING，故挂这里；
+        # 撞上外来监听者就关套接字响亮退出（监护循环按退避重试），绝不带病共存。
+        super().server_activate()
+        others = _foreign_listeners(self.server_address[1])
+        if others:
+            self.server_close()
+            raise OSError(
+                f"端口 {self.server_address[1]} 同时被进程 {others} 监听"
+                f"（共享绑定会让回环流量被旧实例劫持）。本实例拒绝启动，"
+                f"请结束旧进程后重试（taskkill /F /PID {others[0]}）。")
 
     def process_request(self, request, client_address):
         if not self._conn_slots.acquire(blocking=False):

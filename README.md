@@ -82,16 +82,15 @@ http://127.0.0.1:8000/quant     量化平台工作台（造策略/回测/选股/
 
 ## 更新日志
 
-当前版本 **v1.3.3**（2026-09-30）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
+当前版本 **v1.3.4**（2026-09-30）。版本号单一来源 `backend/version.py`（`/api/health` 顶层
 `version` 字段、桌面窗口标题、exe 产物名三处同源），发布时打同名 git tag。
 完整变更记录见 **[CHANGELOG.md](CHANGELOG.md)**；逐日明细见 git 提交历史。
 
-最近一版（v1.3.3 · 对抗性审查修复批）要点：8 路红队对全项目对抗性审查，43 个攻击
-发现经独立防守复核确认 42、驳回 1，39 条已修复——回测熔断未来函数（改收盘决策次日
-成交）、hfq 复权方向、盘后信号陈旧缓存快路（补 `end=今天`）、backfill 归档遮蔽、
-文件锁 TOCTOU 重构；安全补 Host 白名单封 DNS rebinding、0.0.0.0 绑定自动生成局域网
-写令牌（`.status/lan_token`，重启服务后生效）、POST 补读闸门；修复后 283 项回归 +
-出站守卫全绿，终审换人复核无新问题。
+最近一版（v1.3.4 · 端口劫持防御批）要点：Windows 上 http.server 的 SO_REUSEADDR
+允许第二个进程静默同绑端口、劫持回环流量（当日实际事故：僵尸实例致页面全部
+ERR_EMPTY_RESPONSE 6.5 小时）。服务启动 listen 后 netstat 自查，发现同端口外来
+监听者即点名退出、绝不带病共存；SO_EXCLUSIVEADDRUSE 实测与 SO_REUSEADDR 互斥
+（弃用后者重启又撞 TIME_WAIT）故不采用。
 
 ## 目录结构（五板块）
 
