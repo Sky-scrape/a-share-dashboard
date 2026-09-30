@@ -132,9 +132,10 @@ def run_grid(p, qa):
     if len(variants) > 240:
         raise ValueError(f"组合数 {len(variants)} > 240，请收缩网格")
     base_desc = dict(p.get("strategy") or {})
+    allow_exec = bool(p.get("allow_exec"))
 
     def build(kw):
-        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes)
+        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes, allow_exec=allow_exec)
 
     cfg = runner.make_backtest_config(
         start=p.get("start"), end=p.get("end"),
@@ -184,7 +185,8 @@ def run_wf(p, qa):
     base_desc = dict(p.get("strategy") or {})
 
     def build(**kw):   # walk_forward/grid_search 以 factory(**combo) kwargs 约定调用
-        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes)
+        return qa.build_strategy_from_desc(merge_variant_desc(base_desc, kw), codes,
+                                           allow_exec=bool(p.get("allow_exec")))
 
     cfg = make_backtest_config(
         start=p.get("start"), end=p.get("end"),

@@ -813,7 +813,7 @@ async function refreshWatch(){
     box.innerHTML = rows.map(function(r){
       const w = r.w, x = r.x;
       if (!x) {
-        return '<div class="rankrow" style="cursor:default"><span class="nm">' + esc(w.code) + '</span><span class="sub">未找到</span><span class="pc" style="color:var(--dim);cursor:pointer;width:auto" data-del="' + w.code + '">✕</span></div>';
+        return '<div class="rankrow" style="cursor:default"><span class="nm">' + esc(w.code) + '</span><span class="sub">未找到</span><span class="pc" style="color:var(--dim);cursor:pointer;width:auto" data-del="' + esc(w.code) + '">✕</span></div>';
       }
       const pct = r.pct;
       let extra = '';
@@ -823,13 +823,13 @@ async function refreshWatch(){
         extra = '<span class="pc ' + (pnl >= 0 ? 'up' : 'down') + '" style="width:62px" title="成本 ' + r.cost + '">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%</span>';
       }
       const grp = r.cost != null ? '<span class="sub" style="font-size:11px;color:var(--gold)">持</span>' : '';
-      return '<div class="rankrow" style="cursor:default" data-code="' + w.code + '" title="点击设置成本价">'
+      return '<div class="rankrow" style="cursor:default" data-code="' + esc(w.code) + '" title="点击设置成本价">'
         + grp + '<span class="nm">' + esc(x.name) + '</span>'
         + (x.industry ? '<span class="sub" style="font-size:11px">' + esc(x.industry) + '</span>' : '')
         + '<span class="sub" style="font-family:Consolas,monospace">' + (x.price == null ? '-' : Number(x.price).toFixed(2)) + '</span>'
         + '<span class="pc ' + (pct >= 0 ? 'up' : 'down') + '">' + fmtPct(pct) + '</span>'
         + extra
-        + '<span class="pc" style="color:var(--dim);cursor:pointer;width:auto" data-del="' + w.code + '">✕</span></div>';
+        + '<span class="pc" style="color:var(--dim);cursor:pointer;width:auto" data-del="' + esc(w.code) + '">✕</span></div>';
     }).join('');
     box.querySelectorAll('[data-del]').forEach(function(el){
       el.onclick = function(ev){

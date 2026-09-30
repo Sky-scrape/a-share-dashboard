@@ -83,6 +83,32 @@ class TestBuildStrategyFromDesc:
             quant_api.build_strategy_from_desc({"kind": "builtin", "family": "alien"}, ["600000"])
 
 
+_MINIMAL_CODE_STRATEGY = """
+class MyStrategy(Strategy):
+    name = "minimal_code"
+    def __init__(self, symbol="600000"):
+        self.symbol = symbol
+"""
+
+
+class TestCodeStrategyExecGate:
+    """HTTP 可达路径的代码策略执行门（2026-09-30 安全扫描修复）：默认拒绝、显式 allow_exec 放行。"""
+
+    def test_code_rejected_by_default(self):
+        with pytest.raises(PermissionError, match="防误不防恶"):
+            quant_api.build_strategy_from_desc(
+                {"kind": "code", "code": _MINIMAL_CODE_STRATEGY}, ["600000"])
+
+    def test_code_runs_with_explicit_allow_exec(self):
+        strat = quant_api.build_strategy_from_desc(
+            {"kind": "code", "code": _MINIMAL_CODE_STRATEGY}, ["600000"], allow_exec=True)
+        assert isinstance(strat, Strategy)
+
+    def test_empty_code_payload_still_valueerror_after_gate(self):
+        with pytest.raises(PermissionError):
+            quant_api.build_strategy_from_desc({"kind": "code", "code": "  "}, ["600000"])
+
+
 # ------------------------------------------------------------------ 期末强制平仓
 def _rows_with_range(n, price=10.0):
     """带日内区间的行情：spread/percent 滑点不会被 [low,high] 裁剪吃掉。"""
@@ -177,8 +203,9 @@ class TestRunJobGridHelpers:
 
         captured = {}
 
-        def fake_build_strategy(desc, codes):
+        def fake_build_strategy(desc, codes, allow_exec=False):
             captured["codes"] = list(codes)
+            captured["allow_exec"] = allow_exec
             return "STRAT"
 
         def fake_run_variants(variants, build, panel, cfg, **k):

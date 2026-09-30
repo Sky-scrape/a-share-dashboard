@@ -250,6 +250,13 @@ def build_strategy_from_desc(desc, codes, allow_exec=False):
             raise ValueError("规则策略需要标的池")
         return GenericRuleStrategy(**spec)      # 未知 spec 键会 strict raise
     if kind == "code":
+        # 与 store.build_saved 同一门（沙箱防误不防恶）：HTTP 可达路径默认拒绝，
+        # 只有请求体显式带 allow_exec=true（网页勾选/脚本作者知情确认）才执行源码。
+        if not allow_exec:
+            raise PermissionError(
+                "代码策略需重新执行其源码，沙箱防误不防恶：只有确认来源可信才继续——"
+                "网页请勾选「允许执行代码策略」，脚本请在请求体加 allow_exec: true。"
+            )
         from quant_sim.strategies.sandbox import build_user_strategy
         code = desc.get("code") or ""
         if not code.strip():
@@ -270,7 +277,8 @@ def run_backtest_api(req):
     """req: {strategy:{kind,...}, codes[], start,end, cash, benchmark, execution,
     commission_wp, min_comm, stamp_wp, slip_model, slip_value, participation,
     max_dd_halt, block_limit, liquidate_on_end, warmup_bars, adjust, data_mode,
-    force_refresh(bool 跳过本地新鲜度快路强制重导), title?, log(bool 是否追加研究流水，默认 true)}"""
+    force_refresh(bool 跳过本地新鲜度快路强制重导), title?, log(bool 是否追加研究流水，默认 true),
+    allow_exec(bool 确认执行代码策略源码，默认 false=拒绝)}"""
     _import_engine()
     from quant_sim import run_backtest
     from quant_sim.research.runner import make_backtest_config
@@ -287,7 +295,8 @@ def run_backtest_api(req):
     panel = load_panel_for_api(load_codes, req.get("start"), req.get("end"),
                                req.get("adjust", "qfq"), req.get("data_mode", "auto"),
                                force_refresh=bool(req.get("force_refresh")))
-    strategy = build_strategy_from_desc(req.get("strategy") or {}, codes)
+    strategy = build_strategy_from_desc(req.get("strategy") or {}, codes,
+                                        allow_exec=bool(req.get("allow_exec")))
     cfg = make_backtest_config(
         start=req.get("start"), end=req.get("end"),
         cash=float(req.get("cash") or 1_000_000),
