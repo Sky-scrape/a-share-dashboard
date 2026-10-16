@@ -374,7 +374,9 @@ def screen(
     if do_enrich:
         if d.index.size > max_enrich:
             _key = sort_by if sort_by in d.columns else "amt_20"
-            d = d.sort_values(_key, ascending=not ascending, na_position="last").head(max_enrich)
+            # 截断保留的必须与最终展示排序（下方 sort_values(ascending=ascending)）同向：
+            # 反向 head 会把「排序最靠后」的一批送富化，选股结果系统性取错端
+            d = d.sort_values(_key, ascending=ascending, na_position="last").head(max_enrich)
             warnings.append(f"本地筛后仍超富化上限：只取排序前 {max_enrich} 名拉估值/名称——估值类条件不完整，请先收紧行情条件")
         if progress:
             progress(f"估值/名称富化 {d.index.size} 只（约 {-(-d.index.size // 100)} 次远端请求）…")

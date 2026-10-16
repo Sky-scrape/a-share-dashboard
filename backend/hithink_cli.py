@@ -8,6 +8,7 @@ PATH 优先，找不到再兜底显式查 npm 全局目录（%APPDATA%\\npm）�
 """
 import os
 import shutil
+import sys
 
 _NAMES = ("hithink-finance.cmd", "hithink-finance")   # Windows npm 全局是 .cmd
 
@@ -24,3 +25,12 @@ def find_exe():
             if os.path.isfile(cand):
                 return cand
     return None
+
+
+if __name__ == "__main__":
+    # bat 消费口：计划任务进程的 PATH 不可信（20260930 起 LibreOffice 自带 python
+    # 顶替、连 hithink-finance 都找不到），bat 用本行输出定位 CLI，找不到走原样兜底
+    exe = find_exe()
+    if exe:
+        print(exe)
+    sys.exit(0 if exe else 1)

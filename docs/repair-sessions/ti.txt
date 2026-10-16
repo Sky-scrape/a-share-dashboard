@@ -1,0 +1,12 @@
+
+
+LastRunTime        : 2026-09-03 12:12:32
+LastTaskResult     : 255
+NextRunTime        : 2026-09-03 12:15:00
+NumberOfMissedRuns : 0
+TaskName           : rotation-intraday-fetch
+TaskPath           : \
+PSComputerName     : 
+
+
+

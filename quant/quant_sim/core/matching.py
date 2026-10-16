@@ -4,7 +4,8 @@
 
 MVP 撮合假设（**这是回测结果失真的第一来源，务必理解并可调**）：
   1. 市价单基准价 = 撮合 bar 的开盘价（execution=next_open）或收盘价（execution=close）。
-  2. 滑点后再裁剪到 [low, high]，并保证不超过涨停价、不低于跌停价。
+  2. 滑点后再裁剪到 [low, high]，并保证不超过涨停价、不低于跌停价；
+     限价单成交价最终再夹回限价内（不得以劣于限价的价格成交）。
   3. 主板/创业板/科创板按规则算涨跌停；触及涨停封板 → 买单不成交；跌停封板 → 卖单不成交。
   4. 单边可成交量上限 = 当日成交量 × 参与率（默认 5%），超出部分当日作废。
   5. 停牌（volume<=0 或无行情）→ 订单作废。
@@ -82,8 +83,8 @@ class MatchingEngine:
                 return None, OrderStatus.REJECTED, f"跌停封板（跌停价 {limit_down}），卖单无法成交"
 
         base = self.base_price(order, bar)
-        if order.order_type.value == "limit" and order.limit_price:
-            lp = float(order.limit_price)
+        lp = float(order.limit_price) if order.order_type.value == "limit" and order.limit_price else None
+        if lp is not None:
             if side is Side.BUY:
                 if bar.low > lp + 1e-9:
                     return None, OrderStatus.CANCELLED, f"限价 {lp} 高于当日最低价 {round(bar.low, 3)}，未成交"
@@ -97,6 +98,10 @@ class MatchingEngine:
         price = min(max(slipped, bar.low), bar.high)
         price = min(max(price, limit_down), limit_up)
         price = self.contract.round_to_tick(price)
+        if lp is not None:
+            # 限价兜底：滑点与区间裁剪后成交价不得劣于限价（买不高买、卖不低卖）。
+            # 上方未成交闸门已保证 lp ∈ [low, high]，此夹取不会越出当日区间。
+            price = min(price, lp) if side is Side.BUY else max(price, lp)
         if price <= 0:
             return None, OrderStatus.REJECTED, "成交价非正，数据异常"
 

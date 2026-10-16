@@ -156,6 +156,23 @@ def test_max_enrich_cap(monkeypatch, factors):
         return fake.reindex(list(t))
 
     monkeypatch.setattr(screener, "attach_valuation", spy)
-    res = screener.screen(factors, sort_by="amt_20", max_enrich=2)
+    res = screener.screen(factors, sort_by="amt_20", ascending=False, max_enrich=2)
     assert calls and calls[0] <= 2
     assert any("富化" in w or "上限" in w for w in res["warnings"])
+
+
+def test_max_enrich_cap_keeps_top(monkeypatch):
+    """锁方向：超富化上限截断必须保留最终排序的前 N 名（曾 ascending 取反取错端，
+    成交额最大的一批被整批丢弃）。"""
+    n = 650
+    amts = np.linspace(0.01, 6.5, n)
+    f = pd.DataFrame({"board": ["主板"] * n, "amt_20": amts},
+                     index=[f"{600000 + i:06d}" for i in range(n)])
+    monkeypatch.setattr(screener, "attach_valuation", lambda t, pause=0.15: pd.DataFrame(index=list(t)))
+    res = screener.screen(f, sort_by="amt_20", ascending=False, enrich=True, max_enrich=600)
+    col = pd.to_numeric(res["table"]["amt_20"])
+    assert col.max() == pytest.approx(6.5), "降序截断后最大成交额必须在表里（不能丢头部）"
+    assert any("上限" in w for w in res["warnings"])
+    res2 = screener.screen(f, sort_by="amt_20", ascending=True, enrich=True, max_enrich=600)
+    col2 = pd.to_numeric(res2["table"]["amt_20"])
+    assert col2.min() == pytest.approx(0.01), "升序截断后最小成交额必须在表里"

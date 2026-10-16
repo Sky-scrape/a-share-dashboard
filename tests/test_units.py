@@ -44,6 +44,7 @@ def test_to_thscode_invalid(bad):
 
 # ---------------- trade_cal：交易日历口径（格式不一致事故防回退） ----------------
 
+import trade_cal  # noqa: E402
 from trade_cal import is_trade_today  # noqa: E402
 
 
@@ -75,6 +76,144 @@ def test_trade_cal_error_returns_none():
     def boom():
         raise RuntimeError("CLI down")
     assert is_trade_today(today8="20260904", cal=boom, log=lambda *_: None) is None
+
+
+def test_trade_cal_default_path_falls_back_to_local(monkeypatch):
+    """默认路径（真实 hithink）两级兜底：hithink 拿不到结论 → 退回本地日历。
+
+    注入 cal 即单一来源（上方用例锁成员判定即结论）；这里锁默认路径的
+    2026-10-02/05 假期断源修复：hithink 报错/陈旧未覆盖今日 → 本地日历覆盖今日
+    且不在其中 = 权威非交易日；本地也不可用/未覆盖 → None（调用方按交易日继续，
+    误判非交易日是静默失效）。桩掉 ht 与 _local_dates8：不触真实 CLI、
+    不依赖真实 data/recap/us_market/ashare_cal.json。
+    """
+    import types
+
+    def broken(*_a, **_k):
+        raise RuntimeError("CLI down")
+
+    monkeypatch.setitem(sys.modules, "ht", types.SimpleNamespace(ht=broken))
+    monkeypatch.setattr(trade_cal, "_local_dates8", lambda: {"20260901", "20260905"})
+    assert is_trade_today(today8="20260904", log=lambda *_: None) is False
+    # hithink 陈旧（未覆盖今日）同样退本地，不把「不在其中」当非交易日（08-31 事故）
+    monkeypatch.setitem(sys.modules, "ht", types.SimpleNamespace(
+        ht=lambda *_a, **_k: {"item": [{"date": "20260102"}, {"date": "20260105"}]}))
+    monkeypatch.setattr(trade_cal, "_local_dates8", lambda: {"20260901", "20260904"})
+    assert is_trade_today(today8="20260904", log=lambda *_: None) is True
+    # 本地未覆盖今日 / 本地也不可用 → None（按交易日继续）
+    monkeypatch.setattr(trade_cal, "_local_dates8", lambda: {"20260901", "20260903"})
+    assert is_trade_today(today8="20260904", log=lambda *_: None) is None
+    monkeypatch.setattr(trade_cal, "_local_dates8", lambda: None)
+    assert is_trade_today(today8="20260904", log=lambda *_: None) is None
+
+
+# ---------------- watchdog：复盘快照新鲜度判定（10-15 缺口事故防回退） ----------------
+# 10-15 抓取链被系统级中断后静默消失（无 traceback/无 fetch end/快照未落盘），
+# bat 尾部失败推送没机会执行；看门狗是唯一独立于采集链的常驻探针，故其判定值得锁。
+
+import watchdog  # noqa: E402
+from watchdog import _recap_freshness_missing as _recap_missing  # noqa: E402
+
+# 含周末缺口（10-17/18 为非交易日）的日历样本：日历覆盖今日但今日不在其中
+_CAL = {"20261012", "20261013", "20261014", "20261015",
+        "20261016", "20261019", "20261020"}
+
+
+def _mk_snap(d, *dates):
+    for x in dates:
+        (d / f"{x}.json").write_text("{}", encoding="utf-8")
+
+
+def test_watchdog_recap_ok_when_snapshot_present(tmp_path):
+    _mk_snap(tmp_path, "20261015")
+    assert _recap_missing("20261016", (10, 0), _CAL, str(tmp_path)) is False
+
+
+def test_watchdog_recap_before_deadline_ignores_today(tmp_path):
+    # 17:05 任务窗口内（今日未到截止时刻，今日不算候选）：上一个交易日有快照即无告警
+    _mk_snap(tmp_path, "20261015")
+    assert _recap_missing("20261016", (17, 10), _CAL, str(tmp_path)) is False
+
+
+def test_watchdog_recap_alerts_after_deadline_when_today_missing(tmp_path):
+    _mk_snap(tmp_path, "20261015")
+    assert _recap_missing("20261016", (18, 30), _CAL, str(tmp_path)) is True
+
+
+def test_watchdog_recap_alerts_for_prev_trade_day_gap(tmp_path):
+    # 当晚关机/次日才开机：缺口要在下一轮巡检（次日盘前）就被看到
+    _mk_snap(tmp_path, "20261014")
+    assert _recap_missing("20261016", (9, 0), _CAL, str(tmp_path)) is True
+
+
+def test_watchdog_recap_gz_snapshot_counts(tmp_path):
+    (tmp_path / "20261015.json.gz").write_text("", encoding="utf-8")
+    assert _recap_missing("20261016", (10, 0), _CAL, str(tmp_path)) is False
+
+
+def test_watchdog_recap_non_trade_day_only_requires_prev(tmp_path):
+    # 非交易日（10-17 周六）自身不需要快照，只看上一个交易日（10-16）
+    _mk_snap(tmp_path, "20261016")
+    assert _recap_missing("20261017", (10, 0), _CAL, str(tmp_path)) is False
+    assert _recap_missing("20261017", (10, 0), _CAL, str(tmp_path / "nope")) is True
+
+
+def test_watchdog_recap_calendar_unusable_is_silent(tmp_path):
+    # 日历陈旧未覆盖今日 / 日历不可用 → 不下结论（宁可漏报也不误报）
+    assert _recap_missing("20270101", (10, 0), _CAL, str(tmp_path)) is False
+    assert _recap_missing("20261016", (18, 30), None, str(tmp_path)) is False
+
+
+def test_watchdog_recap_alert_swallows_notify_failure(monkeypatch):
+    """告警链路炸掉不得反噬探活。
+
+    _recap_alert 在 run_once 的两个分支之前调用：一旦抛出，watchdog.json 连
+    「服务失联连败计数」一起丢，30 分钟阈值永远到不了。历史事故形状是裸 python
+    解到 LibreOffice 解释器、`import notify`（requests）直接炸——静默失效数天。
+    """
+    import types
+
+    monkeypatch.setattr(watchdog, "_recap_freshness_missing", lambda *a, **k: True)
+    monkeypatch.setattr(watchdog, "_log", lambda *a, **k: None)
+    monkeypatch.setitem(sys.modules, "notify", types.SimpleNamespace(
+        send=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))))
+    st = {}
+    watchdog._recap_alert(st)                    # 不抛（探活优先级高于告警）
+    assert st.get("recap_alert_date") is None    # 未标记成功，下一轮还会再试
+
+
+# ---------------- fetch_daily：整轮抓取硬上限（挂死兜底，10-15 缺口事故防回退） ----------------
+
+def test_fetch_deadline_hard_exits_stuck_run(tmp_path):
+    """到点必须真的终止进程，并顺手释放抓取锁。
+
+    挂死的线程阻塞在内核 socket 上、无法合作式取消，唯一可靠的中断是 os._exit——
+    只能起子进程断言（os._exit 会带走整个进程）。锁不显式释放的话，下一轮要等
+    40 分钟过期接管才放行，正是「挂死一整晚」要避免的形状。
+    """
+    import subprocess as _sp
+
+    recap_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "backend", "recap")
+    lock = tmp_path / "fetch-recap.lock"
+    # 子进程走产品自身的 lockutil.acquire 拿锁：pid 即子进程 pid（release 只删
+    # 「本进程持有」的锁，这是真实运行时的一致形状，也免去在测试里手写文件写入）
+    code = (
+        "import sys, time;"
+        "sys.path.insert(0, %r);"
+        "import fetch_daily as f, lockutil, logutil;"
+        "f.LOCK_PATH = %r;"
+        "assert lockutil.acquire(f.LOCK_PATH);"
+        "f._arm_deadline(0.3, logutil.get_logger('t'));"
+        "time.sleep(5);"
+        "print('NOT-KILLED')"
+    ) % (recap_dir, str(lock))
+    r = _sp.run([sys.executable, "-c", code], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=60)
+    assert r.returncode == 1, (r.returncode, r.stdout[-400:], r.stderr[-400:])
+    assert "NOT-KILLED" not in r.stdout          # 没跑到 sleep 之后
+    assert "硬上限" in r.stdout                   # 留了一条可诊断日志
+    assert not lock.exists()                      # 锁已释放，不挡下一轮
 
 
 # ---------------- speculate：M_Final 纯计算 ----------------
@@ -1040,14 +1179,19 @@ def test_foreign_listeners_live_double_bind():
     port = holder.getsockname()[1]
     child = subprocess.Popen(
         [sys.executable, "-c",
-         "import socket,time;"
+         "import os,socket,time;"
          f"s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);"
          f"s.bind(('127.0.0.1',{port}));s.listen(1);"
-         "print('ok',flush=True);time.sleep(15)"],
+         "print('ok',os.getpid(),flush=True);time.sleep(15)"],
         stdout=subprocess.PIPE)
     try:
-        assert child.stdout.readline().strip() == b"ok"   # 子进程已绑定完成
-        assert _foreign_listeners(port) == [child.pid]
+        line = child.stdout.readline().strip()   # 子进程已绑定完成
+        assert line.startswith(b"ok")
+        # netstat 点名的是真正持有套接字的解释器 PID：venv 的 python.exe 可能是
+        # 启动器壳（uv 系），Popen 的 child.pid 是壳、真身是它再 spawn 的子进程——
+        # 故由子进程自报 os.getpid()，不拿 child.pid 硬对（2026-10-06 修复）。
+        child_pid = int(line.split()[1])
+        assert _foreign_listeners(port) == [child_pid]
     finally:
         child.kill()
         child.wait()

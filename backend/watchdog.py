@@ -17,6 +17,7 @@
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,10 @@ LOGS_KEEP_DAYS = 30         # 杂项日志保留天数（方案 O-4，2026-09-27
 
 FAILS_TO_ALERT = 2          # 连续失败 N 次才告警（单次失败可能是恰好重启窗口）
 RESTART_COOLDOWN_S = 6 * 3600   # 自动拉起后 6 小时内不再重复拉起（防拉起风暴）
+
+RECAP_DEADLINE = (18, 30)   # 交易日当天此刻后仍无当日快照即告警（17:05 任务 + 1.5h 余量）
+RECAP_DIR = os.path.join(ROOT, "data", "recap")
+ASHARE_CAL = os.path.join(RECAP_DIR, "us_market", "ashare_cal.json")
 
 
 def _log(msg):
@@ -126,6 +131,83 @@ def _backup_alert():
                 key="backup:abnormal", min_interval_hours=12)
 
 
+def _local_trade_dates8():
+    """本地 A 股日历（data/recap/us_market/ashare_cal.json）的 8 位交易日集合。
+
+    刻意不触网：看门狗每 15 分钟跑一次，走 hithink 网络日历会把「探活」本身
+    变成网络依赖（网络断时探活脚本自己先卡住）。解析口径与 backend/trade_cal.py
+    的本地兜底同源；日历缺失/损坏/为空返回 None。
+    """
+    try:
+        with open(ASHARE_CAL, encoding="utf-8") as f:
+            dates = json.load(f).get("dates") or []
+    except Exception:  # noqa: BLE001
+        return None
+    d8 = {re.sub(r"\D", "", str(x)) for x in dates}
+    d8 = {d for d in d8 if len(d) == 8}
+    return d8 or None
+
+
+def _recap_freshness_missing(today8, hhmm, local_dates, recap_dir):
+    """纯函数：最近一个「应当已有快照」的交易日是否缺快照（True=该告警）。
+
+    判定的是「最近一个已收盘的交易日」而非死盯今天——机器 17:05 前休眠、当晚
+    关机、次日才开机时，缺口仍要在开机后第一轮巡检里被看到（10-15 缺口正是当晚
+    无人知情、次日 04:05 才被诊断出来）。
+
+    告警门槛取「宁可漏报也不误报」：本地日历不可用、或日历未覆盖今日（日历陈旧，
+    无法判断今天算不算交易日）一律不告警；未到 RECAP_DEADLINE 时今天不算候选
+    （17:05 任务窗口内抓取可能正在进行）；候选集为空（今日之前无交易日）不告警。
+    """
+    if not local_dates:
+        return False
+    if not (min(local_dates) <= today8 <= max(local_dates)):
+        return False                        # 日历陈旧未覆盖今日：不下结论
+    cands = [d for d in local_dates if d < today8]
+    if (hhmm[0], hhmm[1]) >= RECAP_DEADLINE and today8 in local_dates:
+        cands.append(today8)                # 今日是交易日且已过截止时刻：今日也该有
+    if not cands:
+        return False
+    target = max(cands)                     # 最近一个应有快照的交易日
+    return not (os.path.exists(os.path.join(recap_dir, target + ".json"))
+                or os.path.exists(os.path.join(recap_dir, target + ".json.gz")))
+
+
+def _recap_alert(st):
+    """交易日复盘快照缺失告警（每交易日一次；独立于 17:05 采集链本身）。
+
+    2026-10-16 补 10-15 缺口事故：抓取进程被系统级中断（S0 待机断网/关机）时
+    静默消失——无 traceback、无 fetch end、快照未落盘，fetch_task.bat 尾部的
+    失败推送根本没机会执行；凌晨 usclose 链虽能如实诊断，却因 .status/notify.json
+    未配置而静默。看门狗是唯一「独立于采集链」的常驻探针，在此兜住这条路径。
+    """
+    today8 = time.strftime("%Y%m%d")
+    if st.get("recap_alert_date") == today8:   # 同日只报一次（状态跨次运行接力）
+        return
+    lt = time.localtime()
+    if not _recap_freshness_missing(today8, (lt.tm_hour, lt.tm_min),
+                                    _local_trade_dates8(), RECAP_DIR):
+        return
+    # 告警本身绝不允许反噬探活：本函数在 run_once 的两个分支之前调用，抛出就会
+    # 连 watchdog.json 一起丢掉——服务失联计数归零、连败阈值永远到不了。历史上
+    # 「bash 用裸 python 解到 LibreOffice 解释器、import notify 炸掉」已让整条
+    # 告警链静默失效数天（见 watchdog_task.bat 的 data-2 注释），这里显式兜住。
+    try:
+        import notify
+        notify.send(
+            title="复盘快照缺失",
+            text=(f"{time.strftime('%Y-%m-%d %H:%M')}：最近一个交易日（{today8} 或更早）"
+                  "的复盘快照不存在——17:05 采集链失败，或机器休眠/关机错过了任务。\n"
+                  "补齐：看板复盘页点『重新抓取』，或运行 "
+                  "python backend/recap/fetch_daily.py（缺 T 日备选池再跑 "
+                  "python backend/recap/us_close_task.py）。\n"
+                  "（若本条一直没收到，是 .status/notify.json 尚未配置推送渠道。）"),
+            key=f"watchdog:recap-missing:{today8}", min_interval_hours=12)
+        st["recap_alert_date"] = today8
+    except Exception as e:  # noqa: BLE001 - 探活链路优先级高于告警
+        _log(f"[warn] 复盘缺口告警发送失败（不影响探活）: {type(e).__name__}: {e}")
+
+
 def _maybe_restart(cfg):
     """autostart 配置开启且冷却已过 → 后台拉起 start.py（服务级自愈）。
 
@@ -198,6 +280,8 @@ def run_once(port, config_path=None):
         pass
     st = _load_state()
     ok = _probe(port)
+    # 数据缺口与服务的死活无关：无论探活成败都查一次（缺口只能靠这个独立探针发现）
+    _recap_alert(st)
     if ok:
         if st.get("consecutive_fails"):
             _log(f"恢复：服务已响应（此前连续失败 {st['consecutive_fails']} 次）")

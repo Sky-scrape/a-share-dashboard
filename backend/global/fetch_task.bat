@@ -1,6 +1,11 @@
 @echo off
 cd /d "%~dp0..\.."
 set PYTHONIOENCODING=utf-8
+rem [data-2 2026-10-06] bare `python` resolved to LibreOffice's bundled interpreter
+rem (no numpy/requests) and silently broke every task chain for days. Pin the project
+rem venv; PATH python only as last-resort fallback when the venv dir is missing.
+set "PY=.venv-ci\Scripts\python.exe"
+if not exist "%PY%" set "PY=python"
 if not exist .status\logs mkdir .status\logs
 rem Rotate fetch log when over 1MB: keep last 2 copies
 for %%A in (.status\logs\fetch-global.log) do if %%~zA GEQ 1048576 (
@@ -9,5 +14,5 @@ for %%A in (.status\logs\fetch-global.log) do if %%~zA GEQ 1048576 (
   ren .status\logs\fetch-global.log fetch-global.log.1
 )
 echo [%date% %time%] ==== global fetch start ==== >> .status\logs\fetch-global.log
-python backend\global\fetch_global.py >> .status\logs\fetch-global.log 2>&1
+%PY% backend\global\fetch_global.py >> .status\logs\fetch-global.log 2>&1
 echo [%date% %time%] ==== global fetch end ==== >> .status\logs\fetch-global.log

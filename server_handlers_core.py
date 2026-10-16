@@ -19,7 +19,7 @@ import time
 import urllib.parse
 
 from server_context import (MAIN_WEB, WRITE_TOKEN_ENV, READ_TOKEN_ENV,
-                            _CACHE_LOCK, _PROC_LOCK, _fetch_procs,
+                            _CACHE_LOCK, _PROC_LOCK, _PENDING, _fetch_procs,
                             _read_json_file, lockutil)
 
 
@@ -358,7 +358,8 @@ class HandlerCore:
 
         锁纪律：_PROC_LOCK 只护 _fetch_procs 的读写与「查+占位」的原子性，
         Popen/写日志在锁外做——写 socket（409 响应）不能发生在持锁时，
-        否则一个慢客户端能拖住所有并发抓取请求。占位先塞 None，
+        否则一个慢客户端能拖住所有并发抓取请求。占位塞 _PENDING 哨兵
+        （None 与「无记录」不可区分，会让同 key 并发请求双双 Popen），
         Popen 成功后替换，异常时清位。
         respond=False 供内部自愈调用（sector 自动补抓）：同一套锁与进程簿记，
         但不占用请求响应——「已在跑/失败」静默返回，留给下轮轮询观察结果。"""
@@ -369,9 +370,11 @@ class HandlerCore:
             return True
         with _PROC_LOCK:
             proc = _fetch_procs.get(key)
-            running = proc is not None and proc.poll() is None
+            # 占位 _PENDING 与活进程同样算「已在跑」——若把占位排除在 running 之外，
+            # 同 key 并发请求会双双通过检查各自 Popen（2026-10-06 修复）
+            running = proc is _PENDING or (proc is not None and proc.poll() is None)
             if not running:
-                _fetch_procs[key] = None   # 占位：同 key 并发请求在此等价于「已在跑」
+                _fetch_procs[key] = _PENDING   # 占位：同 key 并发请求在此等价于「已在跑」
         if running:
             # 409 写 socket 必须在锁外（上方锁纪律）：慢客户端阻塞发送时不能拖住
             # _PROC_LOCK，否则 health 轮询与全部抓取接口的进程簿记一并卡死。

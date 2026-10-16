@@ -5,6 +5,10 @@ rem 计划任务 arecap-usclose-fetch 每日 04:05 触发；17:05 的 fetch_task
 rem A 股数据落盘，两者时序契约见 backend/recap/us_close_task.py 模块注释。
 cd /d "%~dp0..\.."
 set PYTHONIOENCODING=utf-8
+rem [data-2 2026-10-06] bare `python` resolved to LibreOffice's bundled interpreter
+rem (no numpy/requests); pin the project venv, PATH python as last-resort fallback.
+set "PY=.venv-ci\Scripts\python.exe"
+if not exist "%PY%" set "PY=python"
 if not exist .status\logs mkdir .status\logs
 rem Rotate usclose log when over 1MB: keep last 2 copies
 for %%A in (.status\logs\usclose.log) do if %%~zA GEQ 1048576 (
@@ -13,5 +17,5 @@ for %%A in (.status\logs\usclose.log) do if %%~zA GEQ 1048576 (
   ren .status\logs\usclose.log usclose.log.1
 )
 echo [%date% %time%] ==== bat invoked (task fired) ==== >> .status\logs\usclose.log
-python backend\recap\us_close_task.py >> .status\logs\usclose.log 2>&1
+%PY% backend\recap\us_close_task.py >> .status\logs\usclose.log 2>&1
 exit /b %ERRORLEVEL%

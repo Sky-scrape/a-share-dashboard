@@ -415,13 +415,14 @@ def main():
             check(f"最新快照 {dates[0]} 模块齐", st == 200 and not missing, f"缺 {missing}")
 
         # 笔记 API 回读
-        st0, old = get(base, "/api/recap/note?date=19700101")
+        st0, _ = get(base, "/api/recap/note?date=19700101")
         st1, _ = post(base, "/api/recap/note?date=19700101", {"content": "smoke-测试-α"})
         st2, back = get(base, "/api/recap/note?date=19700101")
         check("笔记 POST->GET 一致", st1 == 200 and (back or {}).get("content") == "smoke-测试-α", str(back)[:80])
-        # 清理
+        # 清理：测试日期固定 19700101，无条件按已知路径删——旧条件「原先无内容才删」
+        # 一旦上次运行残留（中断/失败）就永不清理，生产 notes/ 里会一直躺着测试笔记
         note_fp = os.path.join(ROOT, "data", "recap", "notes", "19700101.md")
-        if old is not None and not old.get("content") and os.path.isfile(note_fp):
+        if os.path.isfile(note_fp):
             os.remove(note_fp)
 
         st, bad = None, None
@@ -494,6 +495,14 @@ def main():
                     encoding="utf-8").read()
         check("17:05 采集失败推送出口（bat 挂 notify_once）",
               "def recap_failed(" in _no and "notify_once.py recap-failed" in _ftb)
+        # 2026-10-16 补 10-15 缺口事故：上游请求无超时 + 系统级中断 = 进程挂到
+        # PT1H 被杀，期间无快照也无日志；整轮抓取装硬上限，到点强退并留可诊断日志
+        _fd = open(os.path.join(ROOT, "backend", "recap", "fetch_daily.py"),
+                   encoding="utf-8").read()
+        check("整轮抓取硬上限（挂死强退，不留静默挂到 PT1H）",
+              "FETCH_DEADLINE_S" in _fd and "def _arm_deadline(" in _fd
+              and "_arm_deadline(FETCH_DEADLINE_S, LOG)" in _fd
+              and "os._exit(1)" in _fd)
         check("凌晨完成链失败推送（us_close_task 挂 notify）",
               "_notify(" in _ucsrc and "chain:snap-missing" in _ucsrc
               and "chain:steps-failed" in _ucsrc)
@@ -508,6 +517,14 @@ def main():
               and "backup_state.json" in _wd
               and "is_loopback" in _wd                    # SSRF：只探环回
               and '"autostart"' in _wd)                   # 拉起开关默认关闭
+        # 2026-10-16 补 10-15 缺口事故：抓取链被系统级中断时静默消失（无 traceback、
+        # 无 fetch end、快照未落盘），bat 尾部失败推送根本没机会执行——看门狗是唯一
+        # 独立于采集链的常驻探针，在探活两分支之外另行兜底「最近交易日缺快照」。
+        check("看门狗兜底复盘数据缺口（独立于 17:05 采集链，进程被杀也能报）",
+              "def _recap_alert(" in _wd and "def _recap_freshness_missing(" in _wd
+              and "recap_alert_date" in _wd                # 每交易日一次（状态接力）
+              and "ashare_cal.json" in _wd                 # 判定走本地日历，不触网
+              and "_recap_alert(st)" in _wd)
         check("运维任务脚本三件套在位（CRLF 由 bat 断言统一覆盖）",
               all(os.path.isfile(os.path.join(ROOT, "backend", _f)) for _f in
                   ("backup_task.bat", "watchdog_task.bat", "autostart_task.bat")))

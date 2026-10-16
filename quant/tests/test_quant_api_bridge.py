@@ -35,7 +35,7 @@ from quant_sim.core.engine import run_backtest  # noqa: E402
 from quant_sim.core.matching import MatchingEngine  # noqa: E402
 from quant_sim.core.risk import RiskManager  # noqa: E402
 from quant_sim.core.strategy_base import Strategy  # noqa: E402
-from quant_sim.core.types import Order, Side  # noqa: E402
+from quant_sim.core.types import Order, OrderType, Side  # noqa: E402
 from tests.helpers import flat_rows, make_panel  # noqa: E402
 
 
@@ -279,6 +279,23 @@ class TestSlippageModels:
         assert fill.price == pytest.approx(10.01), "5% 滑点被裁剪到当日最高价"
         fill_s, _, _ = eng.match_one(Order(symbol="600000", side=Side.SELL, quantity=100), bar, panel.dates[0])
         assert fill_s.price == pytest.approx(9.99), "卖方滑点被裁剪到当日最低价"
+
+    def test_limit_order_never_fills_beyond_limit(self):
+        """限价单语义：滑点+区间裁剪后成交价不得劣于限价（曾买 10.01 越过限价 10.00）。"""
+        rows = [{"open": 10.20, "high": 10.50, "low": 9.90, "close": 10.30, "volume": 1e6}]
+        panel = make_panel({"600000": rows})
+        bar = panel.bars(panel.dates[0])["600000"]
+        eng = MatchingEngine(self._cm("percent", 5e-4), Contract(), execution="next_open")
+        buy = Order(symbol="600000", side=Side.BUY, quantity=100,
+                    order_type=OrderType.LIMIT, limit_price=10.00)
+        fill, status, _ = eng.match_one(buy, bar, panel.dates[0])
+        assert fill is not None and status.value == "filled"
+        assert fill.price <= 10.00 + 1e-9, "买单成交价不得高于限价"
+        sell = Order(symbol="600000", side=Side.SELL, quantity=100,
+                     order_type=OrderType.LIMIT, limit_price=10.30)
+        fill_s, _, _ = eng.match_one(sell, bar, panel.dates[0])
+        assert fill_s is not None
+        assert fill_s.price >= 10.30 - 1e-9, "卖单成交价不得低于限价"
 
 
 # ------------------------------------------------------------------ hithink 新鲜度快路

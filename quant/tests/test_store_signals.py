@@ -89,6 +89,15 @@ def test_store_builtin_and_code(tmp_path):
     assert type(st2).__name__ == "MyStrategy"
 
 
+def test_store_builtin_replays_archived_data_symbols(tmp_path):
+    """内置存档回放必须用存档顶层 data_symbols（曾从 payload 取导致池被静默丢弃，
+    不传 universe 兜底时动量轮动直接抛「至少需要 2 只标的池」）。"""
+    save_strategy("m", "builtin", {"family": "momentum", "params": {}},
+                  data_symbols=["510300", "510500", "159915"], store_dir=str(tmp_path))
+    strat = build_saved(load_strategy("m", store_dir=str(tmp_path)))  # 不传 universe，纯靠存档池
+    assert list(strat.universe) == ["510300", "510500", "159915"]
+
+
 # ---------------------------------------------------------------- signals
 def test_signals_keep_positions_and_pending(panel):
     from quant_sim.tools.signals import compute_signals, signal_report

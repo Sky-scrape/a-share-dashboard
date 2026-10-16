@@ -3,7 +3,7 @@
 存储布局：项目根 `strategies_store/<安全名>.json`，每文件一条：
     {"name", "kind": rule|code|builtin, "created", "updated", "note",
      "payload": {spec / {code} / {family, params}},
-     "meta": {"data_symbols": [...]}}
+     "data_symbols": [...]}
 
 kind=rule   payload=GenericRuleStrategy 的 spec（纯 JSON）
 kind=code   payload={"code": "..."}（沙箱编译）
@@ -240,7 +240,9 @@ def build_saved(s: SavedStrategy, universe: Optional[List[str]] = None, *, allow
         # 与 quant_api.build_strategy_from_desc 同一构造路径（build 钩子）：
         # 参数清洗/校验/标的缺省在「表单直连」与「存档回放」两路不再漂移
         # （旧实现走 _BUILTIN_FAMILIES[fam].split(":") 直构，绕过了 build 适配）。
-        codes = list(s.payload.get("data_symbols") or []) or list(universe or [])
+        # 标的池以存档顶层 data_symbols 为准（保存/加载都在顶层，payload 从不携带——
+        # 旧写法从 payload 取导致存档池被静默丢弃，退化为调用方 universe）。
+        codes = list(s.data_symbols or []) or list(universe or [])
         return ref["build"](dict(s.payload.get("params") or {}), codes)
     raise ValueError(f"未知类型 {s.kind}")
 

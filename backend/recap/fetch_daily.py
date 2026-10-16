@@ -17,6 +17,11 @@ import sys
 import time
 
 sys.stdout.reconfigure(encoding="utf-8")
+# 行缓冲＋每次写入即落盘（2026-10-16 补 10-15 缺口事故）：.bat 把 stdout 重定向到
+# 日志文件时 Python 默认块缓冲（4~8KB），被强杀（PT1H/关机）时最后一段日志连同
+# 「卡在哪一步」的线索一起丢在缓冲区里——10-15 当天日志停在进度条、之后全无，
+# 正是这个原因（进度条走 stderr 行缓冲才留下来）。write_through 让每行即刻可见。
+sys.stdout.reconfigure(line_buffering=True, write_through=True)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -35,6 +40,40 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(BACKEND_DIR))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data", "recap")
 LOCK_PATH = os.path.join(PROJECT_ROOT, ".status", "fetch-recap.lock")
+
+# 整轮抓取的硬上限（2026-10-16 补 10-15 缺口事故）：抓取链被系统级中断（S0 待机
+# 断网 / 网络中断）时，上游无 timeout 的请求（akshare 走 requests 不设超时）会把
+# 进程永久挂在某个 socket 上——10-15 当晚即为：无 traceback、无 fetch end、快照未
+# 落盘，直到计划任务 PT1H 兜底杀整棵进程树，事后无从判断卡在哪一步。正常一轮
+# 1~2 分钟，20 分钟足以区分「慢」与「挂死」。
+FETCH_DEADLINE_S = 1200
+
+
+def _arm_deadline(limit_s, log):
+    """起守护线程：抓取超过 limit_s 秒仍在跑 → 记一条可诊断日志后强制终止进程。
+
+    为什么是 os._exit：挂死的线程阻塞在内核 socket 上，无法被合作式取消，唯一
+    可靠的中断就是终止进程。两项收尾显式做掉——释放抓取锁（pid 是本进程，正常
+    路径；即便漏掉也有 lockutil 的 40 分钟过期接管兜底），flush 输出（否则那条
+    诊断日志随进程一起消失）；快照本身走 fsutil 原子写，绝不会留半截文件。
+    """
+    import threading
+
+    def _kill():
+        time.sleep(limit_s)
+        log.error(f"== 抓取超过硬上限 {limit_s}s 未完成，强制退出（上游请求无超时挂死？） ==")
+        try:
+            lockutil.release(LOCK_PATH)
+        except Exception:  # noqa: BLE001 - 收尾失败不改变「必须退出」的结论
+            pass
+        for f in (sys.stdout, sys.stderr):
+            try:
+                f.flush()
+            except Exception:  # noqa: BLE001
+                pass
+        os._exit(1)
+
+    threading.Thread(target=_kill, name="fetch-deadline", daemon=True).start()
 
 
 def _is_trade_day(date):
@@ -85,6 +124,7 @@ def main():
     if lock is None:
         LOG.info(f"{date}: 已有复盘抓取在运行（锁 {LOCK_PATH}），本次跳过。")
         sys.exit(0)
+    _arm_deadline(FETCH_DEADLINE_S, LOG)   # 挂死兜底：到点强退，好过静默挂到 PT1H
     try:
         _run(args, date)
     finally:
@@ -100,6 +140,15 @@ def _run(args, date):
         if trade is False:
             LOG.info(f"{date}: 非交易日（周末/法定节假日），已跳过。用 --force 可强制抓取。")
             sys.exit(0)
+
+    # 盘前/盘中拒绝抓当日（20260930 事故修复）：涨停/跌停/炸板池、龙虎榜等盘后数据
+    # 收盘（15:00）后才存在，提前抓只会写出全 0 空快照占住当日槽位——09-30 的空快照
+    # 正是 08:58 手动运行写入、此后 17:05 任务连崩 7 天没被覆盖。--force 可显式越过。
+    if (not args.force and date == time.strftime("%Y%m%d")
+            and datetime.datetime.now().time() < datetime.time(15, 0)):
+        LOG.warning(f"{date}: 未到收盘（15:00），盘后数据（涨跌停池/龙虎榜）尚不存在，"
+                    f"拒绝抓取以免空快照占位；确要提前抓请加 --force。")
+        sys.exit(0)
 
     LOG.info(f"== 抓取 {date} 全套数据 ==")
     results = providers.fetch_all()

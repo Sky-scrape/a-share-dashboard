@@ -90,6 +90,9 @@ _DATE8_RE = re.compile(r"\d{8}")
 _CACHE_LOCK = threading.RLock()
 _PROC_LOCK = threading.Lock()
 _fetch_procs = {}  # key -> 正在运行的手动抓取进程（同进程防重入）
+# 占位哨兵：Popen 尚未完成的 spawn 中间态。不能用 None 占位——None 与
+# 「无记录」不可区分，同 key 并发请求会双双通过检查各自 Popen（2026-10-06 修复）。
+_PENDING = object()
 _auto_sector_ts = [0.0]  # sector 自愈补抓上次试探时刻（10 分钟节流；列表便于函数内改写）
 _auto_rot_ts = [0.0]     # 轮动断流自愈上次试探时刻（同上，10 分钟节流）
 
@@ -636,6 +639,7 @@ def health_payload():
             "errors": glob_errors,
             "stale_blocks": glob_stale,   # 沿用上一份的块（_keep），非本次实抓
             "fetching": (lockutil.held_info(LOCK_GLOBAL) is not None
+                         or gp_proc is _PENDING
                          or (gp_proc is not None and gp_proc.poll() is None)),
         },
         "us_market": _us_market_health(),
@@ -713,7 +717,7 @@ def _health_alerts(h):
                             "检查计划任务 auction_task.bat"))
             rc = h.get("recap") or {}
             if "19:30" <= hm <= "23:59" \
-                    and rc.get("last_date") != time.strftime("%Y-%m-%d"):
+                    and rc.get("last_date") != time.strftime("%Y%m%d"):
                 out.append(("recap.missing",
                             f"17:05 复盘采集今日未见落盘（最新 {rc.get('last_date') or '-'}），"
                             "检查 data/fetch.log 与计划任务 arecap-daily-fetch"))
