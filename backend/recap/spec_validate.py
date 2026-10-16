@@ -36,6 +36,8 @@ _OPT_BASELINE_MINSCORE = {"lu": 70.0, "nlu": 70.0}   # C7 固化门槛基线（e
 _OPT_WINDOW_DAYS = 45      # 滚动统计窗口（自然日）
 _OPT_BUCKET_MIN_N = 8      # 分桶惩罚最少样本
 _OPT_MINSCORE_MIN_N = 20   # 门槛调整最少样本
+_EXEC_T2_WINDOW_DAYS = 20  # 制度口径（T+2）看板滚动窗口 = 样本外复审窗口（同口径对齐）
+_EXEC_T2_FILL_DAYS = 25    # 每次补算只覆盖最近 N 条记录（看板只需近端；防首次全量查询）
 
 # ---------------------------------------------------------------- 每日验证与自我优化
 # 闭环：T-1 日盘后选出 T 日关注标的 → T 日收盘后用真实走势验证（买点/风险位/归因）
@@ -136,6 +138,58 @@ def _val_attribute(grp, o, c, l, amtr, triggered, b, ind_pct=None, con_pct=None)
     return "个股辨识度不够/其他"
 
 
+def _norm8(s):
+    """任意日期写法 → 8 位日期串（'' 原样返回）。"""
+    d = "".join(ch for ch in str(s or "") if ch.isdigit())
+    return d[:8] if len(d) >= 8 else ""
+
+
+def _trade_days():
+    """权威 A 股交易日集合（8 位）：backend/trade_cal → 本地日历缓存
+    `data/recap/us_market/ashare_cal.json`（akshare 新浪口径全量、us_market 每日刷新）。
+    不可用返回 None（调用方退化为「面板∪快照」近似，见 _prev_pool_date）。"""
+    try:
+        import trade_cal  # noqa: PLC0415  交易日历单一来源（backend/trade_cal.py）
+        return trade_cal._local_dates8()
+    except Exception:  # noqa: BLE001 - 日历不可用不阻断验证
+        return None
+
+
+def _prev_pool_date(date8, sent_rows, snap_dates=None, trade_days=None):
+    """上一交易日（被验选股池日期）。两级来源，绝不静默回退到更早的池：
+
+    1) **权威日历**（`ashare_cal.json`，全量交易日）：取严格早于验证日的最大交易日
+       ——精确到「上一交易日」，与节假日后重开（如 09-25 中秋后 09-28）自动对齐；
+    2) 日历不可用时退化：**面板日期 ∪ 快照日期** 中 < 验证日 的最大值（次优近似；
+       仍优于 2026-10-16 前的「只看面板最后一行」——面板缺行时那版会静默回退，
+       2026-09-29 因此重验了 09-24 的池）。
+
+    返回 (date8, meta)；meta 记录两侧各自的最新日期与所用来源，供台账审计留痕。
+    """
+    iso = _date_iso(date8)
+    if trade_days is None:
+        trade_days = _trade_days()
+    cal_prev = None
+    if trade_days:
+        cands = [_norm8(d) for d in trade_days if _norm8(d) and _date_iso(_norm8(d)) < iso]
+        cal_prev = max(cands) if cands else None
+    panel = sorted({str(r.get("date") or "") for r in (sent_rows or [])
+                    if str(r.get("date") or "") < iso and str(r.get("date") or "")})
+    snaps = sorted({_norm8(d) for d in (snap_dates or [])
+                    if _norm8(d) and _date_iso(_norm8(d)) < iso})
+    panel8 = _norm8(panel[-1]) if panel else None
+    snap8 = snaps[-1] if snaps else None
+    approx = max([d for d in (panel8, snap8) if d], default=None)
+    prev8 = cal_prev or approx
+    meta = {"source": "ashare_cal" if cal_prev else ("panel+snap" if approx else None),
+            "cal_prev": _date_iso(cal_prev) if cal_prev else None,
+            "panel_prev": _date_iso(panel8) if panel8 else None,
+            "snap_prev": _date_iso(snap8) if snap8 else None,
+            "prev": _date_iso(prev8) if prev8 else None,
+            "agree": bool(cal_prev and approx and cal_prev == approx)}
+    return prev8, meta
+
+
 def validate_prev_pool(date8, sent_rows, concept_pct=None):
     """验证上一交易日备选池：昨日选的票今天是否成功（买点/风险位/归因）。
 
@@ -146,16 +200,26 @@ def validate_prev_pool(date8, sent_rows, concept_pct=None):
     返回 payload；无上一交易日或其快照无备选池时 ok=False（仍留痕，让优化器知道空窗）。
     旧 V3 口径的昨日 picks（无 factors）照常验证结果、归因，但不参与优化器分桶学习
     （rules=v3/mf/cf 标记，优化器只学 C7 口径样本）。
+
+    上一交易日取「面板日期 ∪ 快照日期」的最新（_prev_pool_date，2026-10-16 修正）；
+    若该日快照缺失则 fail-closed 留空待补，**绝不回退到更早的池**（防错配样本入台账）。
     """
-    iso = _date_iso(date8)
-    prevs = [r["date"] for r in sent_rows if (r["date"] or "") < iso]
-    if not prevs:
+    try:
+        snap_dates = snapio.list_dates()
+    except Exception:  # noqa: BLE001 - 列目录失败退化为仅面板（不阻断当日验证）
+        snap_dates = []
+    prev8, cal = _prev_pool_date(date8, sent_rows, snap_dates, trade_days=_trade_days())
+    if not prev8:
         return None
-    prev8 = prevs[-1].replace("-", "")
+    if snap_dates and prev8 not in set(snap_dates):
+        return {"ok": False, "date": prev8, "rules": None, "picks": [], "pending": True,
+                "calendar": cal,
+                "note": f"上一交易日 {prev8} 快照缺失，验证留空待补（不回退到更早的池）"}
     try:
         snap = snapio.load(prev8)
     except Exception:  # noqa: BLE001
         snap = None
+    iso = _date_iso(date8)
     mod = ((snap or {}).get("modules") or {}).get("speculation") or {}
     pool = (mod.get("data") or {}).get("pool") or {}
     picks = pool.get("picks") or []
@@ -165,6 +229,7 @@ def validate_prev_pool(date8, sent_rows, concept_pct=None):
                  else "mf" if "M_Final" in note0 else "v3")
     if not picks:
         return {"ok": False, "date": prev8, "rules": rules_tag, "picks": [],
+                "calendar": cal,
                 "note": "上一交易日快照无备选池标的（冰点或模块缺失）"}
     try:
         ohlc = ohlc_rets(date8, [str(p.get("代码") or "") for p in picks])
@@ -239,6 +304,7 @@ def validate_prev_pool(date8, sent_rows, concept_pct=None):
     if n_none:
         parts.append(f"{n_none} 只两源均无日线（按停牌/缺失处理）")
     return {"ok": True, "date": prev8, "env": pool.get("env"), "rules": rules_tag,
+            "calendar": cal,
             "picks": out, "stats": {"overall": _val_stats(out),
                                     "lu": _val_stats([p for p in out if p["group"] == "lu"]),
                                     "nlu": _val_stats([p for p in out if p["group"] == "nlu"]),
@@ -297,7 +363,13 @@ def _exec_pnl_realtime(grp, o, h, l, c):
 
 def _val_exec_stats(rows):
     """执行口径度量（C8 度量层，2026-09-10 全窗口实证后新增）：
-    放弃/可成交/实时均益/MFE/MAE/止损质量——条件期望与可执行收益的差距留痕。"""
+    放弃/可成交/实时均益/MFE/MAE/止损质量——条件期望与可执行收益的差距留痕。
+
+    **口径性质（2026-10-16 C15 复审加注）**：本函数沿用「T+1 盘中触 risk_low 即止损
+    离场」的约定，而 A 股 T+1 制度下**当日买入不可卖出**，故该止损**不可执行**，
+    此处的 pnl_avg 是**乐观诊断代理**而非可交易收益。可执行口径（T+1 买 / T+2 卖 /
+    含费）另由 `spec_exec_t2` 提供，见 stats.exec_t2 与 picks[].exec_t2。
+    """
     out = {}
     for grp in ("lu", "nlu"):
         b = _MF_BUY[grp]
@@ -340,6 +412,10 @@ def _val_exec_stats(rows):
             "stop_whipsaw": len(whipsaw),
             "stop_saved_avg": (round(sum(saved) / len(saved), 2) if saved else None),
         }
+    # 口径标注（2026-10-16）：本段是乐观诊断代理，非可执行收益——前端按此原文展示，
+    # 避免把「实时均益」读成能拿到手的钱（可执行口径见 stats.exec_t2）。
+    out["_label"] = "诊断代理·T+1 当日止损（A股当日不可卖，不可执行）"
+    out["_executable_see"] = "stats.exec_t2（制度口径 T+1 买→T+2 卖·含费）"
     return out
 
 
@@ -358,14 +434,56 @@ def _save_track(track):
     fsutil.save_json_atomic(POOL_TRACK, track)
 
 
+def _track_for_diag(track):
+    """诊断视图：剔除「验证日 ↔ 选股池」日期错配的记录（**只影响诊断展示，不动台账**）。
+
+    C15 复审坐实 2026-09-29 重验了 09-24 的池（同一池按两组价格各计一次），
+    这样的记录会把可执行口径汇总带偏。台账原样保留（审计证据），仅在诊断口径上
+    按 `_prev_pool_date` 复算应验池日期并剔除不一致者——与新写入路径同一判据。
+    """
+    try:
+        snaps = snapio.list_dates()
+    except Exception:  # noqa: BLE001 - 列目录失败退化为不过滤（不伪造结论）
+        return dict(track.get("validations") or {})
+    cal = _trade_days()          # 一次读取，避免逐条记录重复读日历文件
+    out = {}
+    for k, v in (track.get("validations") or {}).items():
+        exp, _meta = _prev_pool_date(k, [], snaps, trade_days=cal)
+        actual = _norm8((v or {}).get("date"))
+        if exp and actual and actual != exp:
+            continue
+        out[k] = v
+    return out
+
+
 def record_validation(date8, val):
-    """验证记录按验证日覆盖写（回填/重跑幂等）。"""
+    """验证记录按验证日覆盖写（回填/重跑幂等）；返回制度口径近端汇总（诊断用）。
+
+    顺带补算近期记录的制度口径（A 股 T+1：T+1 买 / T+2 卖 / 含费，`spec_exec_t2`）——
+    该字段与返回的汇总**只作看板诊断展示，不参与 `_oos_verdict` 判定**
+    （判定阈值是冻结口径；换口径须另起研究轮次，见 C15 复审 report.md）。
+    补算失败不影响验证留档（诊断是尽力而为）。
+    """
     track = _load_track()
     track["validations"][str(date8)] = val
     # 只保留最近 180 个验证日，防无限膨胀
     keys = sorted(track["validations"])[-180:]
     track["validations"] = {k: track["validations"][k] for k in keys}
+    summary = None
+    try:
+        import spec_exec_t2  # noqa: PLC0415  诊断口径单一来源
+        spec_exec_t2.fill_recent(track, limit=_EXEC_T2_FILL_DAYS)
+        summary = spec_exec_t2.rolling_summary(_track_for_diag(track),
+                                               days=_EXEC_T2_WINDOW_DAYS)
+    except Exception as e:  # noqa: BLE001 - 诊断补算失败绝不连坐验证留档
+        try:
+            import logutil  # noqa: PLC0415
+            logutil.get_file_logger("ak.recap").warning(
+                "制度口径补算失败（不影响验证留档）: %s: %s", type(e).__name__, str(e)[:150])
+        except Exception:  # noqa: BLE001
+            pass
     _save_track(track)
+    return summary
 
 
 def _optimizer_state(date8):

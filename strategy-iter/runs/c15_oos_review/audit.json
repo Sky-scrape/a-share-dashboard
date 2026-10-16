@@ -1,0 +1,370 @@
+{
+ "records": [
+  {
+   "validation_date": "20260910",
+   "expected_pool_date": "20260909",
+   "actual_pool_date": "20260909",
+   "status": "match",
+   "ok": true,
+   "n_picks": 1,
+   "pool_state": "ok",
+   "pool_n": 1,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260911",
+   "expected_pool_date": "20260910",
+   "actual_pool_date": "20260910",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260914",
+   "expected_pool_date": "20260911",
+   "actual_pool_date": "20260911",
+   "status": "match",
+   "ok": true,
+   "n_picks": 3,
+   "pool_state": "ok",
+   "pool_n": 3,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260915",
+   "expected_pool_date": "20260914",
+   "actual_pool_date": "20260914",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "normal",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260916",
+   "expected_pool_date": "20260915",
+   "actual_pool_date": "20260915",
+   "status": "match",
+   "ok": false,
+   "n_picks": 0,
+   "pool_state": "empty_pool",
+   "pool_n": 0,
+   "env": null,
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260917",
+   "expected_pool_date": "20260916",
+   "actual_pool_date": "20260916",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "aggressive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260918",
+   "expected_pool_date": "20260917",
+   "actual_pool_date": "20260917",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "normal",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260921",
+   "expected_pool_date": "20260918",
+   "actual_pool_date": "20260918",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "aggressive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260922",
+   "expected_pool_date": "20260921",
+   "actual_pool_date": "20260921",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "aggressive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260923",
+   "expected_pool_date": "20260922",
+   "actual_pool_date": "20260922",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "aggressive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260924",
+   "expected_pool_date": "20260923",
+   "actual_pool_date": "20260923",
+   "status": "match",
+   "ok": true,
+   "n_picks": 1,
+   "pool_state": "ok",
+   "pool_n": 1,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20260928",
+   "expected_pool_date": "20260924",
+   "actual_pool_date": "20260924",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "defensive",
+   "pool_validated_times": 2,
+   "duplicate": true
+  },
+  {
+   "validation_date": "20260929",
+   "expected_pool_date": "20260928",
+   "actual_pool_date": "20260924",
+   "status": "mismatch",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "empty_pool",
+   "pool_n": 0,
+   "env": "defensive",
+   "pool_validated_times": 2,
+   "duplicate": true
+  },
+  {
+   "validation_date": "20260930",
+   "expected_pool_date": "20260929",
+   "actual_pool_date": "20260929",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "normal",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261008",
+   "expected_pool_date": "20260930",
+   "actual_pool_date": "20260930",
+   "status": "match",
+   "ok": false,
+   "n_picks": 0,
+   "pool_state": "empty_pool",
+   "pool_n": 0,
+   "env": null,
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261009",
+   "expected_pool_date": "20261008",
+   "actual_pool_date": "20261008",
+   "status": "match",
+   "ok": true,
+   "n_picks": 3,
+   "pool_state": "ok",
+   "pool_n": 3,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261012",
+   "expected_pool_date": "20261009",
+   "actual_pool_date": "20261009",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "normal",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261013",
+   "expected_pool_date": "20261012",
+   "actual_pool_date": "20261012",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261014",
+   "expected_pool_date": "20261013",
+   "actual_pool_date": "20261013",
+   "status": "match",
+   "ok": true,
+   "n_picks": 4,
+   "pool_state": "ok",
+   "pool_n": 4,
+   "env": "normal",
+   "pool_validated_times": 1,
+   "duplicate": false
+  },
+  {
+   "validation_date": "20261015",
+   "expected_pool_date": "20261014",
+   "actual_pool_date": "20261014",
+   "status": "match",
+   "ok": true,
+   "n_picks": 2,
+   "pool_state": "ok",
+   "pool_n": 2,
+   "env": "defensive",
+   "pool_validated_times": 1,
+   "duplicate": false
+  }
+ ],
+ "duplicate_pools": [
+  "20260924"
+ ],
+ "missing_pool_dates": [],
+ "missing_empty_pool_dates": [
+  "20260928"
+ ],
+ "raw": {
+  "n": 38,
+  "win_rate": 42.11,
+  "avg_close": 0.721,
+  "median_close": -0.28,
+  "risk_hit_rate": 39.5
+ },
+ "clean": {
+  "n": 36,
+  "win_rate": 44.44,
+  "avg_close": 0.948,
+  "median_close": -0.07,
+  "risk_hit_rate": 38.9
+ },
+ "clean_by_group": {
+  "lu": {
+   "n": 29,
+   "win_rate": 44.83,
+   "avg_close": 1.435,
+   "median_close": -0.28,
+   "risk_hit_rate": 31.0
+  },
+  "nlu": {
+   "n": 7,
+   "win_rate": 42.86,
+   "avg_close": -1.07,
+   "median_close": -0.07,
+   "risk_hit_rate": 71.4
+  }
+ },
+ "clean_by_env": {
+  "aggressive": {
+   "n": 8,
+   "win_rate": 25.0,
+   "avg_close": 0.233,
+   "median_close": -0.44,
+   "risk_hit_rate": 25.0
+  },
+  "defensive": {
+   "n": 16,
+   "win_rate": 50.0,
+   "avg_close": 1.468,
+   "median_close": 0.83,
+   "risk_hit_rate": 43.8
+  },
+  "normal": {
+   "n": 12,
+   "win_rate": 50.0,
+   "avg_close": 0.731,
+   "median_close": 0.8,
+   "risk_hit_rate": 41.7
+  }
+ },
+ "clean_by_month": {
+  "2026-09": {
+   "n": 23,
+   "win_rate": 56.52,
+   "avg_close": 2.152,
+   "median_close": 0.86,
+   "risk_hit_rate": 34.8
+  },
+  "2026-10": {
+   "n": 13,
+   "win_rate": 23.08,
+   "avg_close": -1.182,
+   "median_close": -2.12,
+   "risk_hit_rate": 46.2
+  }
+ },
+ "clean_by_phase": {
+  "发酵": {
+   "n": 4,
+   "win_rate": 50.0,
+   "avg_close": 0.372,
+   "median_close": 0.87,
+   "risk_hit_rate": 25.0
+  },
+  "退潮": {
+   "n": 16,
+   "win_rate": 43.75,
+   "avg_close": -0.281,
+   "median_close": -0.05,
+   "risk_hit_rate": 50.0
+  },
+  "震荡": {
+   "n": 14,
+   "win_rate": 42.86,
+   "avg_close": 2.569,
+   "median_close": -0.28,
+   "risk_hit_rate": 28.6
+  },
+  "高潮": {
+   "n": 2,
+   "win_rate": 50.0,
+   "avg_close": 0.575,
+   "median_close": 7.12,
+   "risk_hit_rate": 50.0
+  }
+ }
+}

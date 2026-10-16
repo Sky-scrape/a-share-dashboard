@@ -985,6 +985,8 @@ def test_validate_prev_pool_marks_em_source_and_note(monkeypatch):
                    "得分": 78.5, "factors": {"group": "lu", "lb": 1, "sealed": True}}],
         "note": "C7 主板概念口径", "env": "defensive"}}}}}
     monkeypatch.setattr(spec_validate.snapio, "load", lambda d8: snap)
+    monkeypatch.setattr(spec_validate.snapio, "list_dates", lambda: ["20260914", "20260911"])
+    monkeypatch.setattr(spec_validate, "_trade_days", lambda: {"20260911"})  # 受控日历
     monkeypatch.setattr(spec_validate, "ohlc_rets",
                         lambda d8, cs: {"605258": {"o": -0.78, "h": 5.44, "l": -1.93,
                                                    "c": 0.83, "amtr": 1.63, "src": "em"}})
@@ -996,6 +998,84 @@ def test_validate_prev_pool_marks_em_source_and_note(monkeypatch):
     val = spec_validate.validate_prev_pool("20260914", [{"date": "2026-09-11"}])
     assert val["ok"] and val["picks"][0]["data_src"] == "em"
     assert "全市场日线" in (val["note"] or "") and "备源" in (val["note"] or "")
+    # 台账留痕：日历来源两侧都写明（2026-10-16 日期匹配修正）
+    assert val["calendar"]["source"] == "ashare_cal"
+    assert val["calendar"]["prev"] == "2026-09-11"
+    assert val["calendar"]["panel_prev"] == "2026-09-11"
+
+
+# ---------------- 上一交易日解析：面板缺行不得回退到更早的池（C15 复审修正） --------
+
+def test_prev_pool_date_uses_authoritative_calendar():
+    """一级来源：权威 A 股日历（跨节假日自动对齐，不靠面板/快照存在性）。"""
+    import spec_validate as sv
+    cal = {"20260924", "20260928", "20260929", "20261008"}
+    # 节假日（09-25 中秋）后重开：09-28 的上一交易日是 09-24，不是「前一天」
+    d8, meta = sv._prev_pool_date("20260928", [], [], trade_days=cal)
+    assert d8 == "20260924" and meta["source"] == "ashare_cal"
+    # 09-29 的上一个交易日是 09-28（旧实现因面板缺行错验成 09-24 的那一天）
+    assert sv._prev_pool_date("20260929", [], [], trade_days=cal)[0] == "20260928"
+    # 日历含未来日期（ashare_cal 覆盖到年末）不得入选
+    assert sv._prev_pool_date("20260929", [], [], trade_days=cal | {"20261010"})[0] == "20260928"
+    # 日历里无更早交易日 → None（调用方不验证，绝不编造）
+    assert sv._prev_pool_date("20260924", [], [], trade_days=cal)[0] is None
+
+
+def test_prev_pool_date_falls_back_to_panel_and_snapshots():
+    """二级来源（日历不可用）：面板 ∪ 快照取最新，仍不回退到更早的池。"""
+    import spec_validate as sv
+    # 面板缺 09-14（0928 场景复刻）→ 快照补上
+    d8, meta = sv._prev_pool_date("20260915", [{"date": "2026-09-11"}],
+                                  ["20260914", "20260911"], trade_days=set())
+    assert d8 == "20260914" and meta["source"] == "panel+snap"
+    assert meta["panel_prev"] == "2026-09-11" and meta["snap_prev"] == "2026-09-14"
+    # 面板比快照新 → 取面板
+    d8, meta = sv._prev_pool_date("20260915", [{"date": "2026-09-14"}], ["20260911"],
+                                  trade_days=set())
+    assert d8 == "20260914" and meta["snap_prev"] == "2026-09-11"
+    # 两侧都为空 → None
+    assert sv._prev_pool_date("20260915", [], [], trade_days=set())[0] is None
+    # 验证日当天/之后的日期不得入选
+    assert sv._prev_pool_date("20260915", [{"date": "2026-09-15"}], ["20260915"],
+                              trade_days=set())[0] is None
+
+
+def test_validate_prev_pool_fails_closed_when_snapshot_missing(monkeypatch):
+    """上一交易日快照缺失时留空待补，绝不拿更早的池顶替（错配样本源头）。"""
+    import spec_validate as sv
+    monkeypatch.setattr(sv.snapio, "list_dates", lambda: ["20260924", "20260923"])
+    # 日历精确给出 09-28（该日快照缺失）→ fail-closed，不得回退到 09-24
+    monkeypatch.setattr(sv, "_trade_days", lambda: {"20260924", "20260923", "20260928"})
+    monkeypatch.setattr(sv.snapio, "load", lambda d8: pytest.fail("不应读取更早的池"))
+    val = sv.validate_prev_pool("20260929", [{"date": "2026-09-28"}])
+    assert val["ok"] is False and val["pending"] is True
+    assert val["date"] == "20260928" and "留空待补" in val["note"]
+    assert "不回退" in val["note"]
+
+
+def test_validate_prev_pool_uses_snapshot_when_panel_lags(monkeypatch):
+    """0929 场景：面板缺 09-28 行，快照有 → 验证 09-28 池（旧实现会错验 09-24）。"""
+    import spec_validate as sv
+    seen = {}
+    snap = {"modules": {"speculation": {"data": {"pool": {
+        "picks": [{"代码": "600802", "名称": "福建水泥", "类型": "涨停板", "得分": 84.0}],
+        "note": "C7 主板概念口径", "env": "defensive"}}}}}
+
+    def _load(d8):
+        seen["d8"] = d8
+        return snap
+    monkeypatch.setattr(sv.snapio, "list_dates", lambda: ["20260928", "20260924"])
+    monkeypatch.setattr(sv, "_trade_days", lambda: None)   # 日历不可用 → 走兜底来源
+    monkeypatch.setattr(sv.snapio, "load", _load)
+    monkeypatch.setattr(sv, "ohlc_rets", lambda d8, cs: {"600802": {"o": 0.6, "h": 9.97,
+                                                                   "l": 0.0, "c": 9.97}})
+    monkeypatch.setattr(sv, "layer_status", lambda: {"layer_n": 1, "last_bar": "2026-09-29"})
+    monkeypatch.setattr(sv, "index_series", lambda *a: [])
+    monkeypatch.setattr(sv, "_industry_lookup", lambda: {})
+    val = sv.validate_prev_pool("20260929", [{"date": "2026-09-24"}])
+    assert seen["d8"] == "20260928" and val["date"] == "20260928"
+    assert val["calendar"]["source"] == "panel+snap"
+    assert val["calendar"]["snap_prev"] == "2026-09-28"
 
 
 # ------------------------------------------------- 出站守卫入口（O-1 · 2026-09-27）
@@ -1198,6 +1278,242 @@ def test_foreign_listeners_live_double_bind():
         holder.close()
 
 
+# ---------------- 研究引擎档位闸门（C15 候选 A：情绪过热降级，2026-10-16） ---------
+
+def _regime_mods():
+    """导入 strategy-iter 的 indicators（研究库不在 conftest 路径里，这里显式加）。"""
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for p in (os.path.join(root, "strategy-iter"), os.path.join(root, "strategy-iter", "engine")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    import indicators  # noqa: PLC0415
+    return indicators
+
+
+def _rrow(lu, adv, ld, prev3=None, **kw):
+    d = {"lu_cnt": lu, "adv_ratio": adv, "ld_cnt": ld, "amt_ratio": 1.0}
+    if prev3 is not None:
+        d["lu_prev3"] = prev3
+    d.update(kw)
+    return d
+
+
+def test_regime_base_unchanged_without_gate():
+    """不配置 overheat_downgrade 时判定与 C6/C7 原口径逐字节一致（回归护栏）。"""
+    ind = _regime_mods()
+    cfg = {"panic_ld": 30, "aggressive_lu": 75, "aggressive_adv": 0.52,
+           "aggressive_ld_max": 15, "freeze_lu": 25, "freeze_adv": 0.3,
+           "defensive_lu": 45, "defensive_adv": 0.4}
+    assert ind.classify_regime(_rrow(89, 0.83, 2, 90.0), cfg) == "aggressive"
+    assert ind.classify_regime(_rrow(51, 0.34, 19, 83.7), cfg) == "defensive"
+    assert ind.classify_regime(_rrow(20, 0.2, 5, 40.0), cfg) == "freeze"
+    assert ind.classify_regime(_rrow(31, 0.3, 5, 40.0), cfg) == "defensive"
+    assert ind.classify_regime(_rrow(55, 0.5, 5, 40.0), cfg) == "normal"
+
+
+def test_regime_overheat_downgrade_gate():
+    """候选 A 闸门：涨停家数 > 前3日均值×ratio 时档位降一档；缺 lu_prev3 时不降。"""
+    ind = _regime_mods()
+    cfg = {"panic_ld": 30, "aggressive_lu": 75, "aggressive_adv": 0.52,
+           "aggressive_ld_max": 15, "freeze_lu": 25, "freeze_adv": 0.3,
+           "defensive_lu": 45, "defensive_adv": 0.4,
+           "overheat_downgrade": {"ratio": 1.1}}
+    # 89 涨停 vs 前3日均 40.7（×2.2）→ aggressive 降为 normal
+    assert ind.classify_regime(_rrow(89, 0.83, 2, 40.7), cfg) == "normal"
+    # 未过热（89 vs 90）→ 保持 aggressive
+    assert ind.classify_regime(_rrow(89, 0.83, 2, 90.0), cfg) == "aggressive"
+    # 恰在阈值上（89 vs 80.9=89/1.1）→ 不降（严格大于）
+    assert ind.classify_regime(_rrow(89, 0.83, 2, 89 / 1.1), cfg) == "aggressive"
+    # 降级链：defensive→freeze；freeze 保持 freeze
+    assert ind.classify_regime(_rrow(51, 0.34, 19, 20.0), cfg) == "freeze"
+    assert ind.classify_regime(_rrow(20, 0.2, 5, 5.0), cfg) == "freeze"
+    # 前 3 日均值缺失（区间头部/数据缺口）→ 不降级，宁可漏判不可误判
+    assert ind.classify_regime(_rrow(89, 0.83, 2), cfg) == "aggressive"
+    # 恐慌闸门优先级更高：先 forced defensive，再降一档 → freeze
+    assert ind.classify_regime(_rrow(89, 0.83, 35, 40.7), cfg) == "freeze"
+
+
+def test_add_regime_computes_lu_prev3_without_today():
+    """lu_prev3 = 前 3 个交易日均值（shift(1)），不含当日（无未来函数）。"""
+    ind = _regime_mods()
+    import pandas as pd
+    ms = pd.DataFrame({"lu_cnt": [10.0, 20.0, 30.0, 40.0, 100.0],
+                       "adv_ratio": [0.5] * 5, "ld_cnt": [5] * 5,
+                       "amt_ratio": [1.0] * 5, "max_height": [3] * 5,
+                       "height_chg": [0] * 5})
+    out = ind.add_regime(ms, {"panic_ld": 30, "aggressive_lu": 75, "aggressive_adv": 0.52,
+                              "aggressive_ld_max": 15, "freeze_lu": 25, "freeze_adv": 0.3,
+                              "defensive_lu": 45, "defensive_adv": 0.4})
+    p3 = out["lu_prev3"].tolist()
+    assert pd.isna(p3[0]) and pd.isna(p3[1])
+    assert p3[3] == 20.0          # (10+20+30)/3
+    assert p3[4] == 30.0          # (20+30+40)/3 —— 当日 100 不参与
+
+
+def test_is_overheat_gate_shared_predicate():
+    """过热判定（候选 A 系共用）：比例可配、缺值不判、前3日均值≤0 不判。"""
+    ind = _regime_mods()
+    cfg = {"overheat_downgrade": {"ratio": 1.1}}
+    assert ind.is_overheat(_rrow(89, 0.8, 2, 40.7), cfg) is True
+    assert ind.is_overheat(_rrow(89, 0.8, 2, 90.0), cfg) is False
+    assert ind.is_overheat(_rrow(89, 0.8, 2), cfg) is False          # 无 lu_prev3
+    assert ind.is_overheat(_rrow(89, 0.8, 2, 0.0), cfg) is False     # 均值为 0（除零保护）
+    assert ind.is_overheat(_rrow(89, 0.8, 2, 40.7), {}) is False     # 未配置闸门
+    assert ind.is_overheat(_rrow(89, 0.8, 2, 85.0),
+                           {"overheat_lu_delta": {"ratio": 1.0}}) is True   # 另一键名
+
+
+def test_run_round_rate_handles_missing_rows():
+    """统计口径修复（2026-10-16）：含「停牌/数据缺失」行时布尔率不得失真。
+
+    缺失行的 dict 缺布尔键 → 构造 DataFrame 后该列变 object dtype，未修复时
+    .mean()*100 把 31% 显示成 0.21%（本轮扩窗首次暴露）。
+    """
+    import os
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.join(root, "strategy-iter") not in sys.path:
+        sys.path.insert(0, os.path.join(root, "strategy-iter"))
+    import pandas as pd
+    from engine.run_round import _rate, _grp_stats
+    v = pd.DataFrame([
+        {"win": True, "buy_triggered": True, "risk_hit": False, "strong_sector": True,
+         "strong_concept": True, "logic_realized": True, "close_ret": 3.0, "high_ret": 5.0,
+         "low_ret": -1.0, "open_ret": 1.0, "result_score": 80.0, "logic_score": 70.0,
+         "composite": 75.0, "rating": "A"},
+        {"win": False, "buy_triggered": False, "risk_hit": True, "strong_sector": False,
+         "strong_concept": False, "logic_realized": False, "close_ret": -2.0, "high_ret": 1.0,
+         "low_ret": -6.0, "open_ret": 0.5, "result_score": 40.0, "logic_score": 50.0,
+         "composite": 45.0, "rating": "D"},
+        {"win": None, "close_ret": float("nan")},        # 停牌/数据缺失行（缺布尔键）
+    ])
+    assert v["buy_triggered"].dtype == object                 # 复现失真前提
+    assert _rate(v, "buy_triggered") == 50.0                  # 旧实现给出 0.21 量级的错值
+    assert _rate(v, "risk_hit") == 50.0
+    assert _rate(v, "strong_sector") == 50.0
+    assert _rate(v, "strong_concept") == 50.0
+    assert _rate(v, "not_a_column") is None                   # 列不存在 → None（非 0）
+    assert _rate(pd.DataFrame({"x": [None, float("nan")]}), "x") is None   # 全 NaN → None
+    s = _grp_stats(v)
+    assert s["n"] == 2 and s["buy_trigger_rate"] == 50.0 and s["win_rate"] == 50.0
+
+
 if __name__ == "__main__":
     # 直跑入口：委托给 pytest（conftest 的路径引导已在上方先行生效）
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ---------------- 制度口径（A 股 T+1）可执行收益：spec_exec_t2（2026-10-16） ---------
+
+def test_exec_t2_entry_uses_frozen_window():
+    """买点判定沿用 execution_layer.MF_BUY 冻结窗口（单变量：不另立一套窗口）。"""
+    import spec_exec_t2 as x
+    assert x.entry_of("lu", 1.0, 3.0)[0] == 1.0            # 窗内 → 开盘成交
+    assert x.entry_of("lu", -0.5, 3.0)[0] is None          # 低开不接
+    assert x.entry_of("lu", 5.5, 9.0)[0] is None           # 高开>+5% 放弃
+    assert x.entry_of("lu", None, 3.0)[0] is None
+    assert x.entry_of("nlu", 2.0, 2.5)[0] == 2.0           # 窗内高开 → 开盘成交
+    assert x.entry_of("nlu", -1.0, 0.5)[0] == 0.0          # 低开但盘中回到昨收 → 成交
+    assert x.entry_of("nlu", -1.0, -0.5)[0] is None        # 限价未触及
+    assert x.entry_of("nlu", -3.0, 1.0)[0] is None         # 超出 -2% 窗
+
+
+def test_exec_t2_chain_and_net():
+    """T+2 由两段涨幅链式相乘得到（ohlc_rets(T2) 是相对 T+1 收盘）。"""
+    import spec_exec_t2 as x
+    assert abs(x.chain(10.0, 10.0) - 21.0) < 1e-9           # 1.1*1.1-1（浮点近似）
+    assert abs(x.chain(0.0, -5.0) + 5.0) < 1e-9
+    assert x.chain(None, 3.0) is None
+    r1 = {"o": 2.0, "h": 4.0, "l": -1.0, "c": 3.0}
+    net, why = x.t2_net("lu", r1, {"o": 1.0, "c": 2.0})
+    # 建仓 +2% → T+2 开盘相对昨收 = (1.03*1.01-1)=4.03% → 相对建仓 (1.0403/1.02-1)=1.990%
+    assert abs(net - (1.9903 - 0.15)) < 0.01 and why == "T+2 开盘离场"
+    assert x.t2_net("lu", {"o": 6.0, "h": 8.0, "l": 5.0, "c": 7.0}, {"o": 1.0, "c": 1.0})[0] is None
+    assert x.t2_net("lu", r1, None)[0] is None
+
+
+def test_exec_t2_risk_low_is_exposure_not_exit():
+    """T+1 破 risk_low 只记风险暴露——A 股当日不可卖，故不改变离场价（与诊断口径的差别）。"""
+    import spec_exec_t2 as x
+    r1 = {"o": 2.0, "h": 4.0, "l": -6.0, "c": -3.0}        # T+1 盘中破 -5%
+    net, why = x.t2_net("lu", r1, {"o": 0.0, "c": 0.0})
+    assert why == "T+2 开盘离场"                             # 不按 -5% 止损离场
+    assert net is not None
+
+
+def test_exec_t2_limit_down_open_falls_back_to_close():
+    """T+2 跌停开盘卖不出 → 改按收盘价（并标注），不是假装能开盘成交。"""
+    import spec_exec_t2 as x
+    r1 = {"o": 1.0, "h": 2.0, "l": 0.0, "c": 1.0}
+    r2 = {"o": -9.9, "c": -5.0}                             # 相对 T+1 收盘跌停开盘
+    net, why = x.t2_net("lu", r1, r2)
+    assert "改收盘离场" in why
+    exp = x._ratio(x.chain(1.0, -5.0), 1.0) - x.FEE_PCT
+    assert abs(net - round(exp, 3)) < 0.01
+
+
+def test_exec_t2_stats_and_rolling_summary():
+    import spec_exec_t2 as x
+    rows = [
+        {"group": "lu", "exec_t2": {"net": 2.0, "risk_low_hit": False}},
+        {"group": "lu", "exec_t2": {"net": -3.0, "risk_low_hit": True}},
+        {"group": "nlu", "exec_t2": {"net": None, "note": "未成交"}},
+    ]
+    s = x.exec_t2_stats(rows)
+    assert s["lu"]["n_exec"] == 2 and s["lu"]["pnl_avg"] == -0.5 and s["lu"]["win_rate"] == 50.0
+    assert s["lu"]["risk_exposed"] == 1
+    assert s["nlu"]["n"] == 1 and s["nlu"]["n_exec"] == 0
+    assert s["overall"]["n"] == 3 and s["overall"]["n_exec"] == 2
+    vals = {
+        "20260910": {"rules": "c7", "picks": [{"group": "lu", "exec_t2": {"net": 1.0}}]},
+        "20260911": {"rules": "cf", "picks": [{"group": "lu", "exec_t2": {"net": 99.0}}]},
+        "20260912": {"rules": "c7", "picks": [{"group": "lu"}]},        # 未补算
+    }
+    r = x.rolling_summary(vals, days=20, rules="c7")
+    assert r["overall"]["n_exec"] == 1 and r["overall"]["pnl_avg"] == 1.0
+    assert r["days"] == 1 and r["date_to"] == "20260912"   # 窗口上界；days 只数已补算的日
+    assert "制度口径" in r["label"] and r["fee"] == 0.15
+    assert x.rolling_summary({"20260912": vals["20260912"]}, rules="c7") is None
+
+
+def test_exec_diag_stats_carries_non_executable_label():
+    """诊断口径带明确标注：不可执行（防把「均益」读成到手的钱）。"""
+    import spec_validate as sv
+    out = sv._val_exec_stats([{"group": "lu", "open": 1.0, "high": 3.0, "low": -6.0,
+                               "close": -2.0}])
+    assert "不可执行" in out["_label"] and "exec_t2" in out["_executable_see"]
+
+
+def test_record_validation_wires_exec_t2_summary(monkeypatch, tmp_path):
+    """端到端接线：写台账时补算制度口径并把滚动汇总回填到 payload（不进判定）。"""
+    import json
+    import spec_validate as sv
+    import spec_exec_t2 as x
+    track_path = tmp_path / "pool_track.json"
+    vals = {
+        # 09-10 验的是 09-09 池；09-11 验 09-10 池 → 09-10 记录的 T+2 就是 09-11
+        "20260910": {"date": "20260909", "rules": "c7", "picks": [
+            {"code": "600744", "group": "lu", "open": 2.0, "high": 4.0, "low": -1.0,
+             "close": 3.0, "win": True}]},
+        "20260911": {"date": "20260910", "rules": "c7", "picks": [
+            {"code": "600644", "group": "lu", "open": -1.0, "high": 1.0, "low": -5.0,
+             "close": -4.0, "win": False}]},
+    }
+    track_path.write_text(json.dumps({"validations": vals}), encoding="utf-8")
+    monkeypatch.setattr(sv, "POOL_TRACK", str(track_path))
+    monkeypatch.setattr(sv.snapio, "list_dates", lambda: ["20260911", "20260910"])
+    monkeypatch.setattr(x, "t2_rets", lambda d8, codes: {"600744": {"o": 1.0, "c": 2.0}})
+    payload = {"ok": True, "date": "20260911", "rules": "c7",
+               "picks": [{"code": "600644", "group": "lu"}]}
+    summary = sv.record_validation("20260911", payload)
+    assert summary and summary["overall"]["n_exec"] == 1
+    assert abs(summary["overall"]["pnl_avg"] - (1.99029 - 0.15)) < 0.01
+    saved = json.loads(track_path.read_text(encoding="utf-8"))
+    assert saved["validations"]["20260910"]["picks"][0]["exec_t2"]["net"] is not None
+    # 错配记录不进诊断汇总（09-11 验 09-10 池 → 应验 09-10，匹配）
+    assert sv._track_for_diag({"validations": vals}) == vals
+    bad = dict(vals)
+    bad["20260911"] = {"date": "20260909", "rules": "c7", "picks": []}
+    assert "20260911" not in sv._track_for_diag({"validations": bad})

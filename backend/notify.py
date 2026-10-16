@@ -250,3 +250,33 @@ def send(title, text="", key=None, min_interval_hours=None):
     if any_ok:
         _mark(key)
     return {"sent": any_ok, "channels": results}
+
+
+# ---------------------------------------------------------------- 自检入口
+# 动机（2026-10-16 C15 复审）：配置项填完后，此前只能等真实故障才知道通不通——
+# 10-15 那次「复盘快照缺失」告警正是因渠道未配置而静默，事后才发现。
+# 用法：python backend/notify.py          # 只看配置摘要与该填哪个字段
+#       python backend/notify.py --send   # 实发一条测试推送（不节流），逐渠道回报
+if __name__ == "__main__":
+    import sys
+
+    st = status()
+    print("推送配置：", json.dumps(st, ensure_ascii=False))
+    if not st["configured"]:
+        print("\n未配置任何渠道 → 所有告警静默跳过。请在 "
+              f"{st['config_path']} 里填任意一个：")
+        print("  channels.serverchan.sendkey   Server酱 sendkey（sctapi.ftqq.com，微信推送）")
+        print("  channels.wecom.webhook        企业微信群机器人完整 webhook 地址")
+        print("  channels.telegram.bot_token + .chat_id   Telegram Bot")
+        print("填完执行：python backend/notify.py --send 验证是否真能送达。")
+        sys.exit(2)
+    if "--send" not in sys.argv:
+        print("已配置渠道：%s（加 --send 可实发一条测试推送）" % ", ".join(st["channels"]))
+        sys.exit(0)
+    # key=None 绕过节流：测试推送不该被上一次告警的节流窗口吃掉
+    res = send(title="看板告警自检",
+               text=time.strftime("%Y-%m-%d %H:%M:%S")
+               + " 这是一条测试推送。收到即说明告警链路已通，"
+                 "后续复盘缺口/样本外退化/服务失联都会推到本渠道。")
+    print("测试推送结果：", json.dumps(res, ensure_ascii=False))
+    sys.exit(0 if res.get("sent") else 1)

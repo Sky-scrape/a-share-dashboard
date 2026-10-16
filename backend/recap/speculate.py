@@ -192,9 +192,11 @@ def compute(date8, bundles, prev_bundles=None, sent_rows=None, historical=None,
                     for r in (bundles.get("concepts") or []) if r.get("概念")}
         val = validate_prev_pool(date8, _sr, concept_pct=_con_pct)
         if val:
-            data["pool_validation"] = val
             if record_metrics:
-                record_validation(date8, val)   # 回填路径（False）不污染验证样本
+                # 每日链路径：写台账并补算制度口径（T+1 买/T+2 卖/含费，诊断用）。
+                # 回填路径（record_metrics=False）不写台账、不补算——防污染纪律。
+                val.setdefault("stats", {})["exec_t2"] = record_validation(date8, val)
+            data["pool_validation"] = val
     except Exception as e:  # noqa: BLE001 - 验证失败不连坐选股
         data["pool_validation"] = {"ok": False,
                                    "error": f"{type(e).__name__}: {str(e)[:150]}"}

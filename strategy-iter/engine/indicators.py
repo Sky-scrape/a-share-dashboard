@@ -117,7 +117,8 @@ def build_market_state(store, stock_ind: pd.DataFrame) -> pd.DataFrame:
     return ms
 
 
-def classify_regime(row, cfg) -> str:
+def _base_regime(row, cfg) -> str:
+    """C6/C7 原档位判定（不含任何候选闸门——不加配置时行为与原先逐字节一致）。"""
     lu, adv, ld = row["lu_cnt"], row["adv_ratio"], row["ld_cnt"]
     if pd.isna(row.get("amt_ratio")):
         amt_ratio = 1.0
@@ -145,8 +146,49 @@ def classify_regime(row, cfg) -> str:
     return "normal"
 
 
+# 档位下调一档（候选闸门用）：配额随之收紧
+# aggressive 2+0 → normal 2+2 → defensive 2+1 → freeze 0+1
+_DOWNGRADE = {"aggressive": "normal", "normal": "defensive",
+              "defensive": "freeze", "freeze": "freeze"}
+
+
+def classify_regime(row, cfg) -> str:
+    """档位判定；`regime.overheat_downgrade` 配置时叠加「情绪过热降级」。
+
+    候选 A（C15 预注册；默认不配置 → C6/C7 行为不变）：选股日 T 涨停家数显著高于
+    前 3 日均值时，视作情绪高潮/兑现阶段，在基础档位上下调一档收紧配额。
+    信号只用 ≤T 数据（lu_prev3 = T-1..T-3 均值），无未来函数。
+    """
+    regime = _base_regime(row, cfg)
+    g = cfg.get("overheat_downgrade")
+    if g is not None:
+        p3 = row.get("lu_prev3")
+        if p3 is not None and not pd.isna(p3) and p3 > 0 \
+                and row["lu_cnt"] > g["ratio"] * p3:
+            regime = _DOWNGRADE.get(regime, regime)
+    return regime
+
+
+def is_overheat(row, cfg) -> bool:
+    """情绪过热判定（候选闸门共用）：选股日涨停家数 > 前 3 日均值 × ratio。
+
+    只用 ≤T 数据（lu_prev3 = T-1..T-3 均值，见 add_regime），无未来函数；
+    ratio 未配置或前 3 日均值缺失（区间头部/数据缺口）→ False（宁可漏判不误判）。
+    """
+    g = cfg.get("overheat_downgrade") or cfg.get("overheat_lu_delta")
+    if not g:
+        return False
+    ratio = g.get("ratio", 1.1) if isinstance(g, dict) else 1.1
+    p3 = row.get("lu_prev3")
+    if p3 is None or pd.isna(p3) or p3 <= 0:
+        return False
+    return row["lu_cnt"] > ratio * p3
+
+
 def add_regime(ms: pd.DataFrame, cfg) -> pd.DataFrame:
     ms = ms.copy()
+    # 过热降级闸门的前置列：前 3 个交易日涨停家数均值（shift(1) 保证不含当日）
+    ms["lu_prev3"] = ms["lu_cnt"].shift(1).rolling(3).mean()
     ms["regime"] = ms.apply(lambda r: classify_regime(r, cfg), axis=1)
     # high-position collapse override: height dropped >=2 while yesterday was high
     prev_h = ms["max_height"].shift(1)

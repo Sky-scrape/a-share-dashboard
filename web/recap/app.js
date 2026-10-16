@@ -1163,12 +1163,30 @@ function renderPool() {
       const ex = st.exec;
       const exg = (k, lbl) => { const e = ex && ex[k];
         if (!e || !e.n_exec) return "";
-        return lbl + ' 可成交 ' + e.n_exec + ' · 实时均益 ' + (e.pnl_avg ?? "-") + '% · MFE +'
+        return lbl + ' 可成交 ' + e.n_exec + ' · 均益 ' + (e.pnl_avg ?? "-") + '% · MFE +'
           + (e.mfe_avg ?? "-") + '% / MAE ' + (e.mae_avg ?? "-") + '%'
           + (e.stop_hit ? '（止损 ' + e.stop_hit + '，误触 ' + e.stop_whipsaw + '）' : '');
       };
       const exLine = [exg("lu", "涨停组"), exg("nlu", "低吸组")].filter(Boolean).join('　');
-      if (exLine) h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">执行口径（实时可成交，费前）：' + exLine + '</div>';
+      // 口径标注（2026-10-16 C15「修测量」）：本行沿用「T+1 当日止损」约定，
+      // A 股当日买入不可卖 → 是乐观诊断代理，不是能拿到手的收益。
+      if (exLine) h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">'
+        + esc((ex && ex._label) || '诊断代理·T+1 当日止损（不可执行）') + '：' + exLine + '</div>';
+      // 制度口径（可执行）：T+1 买 → T+2 卖 → 含费；近 20 个验证日滚动
+      const t2 = st.exec_t2;
+      if (t2 && t2.overall && t2.overall.n_exec) {
+        const g = (k, lbl) => { const e = t2[k]; return (e && e.n_exec)
+          ? lbl + ' 可成交 ' + e.n_exec + ' 净均 ' + (e.pnl_avg ?? "-") + '% 收红 ' + (e.win_rate ?? "-") + '%' : ""; };
+        const gl = [g("lu", "涨停组"), g("nlu", "低吸组")].filter(Boolean).join('　');
+        const col = t2.overall.pnl_avg >= 0 ? "var(--up)" : "var(--down)";
+        const rng = (t2.date_from && t2.date_to) ? (t2.date_from + '~' + t2.date_to + '，') : "";
+        h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">'
+          + esc(t2.label || '制度口径（T+1 买 → T+2 卖，含费）')
+          + '：' + rng + '已补算 ' + (t2.days ?? "-") + ' 日 <b style="color:' + col + '">净均 '
+          + (t2.overall.pnl_avg ?? "-") + '%</b>（收红 ' + (t2.overall.win_rate ?? "-")
+          + '%，可成交 ' + t2.overall.n_exec + '/' + t2.overall.n + '）'
+          + (gl ? '　' + gl : '') + '　<span style="color:var(--gold)">← 决策用这一行</span></div>';
+      }
       (va.picks || []).forEach(x => {
         const done = x.close != null;
         h += '<div style="margin:4px 0;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-1);font-size:13px">'
@@ -1180,6 +1198,10 @@ function renderPool() {
               + (x.risk_hit ? '<span class="sp-badge sev">触发风险位</span>' : '')
               + (x.ind_pct != null ? '　<span style="color:var(--text-2)">板块' + esc(x.industry || "-") + ' ' + f1(x.ind_pct) + '·' + (x.strong_sector ? "强于" : "弱于") + '板块</span>' : '')
               + '　<span style="color:var(--text-2)">归因：' + esc(x.attribution || "-") + '</span>'
+              + (x.exec_t2 && x.exec_t2.net != null
+                ? '　<span class="sp-badge" style="color:' + (x.exec_t2.net >= 0 ? "var(--up)" : "var(--down)") + '">制度口径 T+2 净 ' + x.exec_t2.net + '%</span>'
+                  + (x.exec_t2.risk_low_hit ? '<span class="sp-badge sev">T+1 破风险位(不可卖)</span>' : '')
+                : '')
               + (x.data_src === "em" ? '<span class="sp-badge" style="color:var(--gold)">东财备源</span>' : ''))
             : ('<span style="color:var(--text-2)">' + esc(x.attribution || "停牌/数据缺失") + '</span>'))
           + '</div>';

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .data import build_store, SEL_START, SEL_END
+from .indicators import is_overheat
 from .precompute import precompute
 from .select import select_limit_up, select_non_lu, in_pick_universe
 from .validate import validate_pick
@@ -68,6 +69,13 @@ def run_round(version: str, out_dir: Path, store=None, pre=None) -> dict:
         mrow = ms.loc[T] if T in ms.index else None
         regime = mrow["regime"] if mrow is not None else "normal"
         qlu, qnlu = cfg["quotas"][regime]
+        # 候选 A'' 系（C15 预注册）：情绪过热日收缩涨停组席位。
+        # 用独立配额键而不是「降档」——降档 aggressive(2+0)→normal(2+2) 反而
+        # 增加低吸席位（C15A 实测：过热日多出低吸票、整体变差），故改直调席位数。
+        _d = cfg.get("overheat_lu_delta")
+        # 闸门键住在 cfg["regime"] 下（与 classify_regime 同层级），不能传整份 cfg
+        if _d is not None and mrow is not None and is_overheat(mrow, cfg["regime"]):
+            qlu = max(0, qlu + _d)
 
         lu_picks = select_limit_up(pre, store, T, qlu, cfg["lu_group"])
         si_day = si_by_date.get(T)
@@ -122,6 +130,32 @@ def run_round(version: str, out_dir: Path, store=None, pre=None) -> dict:
     return stats
 
 
+def _rate(v: pd.DataFrame, col: str):
+    """布尔率（%）：逐值归一为 0/1 后再求均值。
+
+    2026-10-16 修：run_round 对「停牌/数据缺失」票追加的 dict 缺布尔键，
+    pd.DataFrame 构造后这些列变 object dtype——未加处理时 .mean()*100 会失真
+    （实测把 31% 显示成 0.21%），仅在该窗口出现缺失票时触发，故此前未暴露。
+    注意 object 列里混着 Python bool 与 NaN 时 to_numeric 会整体转为 NaN，
+    因此逐值判定而不依赖 to_numeric；字符串 "True"/"False"（CSV 回读路径）同处理。
+    """
+    if col not in v:
+        return None
+
+    def to01(x):
+        if x is None or (not isinstance(x, str) and pd.isna(x)):
+            return np.nan
+        if isinstance(x, str):
+            t = x.strip().lower()
+            return 1.0 if t == "true" else (0.0 if t == "false" else np.nan)
+        return 1.0 if bool(x) else 0.0
+
+    num = pd.Series([to01(x) for x in v[col]], index=v.index, dtype="float64")
+    if num.isna().all():
+        return None
+    return round(float(num.mean() * 100), 2)
+
+
 def _grp_stats(v: pd.DataFrame) -> dict:
     v = v[v["win"].notna()] if "win" in v else v
     if v.empty:
@@ -137,12 +171,11 @@ def _grp_stats(v: pd.DataFrame) -> dict:
         avg_low=round(float(v["low_ret"].mean()), 3),
         avg_open=round(float(v["open_ret"].mean()), 3),
         pl_ratio=round(float(wins.mean() / abs(losses.mean())), 3) if len(wins) and len(losses) else None,
-        buy_trigger_rate=round(float(v["buy_triggered"].mean() * 100), 2),
-        risk_hit_rate=round(float(v["risk_hit"].mean() * 100), 2),
+        buy_trigger_rate=_rate(v, "buy_triggered"),
+        risk_hit_rate=_rate(v, "risk_hit"),
         logic_realized_rate=round(float(v["logic_realized"].mean() * 100), 2),
-        strong_sector_rate=round(float(v["strong_sector"].mean() * 100), 2),
-        strong_concept_rate=(round(float(v["strong_concept"].mean() * 100), 2)
-                             if "strong_concept" in v and v["strong_concept"].notna().any() else None),
+        strong_sector_rate=_rate(v, "strong_sector"),
+        strong_concept_rate=_rate(v, "strong_concept"),
         total_ret=round(float(cr.sum()), 2),
         avg_result_score=round(float(v["result_score"].mean()), 1),
         avg_logic_score=round(float(v["logic_score"].mean()), 1),

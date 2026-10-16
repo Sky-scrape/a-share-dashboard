@@ -606,3 +606,46 @@ C7 = dict(
 )
 
 VERSIONS.update({"C7": C7})
+
+# ---------------------------------------------------------------- C15 复审候选（2026-10-16）
+# 背景：C7 样本外 20 验证日触发 severe（42.11% / +0.721%，基线 62.09% / +2.497%）；
+# 制度口径（T+1 买 / T+2 卖 / 双边 0.15%）在研究窗为正、样本外为负。本轮按
+# runs/c15_oos_review/preregistration.md 的判定规则，在「7 月至今」上做首次对照。
+# 纪律：每个候选只改【一个】变量；一律以 C7 为底；判定阈值跑数前已写死
+# （Δ≥+0.30pp、配对 bootstrap 95% CI 下界>0、开发/验证半窗同向、成交笔数≥基线 70%）。
+C15A = dict(          # 候选 A：情绪过热降级（选股日涨停家数 > 前3日均值×1.1 → 档位降一档）
+    C7, version="C15A",
+    regime={**C6["regime"], "overheat_downgrade": {"ratio": 1.1}},
+)
+C15B = dict(          # 候选 C-1：低吸组行业分位下限放宽 0.6 → 0.4（单变量·放宽硬筛）
+    C7, version="C15B",
+    nlu_group={**C7["nlu_group"], "sector_rank_min": 0.4},
+)
+C15C = dict(          # 候选 D-1：低吸组位置甜区上沿收紧 0.95 → 0.92（单变量·收紧硬筛）
+    C7, version="C15C",
+    nlu_group={**C7["nlu_group"], "dist_high_max": 0.92},
+)
+C15D = dict(          # 候选 D-2：涨停组题材簇最少家数 2 → 3（单变量·排除两票小题材）
+    C7, version="C15D",
+    lu_group={**C7["lu_group"], "theme_min_members": 3},
+)
+C15E = dict(          # 候选 A'：过热降级用更严比例（1.0，任何环比扩张即降档）——稳健性检查
+    C7, version="C15E",
+    regime={**C6["regime"], "overheat_downgrade": {"ratio": 1.0}},
+)
+# 候选 A''（C15A/C15E 机制修正后重设）：过热日直接收缩**涨停组席位**，不动低吸组。
+# 缘由：降档链条 aggressive(2+0)→normal(2+2) 会给过热日**增加**低吸席位（C15A 实测
+# n 467→491、均次 2.42→2.08），与「少出手」的意图相反，故改用独立配额键。
+C15F = dict(          # 过热日涨停组 2→1 席（overheat_lu_delta 与 quotas 同级·配额旋钮）
+    C7, version="C15F",
+    regime={**C6["regime"], "overheat_downgrade": {"ratio": 1.1}},
+    overheat_lu_delta=-1,
+)
+C15G = dict(          # 过热日涨停组 2→0 席（过热日只留低吸组）
+    C7, version="C15G",
+    regime={**C6["regime"], "overheat_downgrade": {"ratio": 1.1}},
+    overheat_lu_delta=-2,
+)
+VERSIONS.update({"C15A": C15A, "C15B": C15B, "C15C": C15C, "C15D": C15D, "C15E": C15E,
+                 "C15F": C15F, "C15G": C15G})
+
