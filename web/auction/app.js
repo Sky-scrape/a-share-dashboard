@@ -14,11 +14,8 @@ var CHART_FONT = '"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
 /* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
 /* toast 已收敛 AK.toast（lib/util.js）：保留同名包装，页面调用点不用动 */
 function toast(msg, type, ms) { AK.toast(msg, type, ms); }
-function fmtPct(v) {
-  if (v == null || isNaN(v)) return "-";
-  var s = (v > 0 ? "+" : "") + Number(v).toFixed(2) + "%";
-  return s;
-}
+/* fmtPct 统一在 /lib/util.js AK.fmtPct（auction 口径：占位 '-'、+0 不带 +） */
+function fmtPct(v) { return AK.fmtPct(v, "-", false); }
 function pctClass(v) { return v > 0.005 ? "up" : (v < -0.005 ? "down" : "flat"); }
 function fmtAmt(yuan) {
   if (yuan == null || isNaN(yuan)) return "-";

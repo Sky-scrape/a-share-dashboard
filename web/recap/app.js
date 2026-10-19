@@ -18,7 +18,8 @@ const fmtTime = t => {
   if (/^\d{4}$/.test(t)) return t.slice(0, 2) + ":" + t.slice(2, 4);
   return t;
 };
-const cls = v => v == null ? "flat-c" : (Number(v) > 0 ? "up" : (Number(v) < 0 ? "down" : "flat-c"));
+/* cls 统一在 /lib/util.js AK.cls（recap 口径：eps 0 / 中性 flat-c / null→flat-c） */
+const cls = v => AK.cls(v, 0, "flat-c");
 const sign = v => (v == null) ? "-" : ((Number(v) > 0 ? "+" : "") + Number(v).toFixed(2));
 /* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
 const trunc = (s, n) => { s = String(s || ""); return s.length > n ? s.slice(0, n) + "…" : s; };
@@ -650,11 +651,17 @@ function renderRegulatory() {
       <div style="font-weight:700;margin-bottom:8px">${title} <span style="color:var(--muted);font-weight:400">${(rows || []).length} 条</span></div>
       ${(rows || []).length ? `<div class="tbl-wrap thin"><table>
         <tr><th class="l" style="width:62px">代码</th><th class="l" style="width:92px">名称</th><th class="l">公告</th><th class="l" style="width:150px">类型</th></tr>
-        ${rows.map(r => `<tr>
+        ${rows.map(r => {
+          const u = AK.safeHref(r.网址);  // 防 javascript:/data: 伪协议：非 http(s) 降级纯文本
+          const link = u
+            ? `<a href="${esc(u)}" target="_blank" style="display:block;color:var(--blue);text-decoration:none" title="${esc(r.公告标题)}" class="ellip">${esc(r.公告标题)}</a>`
+            : `<span class="ellip" style="display:block" title="${esc(r.公告标题)}">${esc(r.公告标题)}</span>`;
+          return `<tr>
           <td class="l">${esc(r.代码)}</td><td class="l"><b>${esc(r.名称)}</b></td>
-          <td class="l" style="max-width:360px"><a href="${esc(r.网址)}" target="_blank" style="display:block;color:var(--blue);text-decoration:none" title="${esc(r.公告标题)}" class="ellip">${esc(r.公告标题)}</a></td>
+          <td class="l" style="max-width:360px">${link}</td>
           <td class="l ellip" style="color:var(--muted);max-width:150px">${esc(r.公告类型)}</td>
-        </tr>`).join("")}
+        </tr>`;
+        }).join("")}
       </table></div>` : `<div class="empty" style="padding:12px">今日无此类公告</div>`}
     </div>`;
   box.innerHTML =

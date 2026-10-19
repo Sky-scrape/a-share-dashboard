@@ -72,6 +72,51 @@ M3 轮末评审（mboard_round3_M3, n=483）: 无实质性规则修改 —— �
   最终方案: reports/最终筛选方案-主板.md; 旧全板口径方案 reports/最终筛选方案.md 归档保留。
 """
 
+# ==========================================================================
+# P2-8 共享叶子块：V/M 六组与 C 线逐字重复的常量收编为单一来源。
+# 约定：版本 cfg 及其子块一律只读（C 线 C1 起就以 buys=M3["buys"] 方式共享，
+# run_round/exp_* 均未做原地修改）；需要派生时用 {**base, ...} 浅覆盖。
+# ==========================================================================
+_EXCHANGES = ("SH", "SZ")
+
+# 涨停封单强度分档（封成比 → 得分）
+_SEAL_RATIO_TIERS = [(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)]
+# 首板时间分档（时刻 → 得分）
+_TIME_TIERS = [("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
+               ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)]
+# 量比分档（下界, 上界 → 得分）
+_VOL_RATIO_TIERS = [(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)]
+
+# 结果分公式权重（六组历史上一致，从未单独调过）
+_SCORING = dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03)
+
+# 次日买卖点三变体（组间只在 lu 触发档与 nlu 触发开关上有差异）：
+# _BUYS_T0：V1/M1 —— lu trigger_open_max=3.0；nlu 触发未启用
+# _BUYS_T1：V2/V3 —— 在 T0 基础上 nlu 启用触发（open -1.5 / low -2.5）
+# _BUYS_T2：M2/M3/C 线 —— 低开不接（lu open_min=0）+ trigger_open_max=5.0；nlu 触发未启用
+_BUYS_T0 = dict(
+    lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=3.0,
+            trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
+    nlu=dict(open_min=-2.0, open_max=3.0,
+             risk_low=-4.0, risk_close=-3.5,
+             trigger_open_min=None, trigger_low_min=None),
+)
+_BUYS_T1 = dict(
+    lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=5.0,
+            trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
+    nlu=dict(open_min=-2.0, open_max=3.0,
+             risk_low=-4.0, risk_close=-3.5,
+             trigger_open_min=-1.5, trigger_low_min=-2.5),
+)
+_BUYS_T2 = dict(
+    # M2: 低开不接 (open_min -2.0->0.0), trigger_open_max 3->5
+    lu=dict(open_min=0.0, open_max=5.0, trigger_open_max=5.0,
+            trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
+    nlu=dict(open_min=-2.0, open_max=3.0,
+             risk_low=-4.0, risk_close=-3.5,
+             trigger_open_min=None, trigger_low_min=None),
+)
+
 V1 = dict(
     version="V1",
     # ---- market regime thresholds ----
@@ -93,11 +138,10 @@ V1 = dict(
         exclude_late_time="14:45",      # later than this = late sneak limit-up
         theme_min_members=2,
         exclude_prev_yizi=True,         # yesterday one-word board -> bad risk/reward
-        exchanges=("SH", "SZ"),
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        exchanges=_EXCHANGES,
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     # ---- non-limit-up group ----
     nlu_group=dict(
@@ -110,21 +154,15 @@ V1 = dict(
         dist_high_min=0.86, dist_high_max=1.01,
         vol_ratio_min=0.5, vol_ratio_max=2.2,
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         ma10_gap_max=None,              # V2: max close/ma10 - 1
         require_sector_persistence=False,  # V2: sector lu today or yesterday
         exclude_prev_lu=False,          # V2: skip yesterday limit-up stocks
     ),
     # ---- next-day buy/risk conditions ----
-    buys=dict(
-        lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=3.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=None, trigger_low_min=None),
-    ),
+    buys=_BUYS_T0,
     # scoring weights (result score formula)
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    scoring=_SCORING,
 )
 
 V2 = dict(
@@ -145,11 +183,10 @@ V2 = dict(
         exclude_late_time="14:45",
         theme_min_members=2,
         exclude_prev_yizi=True,
-        exchanges=("SH", "SZ"),
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        exchanges=_EXCHANGES,
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     nlu_group=dict(
         min_score=60.0,
@@ -161,19 +198,13 @@ V2 = dict(
         dist_high_min=0.80, dist_high_max=0.985,
         vol_ratio_min=0.35, vol_ratio_max=1.3,
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         ma10_gap_max=0.08,
         require_sector_persistence=True,
         exclude_prev_lu=True,
     ),
-    buys=dict(
-        lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=5.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=-1.5, trigger_low_min=-2.5),
-    ),
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    buys=_BUYS_T1,
+    scoring=_SCORING,
 )
 
 V3 = dict(
@@ -196,11 +227,10 @@ V3 = dict(
         exclude_late_time="14:45",
         theme_min_members=2,
         exclude_prev_yizi=True,
-        exchanges=("SH", "SZ"),
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        exchanges=_EXCHANGES,
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     nlu_group=dict(
         min_score=62.0,
@@ -213,20 +243,14 @@ V3 = dict(
         dist_high_min=0.80, dist_high_max=0.985,
         vol_ratio_min=0.35, vol_ratio_max=1.3,
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         ma10_gap_max=0.08,
         require_sector_persistence=True,
         sector_strict=True,     # V3: 板块当日涨停≥2, 或(≥1且涨幅分位≥0.85), 或5日分位≥0.85
         exclude_prev_lu=True,
     ),
-    buys=dict(
-        lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=5.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=-1.5, trigger_low_min=-2.5),
-    ),
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    buys=_BUYS_T1,
+    scoring=_SCORING,
 )
 
 # ==========================================================================
@@ -253,12 +277,11 @@ M1 = dict(
         exclude_late_time="14:45",      # later than this = late sneak limit-up
         theme_min_members=2,
         exclude_prev_yizi=True,         # yesterday one-word board -> bad risk/reward
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,           # 沪深主板 only
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     # ---- non-limit-up group ----
     nlu_group=dict(
@@ -271,22 +294,16 @@ M1 = dict(
         dist_high_min=0.86, dist_high_max=1.01,
         vol_ratio_min=0.5, vol_ratio_max=2.2,
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,           # 沪深主板 only
         ma10_gap_max=None,              # V2: max close/ma10 - 1
         require_sector_persistence=False,  # V2: sector lu today or yesterday
         exclude_prev_lu=False,          # V2: skip yesterday limit-up stocks
     ),
     # ---- next-day buy/risk conditions ----
-    buys=dict(
-        lu=dict(open_min=-2.0, open_max=5.0, trigger_open_max=3.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=None, trigger_low_min=None),
-    ),
+    buys=_BUYS_T0,
     # scoring weights (result score formula)
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    scoring=_SCORING,
 )
 
 M2 = dict(
@@ -309,12 +326,11 @@ M2 = dict(
         exclude_late_time="14:45",
         theme_min_members=2,
         exclude_prev_yizi=True,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     nlu_group=dict(
         min_score=55.0,
@@ -327,7 +343,7 @@ M2 = dict(
         dist_high_min=0.80, dist_high_max=0.95,  # M2: 0.86~1.01 -> 0.80~0.95 回调低吸区
         vol_ratio_min=0.35, vol_ratio_max=1.2,   # M2: 0.5~2.2 -> 0.35~1.2 缩量
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,
         ma10_gap_max=None,
         require_sector_persistence=False,
@@ -335,15 +351,8 @@ M2 = dict(
         sector_mix=(0.55, 0.25, 0.2, 2.0),       # M2: rank/rank5/涨停家数 家数分量降权
         pos_tiers=[(0.85, 1.0), (0.90, 0.85), (1.01, 0.6)],  # M2: 深回调优先
     ),
-    buys=dict(
-        # M2: 低开不接 (open_min -2.0->0.0), trigger_open_max 3->5
-        lu=dict(open_min=0.0, open_max=5.0, trigger_open_max=5.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=None, trigger_low_min=None),
-    ),
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    buys=_BUYS_T2,   # M2: 低开不接 + trigger_open_max 3->5（见共享块注释）
+    scoring=_SCORING,
 )
 
 M3 = dict(
@@ -365,13 +374,12 @@ M3 = dict(
         exclude_late_time="14:45",
         theme_min_members=2,
         exclude_prev_yizi=True,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,
         ladder_tiers={1: 0.55, 2: 0.9, 3: 1.0, 4: 1.0},  # M3: 4板档 0.8->1.0
-        seal_ratio_tiers=[(0.15, 1.0), (0.08, 0.7), (0.03, 0.4), (0.0, 0.15)],
-        time_tiers=[("09:45", 1.0), ("10:30", 0.85), ("11:30", 0.7),
-                    ("13:30", 0.5), ("14:30", 0.3), ("23:59", 0.05)],
-        vol_ratio_tiers=[(0.8, 3.0, 1.0), (3.0, 4.0, 0.7), (0.0, 0.8, 0.6), (4.0, 99, 0.45)],
+        seal_ratio_tiers=_SEAL_RATIO_TIERS,
+        time_tiers=_TIME_TIERS,
+        vol_ratio_tiers=_VOL_RATIO_TIERS,
     ),
     nlu_group=dict(
         min_score=55.0,
@@ -383,7 +391,7 @@ M3 = dict(
         dist_high_min=0.86, dist_high_max=0.95,    # M3: 0.80->0.86
         vol_ratio_min=0.35, vol_ratio_max=1.2,
         top_ind_n=12,
-        exchanges=("SH", "SZ"),
+        exchanges=_EXCHANGES,
         main_board_only=True,
         ma10_gap_max=None,
         require_sector_persistence=False,
@@ -391,14 +399,8 @@ M3 = dict(
         sector_mix=(0.55, 0.25, 0.2, 2.0),
         pos_tiers=[(0.85, 1.0), (0.90, 0.85), (1.01, 0.6)],
     ),
-    buys=dict(
-        lu=dict(open_min=0.0, open_max=5.0, trigger_open_max=5.0,
-                trigger_low_min=-3.0, risk_low=-5.0, risk_close=-4.0),
-        nlu=dict(open_min=-2.0, open_max=3.0,
-                 risk_low=-4.0, risk_close=-3.5,
-                 trigger_open_min=None, trigger_low_min=None),
-    ),
-    scoring=dict(close_w=600, high_w=200, low_pen=150, low_pen_start=0.03),
+    buys=_BUYS_T2,
+    scoring=_SCORING,
 )
 
 VERSIONS = {"V1": V1, "V2": V2, "V3": V3, "M1": M1, "M2": M2, "M3": M3}

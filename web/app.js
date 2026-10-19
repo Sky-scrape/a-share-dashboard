@@ -34,10 +34,8 @@ function pctColor(p){
   if(p < 0) return p <= -6 ? h.neg[3] : p <= -3 ? h.neg[2] : p <= -1 ? h.neg[1] : h.neg[0];
   return h.zero;
 }
-function fmtPct(p){
-  if (p == null || !isFinite(p)) return '--';  // 防御：undefined/NaN/Infinity 不崩溃
-  return (p>=0?'+':'') + p.toFixed(2) + '%';
-}
+/* fmtPct 统一在 /lib/util.js AK.fmtPct（app 口径：占位 '--'、+0 显示 +0.00%） */
+function fmtPct(p){ return AK.fmtPct(p, "--", true); }
 /* 停止回放：统一用 clearTimeout（playTimer 是 setTimeout 返回值） */
 function stopPlayback(){
   playing = false;
@@ -872,6 +870,7 @@ function addWatch(){
 
 /* ============ 盘中自动刷新 + 告警 ============ */
 let autoTimer = null;
+let autoTimers = {};   // P2-4：startAutoRefresh 建的 interval/listener 引用集中持有，保证幂等清理
 let notifyOn = false;
 let lastSigKey = '';
 /* localToday 单一来源 /lib/util.js（AK.dates.today10）。用函数声明（提升）而非
@@ -1109,16 +1108,23 @@ async function refreshPanels(){
   } catch(e){}
 }
 function startAutoRefresh(){
-  if (autoTimer) clearInterval(autoTimer);
+  // P2-4 幂等：所有 interval/listener 引用集中持有，重复调用先全量清理再重建
+  if (autoTimers.watch) clearInterval(autoTimers.watch);
+  if (autoTimers.overnight) clearInterval(autoTimers.overnight);
+  if (autoTimers.visibility && autoTimers.visibility.ref) {
+    document.removeEventListener('visibilitychange', autoTimers.visibility.ref);
+  }
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   autoTimer = setInterval(autoTick, 15000);
-  setInterval(refreshWatch, 60000);   // 自选价格与提醒轮询
+  autoTimers.watch = setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);   // 自选价格与提醒轮询（后台停）
   // 隔夜外围：采集器每交易日 08:40 更新 global.json，页面对应低频重拉
   // （autoTick 只管当日分时，不碰这块；数据一天一变，10 分钟轮询 + 唤醒重拉足够；
   // 后台标签页不加 hidden 短路前的 10 分钟全量拉纯属浪费——2026-09-10 收敛）
-  setInterval(() => { if (!document.hidden) renderOvernight(); }, 10*60*1000);
-  document.addEventListener('visibilitychange', () => {
+  autoTimers.overnight = setInterval(() => { if (!document.hidden) renderOvernight(); }, 10*60*1000);
+  autoTimers.visibility = { ref: () => {
     if (!document.hidden) { renderOvernight(); autoTick(); }   // 息屏/休眠后重新看到页面时立即补拉最新
-  });
+  }};
+  document.addEventListener('visibilitychange', autoTimers.visibility.ref);
 }
 function updateAll(){
   $('clock').textContent = DATA.times[curIdx];

@@ -80,6 +80,7 @@ import socketserver
 import sys
 import threading
 import time
+import traceback
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
@@ -271,6 +272,7 @@ def _health_monitor_loop():
             first = False
         except Exception as e:  # noqa: BLE001 - 监控线程自身绝不退出
             sys.stderr.write(f"[health-monitor] {type(e).__name__}: {e}\n")
+            traceback.print_exc()   # P2-10：补全堆栈，便于定位是哪个健康段炸了
 
 
 def _ensure_lan_write_token():

@@ -13,6 +13,34 @@ function esc(s) {
    剪贴板在 http://IP 非安全上下文（手机 Tailscale 访问）必然失败，旧代码静默吞掉后仍提示「已复制」；
    代码清洗 auction 版从任意位置抓 6 位数字、recap 版带 ^\d{6}$ 复验，同一脏输入两页行为不同。 */
 var AK = {
+  /* 外部数据进 <a href> 的伪协议过滤（2026-10-19 收敛）：
+     esc() 转义引号但拦不住 javascript:/data: 伪协议——recap 公告网址来自
+     akshare 原样透传，一旦上游被污染即成注入面。只放行 ^https?://，
+     其余降级纯文本（返回 null 由调用方渲染）。 */
+  safeHref: function (u) {
+    var s = String(u == null ? "" : u).trim();
+    return /^https?:\/\//i.test(s) ? s : null;
+  },
+  /* 涨跌着色（2026-10-19 收敛）：此前 quant 版 v>0.0001/dim、recap 版 Number(v)>0/flat-c
+     各写一份且阈值与中性色不同。eps=判涨跌的死区（默认 0.0001，量化页原口径）；
+     flat=中性色类名（默认 "dim"，recap 传 "flat-c"）。null/NaN 一律中性。 */
+  cls: function (v, eps, flat) {
+    if (eps == null) eps = 0.0001;
+    if (!flat) flat = "dim";
+    if (v == null) return flat;
+    var x = Number(v);
+    if (isNaN(x)) return flat;
+    return x > eps ? "up" : (x < -eps ? "down" : flat);
+  },
+  /* 百分比格式化（2026-10-19 收敛）：app 版占位 '--'/+0 带 +，auction 版占位 '-'/+0 不带 +。
+     dash=占位符（默认 "--"），plusZero=true 时 +0 显示 "+0.00%"（app 原口径）。
+     统一用 isFinite 拦截——Infinity/NaN 不该渲染成 "Infinity%"。 */
+  fmtPct: function (v, dash, plusZero) {
+    var x = Number(v);
+    if (v == null || !isFinite(x)) return dash || "--";
+    var sign = plusZero ? (x >= 0 ? "+" : "") : (x > 0 ? "+" : "");
+    return sign + x.toFixed(2) + "%";
+  },
   /* 复制文本到剪贴板，返回 Promise<boolean>（真实成功与否，调用方按结果显示文案）。
      非安全上下文走隐藏 textarea + execCommand 兜底（iOS Safari 亦可用）。 */
   copyText: function (text) {

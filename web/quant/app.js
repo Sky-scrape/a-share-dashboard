@@ -37,7 +37,8 @@ function defCond() {
 }
 /* esc 统一在 /lib/util.js（五页同源，含单引号转义） */
 function pct(v, d) { if (v == null) return "–"; var x = (v * 100).toFixed(d == null ? 1 : d); return (v > 0 ? "+" : "") + x + "%"; }
-function cls(v) { return v > 0.0001 ? "up" : (v < -0.0001 ? "down" : "dim"); }
+/* cls 统一在 /lib/util.js AK.cls（eps 0.0001 / 中性 dim 原口径不变） */
+function cls(v) { return AK.cls(v); }
 function num(id, def) { var v = parseFloat($(id).value); return isNaN(v) ? def : v; }
 function parseCodes(s) { return String(s || "").replace(/，/g, " ").split(/[\s,;、]+/).filter(Boolean); }
 function errBox(msg) {
@@ -713,8 +714,13 @@ function loadStrategies() {
   getJson("/api/quant/strategies").then(function (d) {
     STRATS = d.strategies || [];
     var box = $("storeCards");
-    if (!STRATS.length) { box.innerHTML = "<div class='empty' style='padding:16px'>策略库为空 —— 去「造策略·回测」搭一个并存档。</div>"; return; }
-    box.innerHTML = STRATS.map(function (st0, i) {
+    var badHtml = "";
+    (d.bad_files || []).forEach(function (b) {
+      badHtml += "<div class='empty'>⚠️ 坏档已跳过：" + esc(b.file) + "（" + esc(b.error) + "）——请修复或删除该文件</div>";
+    });
+    if (!STRATS.length && !badHtml) { box.innerHTML = "<div class='empty' style='padding:16px'>策略库为空 —— 去「造策略·回测」搭一个并存档。</div>"; return; }
+    if (!STRATS.length && badHtml) { box.innerHTML = badHtml + "<div class='empty' style='padding:16px'>策略库无可用存档（坏档见上）。</div>"; return; }
+    box.innerHTML = badHtml + STRATS.map(function (st0, i) {
       var pl = st0.payload || {}, summ = "";
       if (st0.kind === "builtin") {
         summ = esc((pl.family || "") + " " + Object.keys(pl.params || {}).map(function (k) { return k + "=" + pl.params[k]; }).join(" "));

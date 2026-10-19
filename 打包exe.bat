@@ -10,13 +10,16 @@ if exist .venv-ci\Scripts\python.exe (
 ) else (
     set "PY=python"
 )
-%PY% -m pip install -q pyinstaller || goto :err
+%PY% -m pip install -q pyinstaller==6.17.0 || goto :err
 %PY% -m PyInstaller packaging\ak-dashboard.spec --noconfirm --distpath dist --workpath build || goto :err
 set AK_ONEFILE=1
 %PY% -m PyInstaller packaging\ak-dashboard.spec --noconfirm --distpath dist --workpath build || goto :err
 rem 版本单一来源 backend/version.py：单文件产物名自动带版本号（2026-09-27 起，此前 v1.2.0 为手工命名）
-%PY% -c "import sys; sys.path.insert(0,'backend'); import version; print(version.version_string(), end='')" > "%TEMP%\ak_ver.txt" 2>nul
-set /p VER=<"%TEMP%\ak_ver.txt"
+rem ak_ver.txt 加 PID 后缀防多会话并发互踩（P2-5，2026-10-19）
+set "AK_VER_TXT=%TEMP%\ak_ver_%RANDOM%%RANDOM%.txt"
+%PY% -c "import sys; sys.path.insert(0,'backend'); import version; print(version.version_string(), end='')" > "%AK_VER_TXT%" 2>nul
+set /p VER=<"%AK_VER_TXT%"
+del "%AK_VER_TXT%" >nul 2>&1
 if "%VER%"=="" set VER=unknown
 if exist dist\ak-dashboard-onefile.exe ren dist\ak-dashboard-onefile.exe ak-dashboard-onefile-%VER%.exe
 echo.

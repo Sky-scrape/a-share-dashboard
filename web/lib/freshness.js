@@ -121,5 +121,12 @@ function renderFreshness(slotId) {
     if (lastHealth) openPop(lastHealth); else refresh();
   });
   refresh();
-  setInterval(refresh, 45000);   // 45s 自动核对一次（原先 120s，盘中断采预警最坏要 4 分钟才浮上来）
+  // 回前台立即核对一次（后台期间数据可能已过期，等下一轮 45s 会晚）
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) refresh();
+  });
+  setInterval(function () {
+    if (document.hidden) return;   // 后台标签页停轮询（与主/竞价/量化页同先例，P2-3）
+    refresh();
+  }, 45000);   // 45s 自动核对一次（原先 120s，盘中断采预警最坏要 4 分钟才浮上来）
 }
