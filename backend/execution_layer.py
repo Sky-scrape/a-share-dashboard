@@ -19,3 +19,8 @@ MF_BUY = {
     "lu": {"win_min": 0.0, "win_max": 5.0, "low_min": -3.0, "risk_low": -5.0, "risk_close": -4.0},
     "nlu": {"win_min": -2.0, "win_max": 3.0, "risk_low": -4.0, "risk_close": -3.5},
 }
+
+# 双边交易成本（%）：佣金+滑点近似。原散布于 strategy-iter/scripts/
+# {mf_mono_backtest, exp_hold_sizing, diaoling_lianban_backtest, c15_exec_tplus}
+# 四处同值复制（靠注释宣称"同源"），2026-10-19 P1-5 收编至此单一来源。
+FEE_MAIN = 0.15

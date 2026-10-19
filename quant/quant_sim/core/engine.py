@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Optional, Union
@@ -801,16 +802,31 @@ def run_backtest(
     data: Union[BarPanel, pd.DataFrame, Mapping[str, pd.DataFrame]],
     config: Optional[BacktestConfig] = None,
     lite: bool = False,
+    allow_manifest_mismatch: bool = False,
     **kwargs,
 ) -> BacktestResult:
     """便捷入口：`run_backtest(MyStrategy(), panel, BacktestConfig(...))`。
 
     lite=True 只产净值/指标（网格/WF 批量回测用），不构持仓/权重/明细表。
+
+    allow_manifest_mismatch：panel.metadata["manifest_mismatch"] 非空时默认 raise
+    （2026-10-19 P1-3）——涨跌停判定依赖 pre_close 口径正确，混入 raw 序列会整体
+    错位且静默，必须入口拦截而非跑完再发现；显式传 True 才放行（结果不可信，
+    仅限已知风险的对照实验）。
     """
     if config is None:
         config = BacktestConfig(**kwargs) if kwargs else BacktestConfig()
     elif kwargs:
         for key, value in kwargs.items():
             setattr(config, key, value)
+    mism = getattr(data, "metadata", None) or {}
+    mism = mism.get("manifest_mismatch") if hasattr(mism, "get") else None
+    if mism and not allow_manifest_mismatch:
+        raise ValueError(
+            "行情口径与要求不一致（manifest_mismatch 非空）：%s——"
+            "涨跌停/复权相关结果不可信，请修正数据或用一致的复权口径重导；"
+            "确属对照实验需要，可传 allow_manifest_mismatch=True 显式放行。"
+            % json.dumps(mism, ensure_ascii=False)[:300]
+        )
     engine = BacktestEngine(config)
     return engine.run(strategy, data, lite=lite)

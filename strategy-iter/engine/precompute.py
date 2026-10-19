@@ -28,7 +28,7 @@ def theme_key(reason: str) -> str:
 def build_concept_tables(store):
     """概念热度表（概念维度单一来源计算，C 线一阶因子）。
 
-    返回 (con_day, con_by_stock, best_at, gate_at)：
+    返回 (con_day, con_by_stock, best_at, gate_at, con_daily_ex, lu_cnt)：
     - con_day: {(con_code, date): dict(pct, pct5, rank, lu_cnt)}——rank 为当日
       概念涨幅在全部有值概念中的升序百分位（与行业 ind_rank 同口径）；
       lu_cnt 为该概念当日全市场涨停家数（研究层口径，含创业板/科创板）。
@@ -36,8 +36,10 @@ def build_concept_tables(store):
     - best_lookup: {(6位代码, date): (con_code, pct, pct5, lu_cnt, rank)}——个股驱动
       概念 = 所属概念中当日涨幅最高者（平手取涨停家数更高者，与 speculate._best_concept
       同口径）。数据缺失（无归属/概念当日无值）时无该键，消费方诚实降级。
+    - con_daily_ex / lu_cnt：加了 con_rank 的概念日表与 (con_code,date)→涨停家数
+      Series，供 precompute 池行挂接向量化复用（避免二次计算）。
     """
-    empty = ({}, {}, {}, {})
+    empty = ({}, {}, {}, {}, None, None)
     mem = store.con_membership
     cat = store.con_catalog
     if not mem or not cat or store.con_daily.empty:
@@ -57,6 +59,8 @@ def build_concept_tables(store):
     # 当日概念涨幅分位（有值概念内升序百分位，平分长度，与 _rotation_strength._rank 同口径）
     cd = cd.copy()
     cd["con_rank"] = cd.groupby("date")["con_pct"].rank(pct=True, ascending=True)
+    # 重复 (con_code, date) 保留最后一条（与旧 dict 覆盖语义一致，且保证后续 join 不发散）
+    cd = cd.drop_duplicates(["con_code", "date"], keep="last")
     # 概念内涨停家数：全市场涨停池 × 概念归属（研究层不收窄）
     lu = store.pool[["date", "thscode"]].dropna(subset=["thscode"])
     lu["code6"] = lu["thscode"].str.split(".").str[0]
@@ -70,12 +74,22 @@ def build_concept_tables(store):
     lu_cnt = lu2.dropna(subset=["con_code"]).groupby(["con_code", "date"]).size()
 
     con_day = {}
-    for (code, date), row in cd.set_index(["con_code", "date"]).iterrows():
-        con_day[(code, date)] = {
-            "pct": None if pd.isna(row["con_pct"]) else float(row["con_pct"]),
-            "pct5": None if pd.isna(row["con_pct_5d"]) else float(row["con_pct_5d"]),
-            "rank": None if pd.isna(row["con_rank"]) else float(row["con_rank"]),
-            "lu_cnt": int(lu_cnt.get((code, date), 0)),
+    # 向量化构建（替代 iterrows：每行建 Series 的开销在概念×日期量级上显著）；
+    # dict 契约不变（消费方按 (con_code, date) 键查，值结构同旧版）
+    cdd = cd.set_index(["con_code", "date"])
+    lu_a = lu_cnt.reindex(cdd.index).fillna(0).astype(int).to_numpy()
+    for key, p, p5, r, l in zip(
+        cdd.index,
+        cdd["con_pct"].to_numpy(),
+        cdd["con_pct_5d"].to_numpy(),
+        cdd["con_rank"].to_numpy(),
+        lu_a,
+    ):
+        con_day[key] = {
+            "pct": None if pd.isna(p) else float(p),
+            "pct5": None if pd.isna(p5) else float(p5),
+            "rank": None if pd.isna(r) else float(r),
+            "lu_cnt": int(l),
         }
 
     def best_at(code6, date):
@@ -113,7 +127,7 @@ def build_concept_tables(store):
             return None
         return (all(p < 0 for p in pcts), max_lu)
 
-    return con_day, by_stock, best_at, gate_at
+    return con_day, by_stock, best_at, gate_at, cd, lu_cnt
 
 
 def precompute(store, cfg) -> dict:
@@ -158,8 +172,7 @@ def precompute(store, cfg) -> dict:
     yizi_map = set(map(tuple, rawm.assign(yizi=(rawm["r_open"] == rawm["r_high"]) & (rawm["r_open"] == rawm["r_low"]) & (rawm["r_open"] == rawm["r_close"]))
                      .loc[lambda d: d["yizi"], ["thscode", "date"]].values.tolist()))
     pool["prev_yizi"] = [ (tc, pd) in yizi_map for tc, pd in zip(pool["thscode"], pool["prev_date"]) ]
-    # bars (listing age proxy)
-    bars = si.groupby("thscode")["bars"].apply(lambda s: s)  # keep si lookup
+    # bars (listing age proxy)：si 本身即按 (thscode, date) 可查，无需再包一层恒等 groupby
     out["pool"] = pool
 
     # stock name map with ST check
@@ -171,19 +184,24 @@ def precompute(store, cfg) -> dict:
     if not store.dt.empty:
         dt = store.dt.copy()
         dt["net_value"] = pd.to_numeric(dt["net_value"], errors="coerce").fillna(0)
-        net = dt.groupby(["date", "thscode"])["net_value"].sum().reset_index()
+        # 按日期预分组（替代逐日 isin 全表扫描：O(交易日×行数) → O(行数 + 交易日×窗口)）；
+        # per_day 每 date 的 thscode 净额 = 原双键 groupby 的切片，窗口相加语义与逐日筛选一致
+        per_day = {d: g.groupby("thscode")["net_value"].sum() for d, g in dt.groupby("date")}
         for i, d in enumerate(td):
-            window = td[max(0, i - 5):i]  # last 5 trade days BEFORE d
-            sub = net[net["date"].isin(window)]
-            agg = sub.groupby("thscode")["net_value"].sum()
-            dt_recent[d] = set(agg[agg > 0].index)
+            agg = None
+            for w in td[max(0, i - 5):i]:  # last 5 trade days BEFORE d
+                s = per_day.get(w)
+                if s is None:
+                    continue
+                agg = s if agg is None else agg.add(s, fill_value=0)
+            dt_recent[d] = set(agg[agg > 0].index) if agg is not None else set()
     out["dt_recent_netbuy"] = dt_recent
 
     # industry leader lookup: per date, per ind_code: thscode with best ret20 (from si)
     out["si_indexed"] = si.set_index(["thscode", "date"])
 
     # ---- 概念维度（C 线一阶因子）：热度表 + 池行驱动概念挂接 ----
-    con_day, con_by_stock, con_best, con_gate = build_concept_tables(store)
+    con_day, con_by_stock, con_best, con_gate, cd, lu_cnt = build_concept_tables(store)
     out["con_day"] = con_day
     out["con_by_stock"] = con_by_stock
     out["con_best"] = con_best
@@ -191,18 +209,44 @@ def precompute(store, cfg) -> dict:
     out["con_name"] = {v: k for k, v in store.con_catalog.items()}
 
     pool = out["pool"]
-    if con_best:   # 概念数据缺失时 build_concept_tables 降级返回 {}，truthy 判断而非 is not None
-        vals = [con_best(str(tc).split(".")[0], d) for tc, d in
-                zip(pool["thscode"], pool["date"])]
-        pool["con_code"] = [v[0] if v else None for v in vals]
-        pool["con_pct"] = [v[1] if v else np.nan for v in vals]
-        pool["con_pct5"] = [v[2] if v else np.nan for v in vals]
-        pool["con_lu_cnt"] = [v[3] if v else np.nan for v in vals]
-        pool["con_rank"] = [v[4] if v else np.nan for v in vals]
-        gates = [con_gate(str(tc).split(".")[0], d) for tc, d in
-                 zip(pool["thscode"], pool["date"])]
-        pool["con_gate_weak"] = [g[0] if g else np.nan for g in gates]
-        pool["con_max_lu"] = [g[1] if g else np.nan for g in gates]
+    if con_best is not None and con_best and cd is not None:
+        # 概念数据缺失时 build_concept_tables 降级返回空（truthy 判断而非 is not None）
+        # 向量化挂接（替代逐行 Python 闭包）：membership explode 后与概念日表/涨停计数 join，
+        # 组内按 (pct, lu_cnt) 取最优——与 best_at「平手取涨停家数更高者」同口径。
+        codes6 = pool["thscode"].astype(str).str.split(".").str[0]
+        mj = (pd.DataFrame({"row": np.arange(len(pool)), "code6": codes6.to_numpy(), "date": pool["date"].to_numpy()})
+              .assign(con_code=lambda d: d["code6"].map(lambda c: con_by_stock.get(c)))
+              .explode("con_code")
+              .dropna(subset=["con_code"]))
+        cdj = cd[["con_code", "date", "con_pct", "con_pct_5d", "con_rank"]]
+        mj = mj.merge(cdj, on=["con_code", "date"], how="left")
+        # 涨停计数对齐：lu_cnt 的 (con_code, date) MultiIndex → 可 merge 的列
+        luc = lu_cnt.rename("lu_c").reset_index()
+        luc.columns = ["con_code", "date", "lu_c"]
+        mj = mj.merge(luc, on=["con_code", "date"], how="left")
+        mj["lu_c"] = mj["lu_c"].fillna(0).astype(int)
+        mj = mj.dropna(subset=["con_pct"])
+        # best per (row)：stable sort 保证 (pct, lu_c) 平手时取 membership 序靠前者
+        # （与旧逐行遍历 `>` 严格大于的取首个最大值语义一致——研究可复现性优先）。
+        # ⚠️ 用 head(1) 而非 first()：first() 逐列跳过 NaN，会把 best 概念缺失的
+        # pct5 错拿成次优概念的值（对拍 76 行差异即此）。
+        best = (mj.sort_values(["row", "con_pct", "lu_c"], ascending=[True, False, False], kind="stable")
+                  .groupby("row").head(1).reset_index(drop=True))
+        pool["con_code"] = [None] * len(pool)
+        pool.loc[best["row"], "con_code"] = best["con_code"].to_numpy()
+        for col, src in (("con_pct", "con_pct"), ("con_pct5", "con_pct_5d"),
+                         ("con_lu_cnt", "lu_c"), ("con_rank", "con_rank")):
+            pool[col] = np.full(len(pool), np.nan)
+            pool.loc[best["row"], col] = best[src].to_numpy()
+        # gate：组内全弱 / 最大涨停家数（与 gate_at 同口径；概念当日全无值 → NaN 诚实缺失）。
+        # con_gate_weak 必须是「真 bool 或 NaN」：select 用 `gw is True` 严格判断，
+        # 列初始化为 object dtype 以容纳 bool/NaN 混合（float 列会把 True 变 1.0）。
+        mj["weak"] = mj["con_pct"] < 0
+        gate = mj.groupby("row").agg(con_gate_weak=("weak", "all"), con_max_lu=("lu_c", "max"))
+        pool["con_gate_weak"] = np.full(len(pool), np.nan, dtype=object)
+        pool["con_max_lu"] = np.full(len(pool), np.nan)
+        pool.loc[gate.index, "con_gate_weak"] = gate["con_gate_weak"].to_numpy()
+        pool.loc[gate.index, "con_max_lu"] = gate["con_max_lu"].to_numpy()
 
     # ---- 隔夜美股（C4+ 一阶因子）：驱动概念 → 美股代理组隔夜涨幅 ----
     # 单一来源 us_market.match_proxy_group + factors.json；无映射/数据缺失 → None（诚实缺失）。

@@ -22,11 +22,14 @@ import pandas as pd
 
 from ..core.strategy_base import CrossSectionalStrategy, Strategy
 
-_ALLOWED_MODULES = {
+#: 白名单 frozenset：模块级不可原地变异（.add/.update 直接 AttributeError）。
+#: 需要放行额外模块（如测试导出代码引 quant_sim）请走 extra_modules 参数，
+#: 不要整体替换本名字——构造期参数化是唯一扩展口。
+_ALLOWED_MODULES = frozenset({
     "numpy", "pandas", "math", "statistics", "random", "datetime",
     "itertools", "functools", "collections", "dataclasses", "typing",
     # time 已移除：time.sleep(1e9) 在无超时实现下会挂死会话（防误角度也不该给）
-}
+})
 
 #: dunder 属性逃逸链黑名单：拿到这些就能越出受限 builtins（CPython 经典沙箱逃逸路径）。
 _BANNED_ATTRS = {
@@ -49,9 +52,9 @@ _SAFE_BUILTINS: Dict[str, object] = {
 }
 
 
-def _guarded_import(name: str, globals=None, locals=None, fromlist=(), level=0):  # noqa: ANN001
+def _guarded_import(name: str, globals=None, locals=None, fromlist=(), level=0, *, _extra=frozenset()):  # noqa: ANN001
     root = name.split(".")[0]
-    if root not in _ALLOWED_MODULES:
+    if root not in _ALLOWED_MODULES and root not in _extra:
         raise ImportError(f"在线策略只允许 import {sorted(_ALLOWED_MODULES)}，拒绝 `{name}`")
     import importlib
 
@@ -62,9 +65,12 @@ class StrategyCodeError(Exception):
     """用户代码错误（带定位信息）。"""
 
 
-def make_namespace() -> Dict[str, object]:
+def make_namespace(extra_modules=frozenset()) -> Dict[str, object]:
+    """构建受限 exec 命名空间。extra_modules：本次额外放行的顶级模块名
+    （构造期参数，白名单本体 frozenset 不可运行期变异）。"""
+    guarded = lambda name, *a, **kw: _guarded_import(name, *a, _extra=frozenset(extra_modules), **kw)  # noqa: E731
     ns: Dict[str, object] = {
-        "__builtins__": {**_SAFE_BUILTINS, "__import__": _guarded_import},
+        "__builtins__": {**_SAFE_BUILTINS, "__import__": guarded},
         "__name__": "user_strategy",  # __build_class__ 建类时需要
         "__doc__": None,
         "pd": pd,
@@ -95,13 +101,15 @@ def scan_user_code(code: str) -> None:
             raise StrategyCodeError(f"❌ 你的代码 第 {node.lineno} 行：禁止引用 __builtins__。")
 
 
-def compile_user_strategy(code: str) -> Type[Strategy]:
-    """exec 用户代码，返回其中定义的最后一个 Strategy 子类（约定：主策略放最后，或命名 MyStrategy）。"""
+def compile_user_strategy(code: str, *, extra_modules=frozenset()) -> Type[Strategy]:
+    """exec 用户代码，返回其中定义的最后一个 Strategy 子类（约定：主策略放最后，或命名 MyStrategy）。
+
+    extra_modules：本次额外放行的顶级 import 名（默认空 = 生产口径）。
+    """
     if not code.strip():
         raise StrategyCodeError("代码为空")
     scan_user_code(code)
-    ns = make_namespace()
-    before = set()
+    ns = make_namespace(extra_modules)
     try:
         exec(compile(code, "<我的策略>", "exec"), ns)  # noqa: S102
     except Exception:
@@ -116,12 +124,11 @@ def compile_user_strategy(code: str) -> Type[Strategy]:
     # 命名优先 MyStrategy，否则取源码里最后定义的
     named = [c for c in found if c.__name__ == "MyStrategy"]
     chosen = named[-1] if named else found[-1]
-    _ = before
     return chosen
 
 
-def build_user_strategy(code: str, **params) -> Strategy:
-    cls = compile_user_strategy(code)
+def build_user_strategy(code: str, *, extra_modules=frozenset(), **params) -> Strategy:
+    cls = compile_user_strategy(code, extra_modules=extra_modules)
     try:
         return cls(**params)
     except TypeError as e:

@@ -13,14 +13,20 @@ kind=builtin payload={"family": "dual_ma|momentum|meanrev", "params": {...}}
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .. import paths as _paths
 from ..core.fsutil import save_json_atomic
+
+_log = logging.getLogger(__name__)
+
+#: 合法存档类型（parse 校验用；save_strategy 同一来源）
+_KINDS = ("rule", "code", "builtin")
 
 def _build_dual_ma(params: dict, codes: Optional[List[str]]):
     """dual_ma 族参数适配（原 quant_api if-chain 收编）：标的缺省取池首、参数清洗与校验。"""
@@ -140,7 +146,7 @@ def save_strategy(
     store_dir: Optional[str] = None,
     overwrite: bool = True,
 ) -> str:
-    if kind not in ("rule", "code", "builtin"):
+    if kind not in _KINDS:
         raise ValueError(f"未知策略类型 {kind}")
     if kind == "rule":
         try:
@@ -159,8 +165,10 @@ def save_strategy(
                 old = json.load(f)
             created = old.get("created") or old.get("updated") or created
             version = int(old.get("version", 1)) + 1
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            # 旧档损坏（IO 失败/非法 JSON）：不再静默重置 created/version——
+            # 显式警告后按新档从 v1 起，研究者在 UI/日志里能看到分界
+            _log.warning("覆盖保存「%s」：旧档读取失败（%s），created/version 将重新起算", name, e)
     doc = {
         "name": name.strip(), "kind": kind, "payload": payload, "note": note,
         "data_symbols": list(data_symbols or []),
@@ -171,33 +179,76 @@ def save_strategy(
     return path
 
 
-def list_strategies(store_dir: Optional[str] = None) -> List[SavedStrategy]:
+def _parse_doc(fn: str, doc) -> SavedStrategy:
+    """单档 JSON → SavedStrategy。schema 逐字段校验，坏档给出可行动的错误信息。
+
+    刻意宽松处理 name/kind 缺省（沿用文件名/旧默认值），但 kind 非法或 payload
+    结构不符时 raise——回放路径（build_saved）拿到的必须是可构建的存档。
+    """
+    if not isinstance(doc, dict):
+        raise ValueError("存档顶层不是 JSON 对象")
+    kind = doc.get("kind", "rule")
+    if kind not in _KINDS:
+        raise ValueError(f"未知策略类型 {kind!r}")
+    payload = doc.get("payload", {})
+    if not isinstance(payload, dict):
+        raise ValueError(f"payload 不是对象而是 {type(payload).__name__}")
+    if kind == "code" and not isinstance(payload.get("code"), str):
+        raise ValueError("code 存档缺 payload.code 字符串字段")
+    if kind == "builtin" and not isinstance(payload.get("family"), str):
+        raise ValueError("builtin 存档缺 payload.family 字符串字段")
+    try:
+        version = int(doc.get("version", 1) or 1)
+    except (TypeError, ValueError):
+        raise ValueError(f"version 字段不是整数：{doc.get('version')!r}") from None
+    return SavedStrategy(
+        name=doc.get("name", fn[:-5]), kind=kind,
+        payload=payload, note=doc.get("note", ""),
+        data_symbols=doc.get("data_symbols", []), updated=doc.get("updated", ""),
+        created=doc.get("created", ""), version=version,
+    )
+
+
+def list_strategies_ex(store_dir: Optional[str] = None) -> Tuple[List[SavedStrategy], List[dict]]:
+    """列出存档（含坏档清单）。返回 (strategies, bad_files)。
+
+    坏档（IO 失败 / 非法 JSON / schema 不符）不阻塞列表：跳过并记录在
+    bad_files（{file, error}），由调用方决定如何上报 UI。
+    """
     d = _dir(store_dir)
     out: List[SavedStrategy] = []
+    bad: List[dict] = []
     if not os.path.isdir(d):
-        return out
+        return out, bad
     for fn in sorted(os.listdir(d)):
         if not fn.endswith(".json"):
             continue
         try:
             with open(os.path.join(d, fn), encoding="utf-8") as f:
                 doc = json.load(f)
-            out.append(SavedStrategy(
-                name=doc.get("name", fn[:-5]), kind=doc.get("kind", "rule"),
-                payload=doc.get("payload", {}), note=doc.get("note", ""),
-                data_symbols=doc.get("data_symbols", []), updated=doc.get("updated", ""),
-                created=doc.get("created", ""), version=int(doc.get("version", 1) or 1),
-            ))
-        except Exception:
-            continue  # 坏文件不阻塞列表
-    return out
+            out.append(_parse_doc(fn, doc))
+        except (OSError, ValueError) as e:
+            _log.warning("策略存档坏档跳过 %s：%s", fn, e)
+            bad.append({"file": fn, "error": str(e)})
+    return out, bad
+
+
+def list_strategies(store_dir: Optional[str] = None) -> List[SavedStrategy]:
+    """列出存档（只要好档；坏档跳过并记 warning，见 list_strategies_ex）。"""
+    return list_strategies_ex(store_dir)[0]
 
 
 def load_strategy(name: str, store_dir: Optional[str] = None) -> SavedStrategy:
-    for s in list_strategies(store_dir):
+    rows, bad = list_strategies_ex(store_dir)
+    for s in rows:
         if s.name == name or s.filename == _safe(name) + ".json":
             return s
-    raise FileNotFoundError(f"没有找到存档策略「{name}」，现有：{[s.name for s in list_strategies(store_dir)]}")
+    # 目标名恰是坏档：报「存在但损坏」而非误导性的「没有找到」
+    want = _safe(name) + ".json"
+    for b in bad:
+        if b["file"] == want:
+            raise ValueError(f"存档「{name}」文件存在但无法解析（{b['error']}）——请修复或删除 {want}")
+    raise FileNotFoundError(f"没有找到存档策略「{name}」，现有：{[s.name for s in rows]}")
 
 
 def delete_strategy(name: str, store_dir: Optional[str] = None) -> bool:
@@ -231,7 +282,12 @@ def build_saved(s: SavedStrategy, universe: Optional[List[str]] = None, *, allow
             )
         from .sandbox import build_user_strategy
 
-        return build_user_strategy(s.payload["code"])
+        code = s.payload.get("code")
+        if not isinstance(code, str) or not code.strip():
+            # 纵深防御：_parse_doc 已挡掉文件级坏档；这里挡内存构造的 SavedStrategy
+            # （测试/程序化传入）与未来 schema 演进漏网
+            raise ValueError(f"代码存档「{s.name}」payload.code 缺失或为空，无法回放")
+        return build_user_strategy(code)
     if s.kind == "builtin":
         fam = s.payload.get("family")
         ref = BUILTIN_FAMILIES.get(fam)

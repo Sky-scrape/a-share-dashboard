@@ -513,9 +513,10 @@ def jobs_list():
 
 def strategies_list():
     _import_engine()
-    from quant_sim.strategies.store import list_strategies, strategy_description
+    from quant_sim.strategies.store import list_strategies_ex, strategy_description
+    rows, bad = list_strategies_ex()
     out = []
-    for s in list_strategies():
+    for s in rows:
         out.append({
             "name": s.name, "kind": s.kind, "note": s.note,
             "version": s.version, "created": s.created, "updated": s.updated,
@@ -523,7 +524,7 @@ def strategies_list():
             "desc": strategy_description(s),
             "payload": s.payload,
         })
-    return out
+    return {"strategies": out, "bad_files": bad}
 
 
 def strategies_save(req):

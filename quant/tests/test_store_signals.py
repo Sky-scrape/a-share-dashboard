@@ -77,6 +77,40 @@ def test_store_bad_input(tmp_path):
         build_saved(_saved("alien", {}))
 
 
+def test_store_bad_files_skipped_and_reported(tmp_path):
+    """坏档（非法 JSON / schema 不符）不阻塞列表，计入 bad_files 上报。"""
+    from quant_sim.strategies.store import list_strategies_ex
+
+    save_strategy("好档", "rule", RULE_SPEC, store_dir=str(tmp_path))
+    (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "badkind.json").write_text(json.dumps({"name": "b", "kind": "alien"}), encoding="utf-8")
+    (tmp_path / "nocode.json").write_text(json.dumps({"name": "c", "kind": "code", "payload": {}}), encoding="utf-8")
+    rows, bad = list_strategies_ex(str(tmp_path))
+    assert [r.name for r in rows] == ["好档"]
+    assert {b["file"] for b in bad} == {"broken.json", "badkind.json", "nocode.json"}
+    # 只要好档的兼容入口不受影响
+    assert [s.name for s in list_strategies(str(tmp_path))] == ["好档"]
+    # 目标名恰是坏档：报「存在但损坏」而非「没有找到」
+    with pytest.raises(ValueError, match="存在但无法解析"):
+        load_strategy("broken", store_dir=str(tmp_path))
+    # code 存档缺 code 字段：构建时给出明确报错（非 KeyError）；
+    # allow_exec 先过权限闸，才能触达 payload.code 的 schema 校验
+    with pytest.raises(ValueError, match="payload.code"):
+        build_saved(_saved("code", {}), allow_exec=True)
+
+
+def test_store_overwrite_corrupt_old_warns_and_resets(tmp_path, caplog):
+    """覆盖损坏旧档：created/version 重新起算，且有显式 warning（非静默）。"""
+    import logging as _lg
+
+    (tmp_path / "坏档.json").write_text("{not json", encoding="utf-8")
+    with caplog.at_level(_lg.WARNING, logger="quant_sim.strategies.store"):
+        save_strategy("坏档", "rule", RULE_SPEC, store_dir=str(tmp_path))
+    assert "坏档" in caplog.text and "旧档读取失败" in caplog.text
+    s = load_strategy("坏档", store_dir=str(tmp_path))
+    assert s.version == 1 and s.kind == "rule"
+
+
 def test_store_builtin_and_code(tmp_path):
     save_strategy("b", "builtin", {"family": "dual_ma", "params": {"symbol": "510300", "fast": 5, "slow": 20}}, store_dir=str(tmp_path))
     st1 = build_saved(load_strategy("b", store_dir=str(tmp_path)))

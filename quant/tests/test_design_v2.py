@@ -35,6 +35,22 @@ class TestManifest:
         p3 = load_panel(out, expect_adjust="raw")
         assert not p3.metadata.get("manifest_mismatch")
 
+    def test_run_backtest_blocks_manifest_mismatch(self, tmp_path):
+        """P1-3：口径不一致的面板默认在回测入口 raise，显式 opt-out 才放行。"""
+        panel = make_panel({"600000": flat_rows(10, 10.0)})
+        panel.metadata["manifest_mismatch"] = {"600000.parquet": "raw"}
+        cfg = BacktestConfig()
+        with pytest.raises(ValueError, match="manifest_mismatch"):
+            run_backtest(DualMAStrategy("600000", 2, 5), panel, cfg)
+        # 显式放行：结果产出（但调用方自担口径风险）
+        r = run_backtest(DualMAStrategy("600000", 2, 5), panel, cfg,
+                         allow_manifest_mismatch=True)
+        assert r.metrics  # 结果非空
+        # 一致面板不受影响
+        clean = make_panel({"600000": flat_rows(10, 10.0)})
+        r2 = run_backtest(DualMAStrategy("600000", 2, 5), clean, cfg)
+        assert r2.metrics
+
     def test_check_adjust_only_stock_vocab(self):
         m = {"a.parquet": {"adjust": "qfq"}, "b.parquet": {"adjust": "dividend_reinvested"},
              "c.parquet": {"adjust": "none"}, "d.parquet": {}}

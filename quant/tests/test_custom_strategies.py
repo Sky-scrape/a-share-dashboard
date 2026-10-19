@@ -111,14 +111,9 @@ def test_rule_engine_matches_exported_code(panel, cfg, spec):
     同时覆盖「导出产物可用」与「沙盒接受导出代码」两条链路。"""
     r1 = run_backtest(GenericRuleStrategy(**spec), panel, cfg)
     # 导出产物 import 引擎本体（from quant_sim.core.strategy_base import Strategy），
-    # 在线沙盒白名单只放行三方库——测试内临时放行 quant_sim 顶级包，不改动生产口径。
-    from quant_sim.strategies import sandbox as _sb
-    _old = _sb._ALLOWED_MODULES
-    _sb._ALLOWED_MODULES = _old | {"quant_sim"}
-    try:
-        strategy = build_user_strategy(generate_python_code(spec))
-    finally:
-        _sb._ALLOWED_MODULES = _old
+    # 在线沙盒白名单只放行三方库——测试经 extra_modules 构造期参数临时放行
+    # quant_sim 顶级包（白名单是 frozenset，生产口径不受运行期污染）。
+    strategy = build_user_strategy(generate_python_code(spec), extra_modules={"quant_sim"})
     r2 = run_backtest(strategy, panel, cfg)
     assert order_key(r1) == order_key(r2)
     assert abs(r1.metrics["累计收益率"] - r2.metrics["累计收益率"]) < 1e-12
@@ -178,6 +173,41 @@ def test_sandbox_allows_whitelist_import():
         "import math\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n"
     )
     assert strat is not None
+
+
+def test_sandbox_blocks_escape_chains():
+    """已知逃逸链回归：__builtins__/__import__/__loader__/importlib/dunder 反射。
+    每条都必须被 AST 扫描或受限 import 拦下，报 StrategyCodeError（带定位）。"""
+    escapes = [
+        # __builtins__ 引用（拿到真 builtins 字典即出笼）
+        "x = __builtins__\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        # __import__ 直呼（绕过命名空间里替换过的 __import__ 名）
+        "os = __import__('os')\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        # __loader__/__spec__ 模块自省链
+        "x = __loader__\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        "x = __spec__\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        # importlib 间接 import（白名单外模块）
+        "import importlib\nos = importlib.import_module('os')\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        # dunder 反射经典链：().__class__.__mro__[1].__subclasses__()
+        "x = ().__class__.__mro__[1].__subclasses__()\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+        # getattr 间接取 dunder 属性（AST 属性节点同样命中黑名单）
+        "x = getattr(dict, '__bases__')\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n",
+    ]
+    for bad in escapes:
+        with pytest.raises(StrategyCodeError):
+            build_user_strategy(bad)
+
+
+def test_sandbox_whitelist_immutable():
+    """白名单必须是 frozenset：运行期 .add 必须失败（防止测试/业务代码顺手变异全局）。"""
+    from quant_sim.strategies import sandbox as sb
+
+    assert isinstance(sb._ALLOWED_MODULES, frozenset)
+    with pytest.raises(AttributeError):
+        sb._ALLOWED_MODULES.add("os")
+    # 白名单外模块即使在 extra_modules 之外的调用中依然被拒
+    with pytest.raises(StrategyCodeError):
+        build_user_strategy("import os\n\nclass MyStrategy(Strategy):\n    def on_bar(self, ctx):\n        pass\n")
 
 
 def test_generated_code_public_helpers():

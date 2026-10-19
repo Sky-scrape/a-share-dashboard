@@ -396,7 +396,10 @@ def quant_payload(force=False):
     with _CACHE_LOCK:
         cached = _quant_cache["data"]
         if not force and cached is not None and now - _quant_cache["ts"] <= _QUANT_TTL:
-            return json.loads(json.dumps(cached, ensure_ascii=False))
+            # 命中直接返回缓存引用：唯一消费方 Handler._json 只做 json.dumps（只读），
+            # 真正要防的是「失败数据进缓存」与「调用方拿引用变异」——前者在写入侧拦，
+            # 后者由 _json 的只读纪律保证（新消费方若要改数据须自行深拷贝）。
+            return cached
     try:
         data = quant_collector.collect()
         with _CACHE_LOCK:
@@ -406,8 +409,10 @@ def quant_payload(force=False):
         with _CACHE_LOCK:
             if _quant_cache["data"] is None:
                 return {"error": f"量化平台采集失败：{e}"}
-        data = _quant_cache["data"]
-    return json.loads(json.dumps(data, ensure_ascii=False))  # 浅拷贝，不污染缓存
+            data = _quant_cache["data"]
+        # 降级返回旧缓存：深拷贝后再交出去，本次引用的任何变异不会污染缓存本体
+        return json.loads(json.dumps(data, ensure_ascii=False))
+    return data
 
 
 # ---------------- 行业映射（mtime 缓存） ----------------

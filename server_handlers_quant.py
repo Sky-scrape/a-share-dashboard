@@ -26,7 +26,7 @@ class HandlerQuant:
 
     def api_quant_strategies(self):
         try:
-            return self._json({"strategies": quant_api.strategies_list()})
+            return self._json(quant_api.strategies_list())  # {strategies: [...], bad_files: [...]}
         except Exception as e:
             return self._json({"error": str(e)}, 500)
 
