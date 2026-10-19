@@ -30,9 +30,9 @@ if _HERE not in sys.path:
 if os.path.dirname(_HERE) not in sys.path:
     sys.path.insert(0, os.path.dirname(_HERE))
 
-from execution_layer import MF_BUY  # noqa: E402  买点窗/风险位单一来源
+from execution_layer import MF_BUY, FEE_MAIN  # noqa: E402  买点窗/风险位/费用单一来源
 
-FEE_PCT = 0.15          # 双边费用（%，佣金+滑点近似，与 research mf_mono_backtest 同源）
+FEE_PCT = FEE_MAIN       # 双边费用（%），2026-10-19 P1-5 收编至 execution_layer（别名保留）
 SELL_BLOCK_OPEN = -9.8  # T+2 开盘跌幅 ≤ 此值视为跌停封死（10cm）→ 开盘卖不出，改按收盘
 RULES_LABEL = "制度口径（T+1 买 → T+2 开盘卖，含费 %.2f%%）" % FEE_PCT
 

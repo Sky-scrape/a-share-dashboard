@@ -26,6 +26,7 @@
   启动落点（工作日 09:10–09:30 先开竞价）走 backend/landing 单一口径
 """
 import json
+import glob
 import os
 import re
 import socket
@@ -40,6 +41,39 @@ sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
 from modules import MODULES  # noqa: E402
 
 FAILED = []
+SKIPPED = []
+
+# 数据依赖探测（2026-10-19 CI 接入批）：data/ 不入库，克隆/CI 环境没有采集数据。
+# 数据依赖型断言按探测结果显式 SKIP（不是静默通过）——本地全量数据时行为不变。
+_HAS_DATA = {
+    "rotation": os.path.isdir(os.path.join(ROOT, "data", "rotation", "daily")),
+    "recap": os.path.isdir(os.path.join(ROOT, "data", "recap", "snapshots"))
+             or bool(glob.glob(os.path.join(ROOT, "data", "recap", "*.json"))),
+    "global": os.path.isfile(os.path.join(ROOT, "data", "global", "global.json")),
+    "us_market": os.path.isfile(os.path.join(ROOT, "data", "recap", "us_market", "factors.json")),
+    "status": os.path.isdir(os.path.join(ROOT, ".status")),
+    "auction": os.path.isfile(os.path.join(ROOT, "data", "auction", "live.json"))
+                or os.path.isfile(os.path.join(ROOT, "data", "auction", "final.json")),
+    "quant_results": os.path.isdir(os.path.join(ROOT, "quant", "results")),
+}
+
+
+def has_data(key):
+    """数据板块是否具备本地采集数据（key 见 _HAS_DATA；未知 key 视为有数据）。"""
+    return _HAS_DATA.get(key, True)
+
+
+def check_or_skip(name, cond, detail="", data_key=None):
+    """数据依赖型断言：无数据时显式 SKIP（计入 SKIPPED，不算失败、不装绿）。
+
+    与 check() 的区别：check 失败即 FAILED（真回归）；这里在「该板块本来就没有
+    采集数据」时降级为 SKIP——契约在无数据环境下无从验证，静默 PASS 反而制造
+    虚假绿灯。data_key 为 None 时行为等同 check（结构/源码类断言不许走这条）。"""
+    if data_key is not None and not has_data(data_key):
+        print(f"  [SKIP] {name} -> 无 {data_key} 采集数据（克隆/CI 环境正常）")
+        SKIPPED.append(name)
+        return
+    check(name, cond, detail)
 
 _ALLOWED_HOSTS = ("127.0.0.1", "localhost")
 
@@ -144,7 +178,8 @@ def main():
         check("health.recap 字段齐", all(k in (h.get("recap") or {}) for k in
               ("last_date", "fetched_at", "errors", "task")), str(list(h.get("recap") or {})))
         rot_task = (h.get("rotation") or {}).get("task") or {}
-        check("轮动状态文件已修复错位（有 last_run）", bool(rot_task.get("last_run")), str(rot_task)[:80])
+        check_or_skip("轮动状态文件已修复错位（有 last_run）", bool(rot_task.get("last_run")),
+                      str(rot_task)[:80], data_key="rotation")
         # 轮动采集防缺失三件套（2026-09-05）：节拍对齐整分钟 / 定格点并入 / 断流自愈
         _tcs = open(os.path.join(ROOT, "backend", "rotation", "ths_collect.py"), encoding="utf-8").read()
 
@@ -193,20 +228,26 @@ def main():
         check("health.global 字段齐", all(k in (h.get("global") or {}) for k in
               ("last_date", "fetched_at", "age_hours", "errors", "fetching")), str(list(h.get("global") or {})))
         _umh = h.get("us_market") or {}
-        check("health.us_market 字段齐（隔夜美股因子直接监控）",
-              _umh.get("present") is True and all(k in _umh for k in
-              ("updated_at", "age_hours", "last_t", "last_us_date", "failed")), str(_umh)[:100])
+        check_or_skip("health.us_market 字段齐（隔夜美股因子直接监控）",
+                      _umh.get("present") is True and all(k in _umh for k in
+                      ("updated_at", "age_hours", "last_t", "last_us_date", "failed")),
+                      str(_umh)[:100], data_key="us_market")
         # 2026-09-15 告警闭环批次：health 段新增 notify（推送配置摘要）与 backup（备份状态）
-        check("health.notify/backup 段（告警推送与数据备份）",
-              all(k in (h.get("notify") or {}) for k in
-                  ("configured", "channels", "min_interval_hours"))
-              and all(k in (h.get("backup") or {}) for k in
-                      ("present", "ok", "stale", "dest")),
-              str({k: h.get(k) for k in ("notify", "backup")})[:160])
+        check_or_skip("health.notify/backup 段（告警推送与数据备份）",
+                      all(k in (h.get("notify") or {}) for k in
+                          ("configured", "channels", "min_interval_hours"))
+                      and all(k in (h.get("backup") or {}) for k in
+                              ("present", "ok", "stale", "dest")),
+                      str({k: h.get(k) for k in ("notify", "backup")})[:160], data_key="status")
 
         st, gl = get(base, "/api/global")
-        check("/api/global 200", st == 200, str(gl)[:80])
-        if st == 200:
+        if has_data("global"):
+            check("/api/global 200", st == 200, str(gl)[:80])
+        else:
+            check_or_skip("/api/global 无数据时诚实降级（200 + error JSON，非 500 崩溃）",
+                          st == 200 and isinstance(gl, dict) and "error" in gl,
+                          str(gl)[:80], data_key="global")
+        if st == 200 and has_data("global"):
             idxs = (gl or {}).get("indices") or []
             check("global indices ≥10 且字段齐", len(idxs) >= 10 and all(
                   all(k in idxs[0] for k in ("id", "geo", "tz", "pct", "hist", "last_date")) for _ in [0]),
@@ -233,19 +274,22 @@ def main():
 
         st, s1 = get(base, "/api/sentiment")
         series = (s1 or {}).get("series") or []
-        check("/api/sentiment 非空", st == 200 and len(series) > 50, f"len={len(series)}")
-        check("sentiment 带 weights_version", s1.get("weights_version") is not None)
+        check_or_skip("/api/sentiment 非空", st == 200 and len(series) > 50,
+                      f"len={len(series)}", data_key="recap")
+        check_or_skip("sentiment 带 weights_version", s1.get("weights_version") is not None,
+                      data_key="recap")
         last = series[-1] if series else {}
-        check("sentiment 行字段齐", all(k in last for k in
-              ("date", "index", "label", "zt", "dt", "max_lb", "promo_rate", "up_ratio")), str(last)[:120])
+        check_or_skip("sentiment 行字段齐", all(k in last for k in
+                      ("date", "index", "label", "zt", "dt", "max_lb", "promo_rate", "up_ratio")),
+                      str(last)[:120], data_key="recap")
 
         st, rs = get(base, "/api/rotation-stats")
         check("/api/rotation-stats 旧形状兼容", st == 200 and all(k in rs for k in
               ("dates", "speed", "top10", "persistent", "newcomers", "leaders_5d")), str(list(rs or {}))[:100])
         # 逐日锚定统计（复盘页按快照日期取数，防“换日期看到同一份”回退）
         _bd = (rs or {}).get("by_date") or {}
-        check("rotation-stats 含逐日锚定 by_date", st == 200 and len(_bd) >= 2,
-              f"by_date={len(_bd)}")
+        check_or_skip("rotation-stats 含逐日锚定 by_date", st == 200 and len(_bd) >= 2,
+                      f"by_date={len(_bd)}", data_key="rotation")
         if len(_bd) >= 2:
             _ks = sorted(_bd)[-2:]
             check("rotation-stats by_date 逐日不同（新晋/领涨锚定当日）",
@@ -267,8 +311,9 @@ def main():
               and "_persistent_list(pcts_all[-PERSIST_WINDOW:])" in dp)
 
         st, mx = get(base, "/api/rotation-matrix")
-        check("/api/rotation-matrix 齐", st == 200 and all(k in mx for k in
-              ("dates", "boards", "patterns", "coverage")), str(list(mx or {}))[:100])
+        check_or_skip("/api/rotation-matrix 齐", st == 200 and all(k in mx for k in
+                      ("dates", "boards", "patterns", "coverage")),
+                      str(list(mx or {}))[:100], data_key="rotation")
         # 盘中密集日或日K回填日都可产生 boards；回填日的形态字段必须置 null 不虚构
         _dense = any((c.get("minutes") or 0) >= 30 for c in (mx or {}).get("coverage") or [])
         if _dense:
@@ -291,15 +336,15 @@ def main():
 
         # ---- 全站板块口径统一（2026-09-01，同花顺一级行业 90）----
         st, bds = get(base, "/api/boards")
-        check("/api/boards 为同花顺口径", st == 200 and bds.get("src") == "ths"
-              and len(bds.get("industry") or []) >= 80
-              and all(str(b.get("code", "")).startswith("881") for b in bds.get("industry") or []),
-              f"src={bds.get('src')} n={len(bds.get('industry') or [])}")
+        check_or_skip("/api/boards 为同花顺口径", st == 200 and bds.get("src") == "ths"
+                      and len(bds.get("industry") or []) >= 80
+                      and all(str(b.get("code", "")).startswith("881") for b in bds.get("industry") or []),
+                      f"src={bds.get('src')} n={len(bds.get('industry') or [])}", data_key="rotation")
         rot_html = _page_src("web")
         rot_py = open(os.path.join(ROOT, "backend", "derive.py"), encoding="utf-8").read()
         st, dts = get(base, "/api/dates")
-        check("日K回填后日期列表覆盖 7 月", st == 200 and any(d <= "2026-07-10" for d in (dts or {}).get("dates") or []),
-              f"n={len((dts or {}).get('dates') or [])}")
+        check_or_skip("日K回填后日期列表覆盖 7 月", st == 200 and any(d <= "2026-07-10" for d in (dts or {}).get("dates") or []),
+                      f"n={len((dts or {}).get('dates') or [])}", data_key="rotation")
         if (dts or {}).get("dates"):
             st, bf = get(base, "/api/day?date=2026-07-15")
             check("回填日文件 src=ths-daily + daily_only + 两点",
@@ -335,8 +380,8 @@ def main():
             check("钻取同为同花顺口径→必 exact 或快照缺失 none", st == 200 and bm.get("match") in ("exact", "none"),
                   f"{nm} match={bm.get('match')}")
         st, im = get(base, "/api/industry-map")
-        check("/api/industry-map 一级行业单源", st == 200 and im.get("src") == "ths" and im.get("stocks", 0) > 4000,
-              f"stocks={im.get('stocks')}")
+        check_or_skip("/api/industry-map 一级行业单源", st == 200 and im.get("src") == "ths" and im.get("stocks", 0) > 4000,
+                      f"stocks={im.get('stocks')}", data_key="auction")
         rec_html = _recap_page_src()
         check("前端无东财板块口径文案残留", "东财实时" not in rot_html and "东财板块" not in rot_html
               and "东财分时" not in rec_html and "近似匹配" not in rec_html)
@@ -387,12 +432,13 @@ def main():
               "setInterval(recapPollTick" in _rp2 and "loadSnapshot(viewing, true)" in _rpoll
               and "noteTimer !== null" in _rpoll
               and 'zs.value.trim()' in _rpoll and "activeElement" in _rpoll)
-        check("新鲜度胶囊 45s 核对（原 120s，盘中断采预警浮出太慢）",
-              "setInterval(refresh, 45000)" in open(
+        check("新鲜度胶囊 45s 核对 + 后台停轮询/回前台补拉（原 120s 太慢；P2-3 补 hidden 守卫）",
+              "45000" in (src := open(
                   os.path.join(ROOT, "web", "lib", "freshness.js"), encoding="utf-8").read())
+              and "document.hidden" in src)
         _race2 = ((get(base, "/api/rotation-stats")[1] or {}).get("race")) or []
-        check("stats.race 每日含 bottom 跌幅侧（非旧版只涨 TOP10）",
-              bool(_race2) and all("bottom" in d for d in _race2))
+        check_or_skip("stats.race 每日含 bottom 跌幅侧（非旧版只涨 TOP10）",
+                      bool(_race2) and all("bottom" in d for d in _race2), data_key="rotation")
         dates_rot = (get(base, "/api/dates")[1] or {}).get("dates") or []
         st, day = get(base, "/api/day?date=" + dates_rot[-1]) if dates_rot else (0, {})
         if day.get("boards"):
@@ -402,7 +448,8 @@ def main():
 
         st, cd = get(base, "/api/recap/dates")
         dates = (cd or {}).get("dates") or []
-        check("/api/recap/dates 非空", st == 200 and len(dates) > 10, f"len={len(dates)}")
+        check_or_skip("/api/recap/dates 非空", st == 200 and len(dates) > 10,
+                      f"len={len(dates)}", data_key="recap")
 
         st, mods = get(base, "/api/recap/modules")
         reg = [m["key"] for m in (mods or {}).get("modules") or []]
@@ -946,11 +993,11 @@ def main():
             auc_c.C.save_json = _sv4
         _wmap = _wm_store.get("watchmap.json") or {}
         _srcs = [str(v.get("s") or "") for v in _wmap.values()]
-        check("watchmap 带来源 s（U自选/L涨停池/H热股）且 meta 计数与标注一致",
-              bool(_codes) and bool(_srcs) and all(re.fullmatch(r"[ULH]+", s) for s in _srcs)
-              and _poolmeta.get("src_limit") == sum(1 for s in _srcs if "L" in s)
-              and _poolmeta.get("src_hot") == sum(1 for s in _srcs if "H" in s),
-              f"n={len(_codes)} src样={_srcs[:4]} meta={_poolmeta}")
+        check_or_skip("watchmap 带来源 s（U自选/L涨停池/H热股）且 meta 计数与标注一致",
+                      bool(_codes) and bool(_srcs) and all(re.fullmatch(r"[ULH]+", s) for s in _srcs)
+                      and _poolmeta.get("src_limit") == sum(1 for s in _srcs if "L" in s)
+                      and _poolmeta.get("src_hot") == sum(1 for s in _srcs if "H" in s),
+                      f"n={len(_codes)} src样={_srcs[:4]} meta={_poolmeta}", data_key="auction")
         # 板块竞价强度换全成分口径：一级行业指数开盘缺口；观察池聚合只能做回退。
         _sec_store = {}
         _sv5 = auc_c.C.save_json
@@ -1314,7 +1361,7 @@ def main():
             rlen = uopen(base + "/quant-results/dual_ma_report.html", timeout=10).status
         except Exception as e:
             rlen = str(e)
-        check("报告直链 200", rlen == 200, str(rlen))
+        check_or_skip("报告直链 200", rlen == 200, str(rlen), data_key="quant_results")
         try:
             code2 = uopen(base + "/quant-results/..%2Fserver.py", timeout=10).status
         except urllib.error.HTTPError as e:
@@ -1358,7 +1405,8 @@ def main():
         for f in FAILED:
             print("  -", f)
         sys.exit(1)
-    print("SMOKE ALL PASS")
+    print("SMOKE ALL PASS" + (f"（{len(SKIPPED)} 项因无采集数据 SKIP，本地数据齐时为全量断言）"
+                               if SKIPPED else ""))
 
 
 if __name__ == "__main__":

@@ -39,10 +39,11 @@ import sys
 from pathlib import Path
 
 TRADING_DAYS_PER_YEAR = 244
-FEE = 0.15  # 双边成本（%），与 exp_hold_sizing 同口径
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
 from scripts.backtest_capital import load_validation, build_curve  # noqa: E402
+from execution_layer import FEE_MAIN as FEE  # 双边成本（%）单一来源（P1-5 收编）  # noqa: E402
 
 
 def curve_from_daily(daily: list[dict], size_fn=None, fee: float = 0.0) -> dict:

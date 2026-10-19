@@ -22,7 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import c15_common as C                                  # noqa: E402
-from c15_exec_tplus import MF_BUY, entry_of, _ratio, _pct, FEE_MAIN, FEE_SCENARIOS  # noqa: E402
+from c15_exec_tplus import (MF_BUY, entry_of, _ratio, _pct, FEE_MAIN, FEE_SCENARIOS,  # noqa: E402
+                            unsellable_at_open)
 
 SRC = C.BASE / "strategy-iter" / "runs" / "us_round5_C7_aligned" / "validation.csv"
 
@@ -87,9 +88,8 @@ def main():
             recs.append(rec)
             continue
         r2o, r2c = _pct(bar2["o"], c0), _pct(bar2["c"], c0)
-        rc, rpc = bar2.get("raw_c"), bar2.get("raw_pc")
-        rec["unsellable"] = bool(rc and rpc and abs(bar2["o"] - round(rpc, 2)) < 1e-6
-                                 and abs(rc - round(rpc * 0.9, 2)) < 0.005)
+        # 跌停不可卖：开盘触及跌停价（未复权价格域，P0-3 修正，与 c15_exec_tplus 同源）
+        rec["unsellable"] = unsellable_at_open(bar2)
         exit_open = (r2c if rec["unsellable"] else r2o)
         rec["B"] = round(_ratio(exit_open, e_ret), 2)
         rec["C"] = round(_ratio(exit_open if l1 <= b_["risk_low"] else r2c, e_ret), 2)
@@ -180,7 +180,8 @@ def main():
                      "不成立于可执行口径。")
     L += ["", "## 4. 边界披露", "",
           "- 日线无法还原盘中路径：T+2 开盘/收盘价均视为可成交（跌停已单列）；"
-          f"全窗口跌停不可卖改收盘的票 {sum(1 for r in recs if r.get('unsellable'))} 只。",
+          f"全窗口跌停不可卖改收盘的票 {sum(1 for r in recs if r.get('unsellable'))} 只"
+          "（判定口径 2026-10-19 修正：开盘价触及跌停价，未复权价格域）。",
           "- 未计滑点差异（0.15% 已近似含）、未处理停牌顺延、未计涨跌停挂单排队。",
           "- 未成交票不计收益也不占资金（等权空仓口径），因此净值不等于满仓收益。",
           "- 本回测用研究库窗口的 C7 选股，与生产池存在已知口径差（生产无当日一字排除）。", ""]

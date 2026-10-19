@@ -141,7 +141,8 @@ def iso(date8):
 def daily_bars(codes, d_from, d_to):
     """复权日线（v_daily_qfq，与 spec_duckdb 主源同视图）：{code6: {date_iso: bar}}。
 
-    附带 raw 未复权的 prev_close（跌停判定用，复权价无法判跌停）。
+    附带 raw 未复权的 open/close/prev_close（跌停判定用，复权价无法判跌停；
+    开盘是否触及跌停价必须在未复权价格域内对比，2026-10-19 P0-3）。
     """
     import duckdb
     import common
@@ -158,7 +159,7 @@ def daily_bars(codes, d_from, d_to):
             f"FROM v_daily_qfq WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE) "
             f"AND thscode IN ({in_sql})", [d_from, d_to]).fetchall()
         raw = con.execute(
-            "SELECT thscode, strftime(date,'%Y-%m-%d') d, close, prev_close "
+            "SELECT thscode, strftime(date,'%Y-%m-%d') d, open, close, prev_close "
             f"FROM raw_kline_daily WHERE date >= CAST(? AS DATE) AND date <= CAST(? AS DATE) "
             f"AND thscode IN ({in_sql})", [d_from, d_to]).fetchall()
     finally:
@@ -168,9 +169,10 @@ def daily_bars(codes, d_from, d_to):
         code = tcs.get(tc)
         if code:
             out.setdefault(code, {})[d] = {"o": o, "h": h, "l": l, "c": c, "amt": amt}
-    for tc, d, rc, pc in raw:
+    for tc, d, ro, rc, pc in raw:
         code = tcs.get(tc)
         if code and code in out and d in out[code]:
+            out[code][d]["raw_o"] = ro
             out[code][d]["raw_c"] = rc
             out[code][d]["raw_pc"] = pc
     return out

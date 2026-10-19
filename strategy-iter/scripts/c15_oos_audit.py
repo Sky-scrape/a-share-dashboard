@@ -47,7 +47,7 @@ def audit_records(track, calendar):
     validations = track.get("validations") or {}
     v_dates = sorted(k for k, v in validations.items() if (v or {}).get("rules") == "c7")
     if not v_dates:
-        return [], [], []
+        return [], [], [], []
     lo, hi = C.iso(v_dates[0]), C.iso(v_dates[-1])
     window = [d for d in calendar if lo <= d <= hi]
     recs = []

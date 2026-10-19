@@ -20,11 +20,11 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
 
 from engine.data import build_store, SEL_START, SEL_END  # noqa: E402
 from scripts.backtest_capital import trade_pnl, load_validation, build_curve  # noqa: E402
-
-FEE = 0.15  # 双边成本（%），佣金+滑点近似
+from execution_layer import FEE_MAIN as FEE  # 双边成本（%）单一来源（P1-5 收编）  # noqa: E402
 
 
 def t2_frame(run_dir: str, store) -> pd.DataFrame:

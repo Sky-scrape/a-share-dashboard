@@ -12,10 +12,11 @@
   B 制度口径·开盘离场：T+1 买 → T+2 开盘卖（最保守，开盘价可得）
   C 制度口径·风险感知：T+1 触过 risk_low 则 T+2 开盘卖，否则 T+2 收盘卖
 
-费用：双边 0.15%（佣金+滑点近似，与 scripts/mf_mono_backtest.py 同源常量），
-并列 0.00% / 0.30% 情景；滑点不另计（已在 0.15 内近似）。
+费用：双边 0.15%（佣金+滑点近似，常量 FEE_MAIN 收编自 backend/execution_layer.py，
+2026-10-19 P1-5），并列 0.00% / 0.30% 情景；滑点不另计（已在 0.15 内近似）。
 跌停不可卖：T+2 开盘价触及跌停价（未复权 prev_close×0.9，主板 10%）时
-无法开盘成交，改按 T+2 收盘价，并单列计数。
+无法开盘成交，改按 T+2 收盘价，并单列计数；收盘封死（开盘未跌停、
+收盘==跌停价）另列「盘中封死」计数（开盘离场不受影响）。
 
 严格只读：不写 data/recap，不改生产代码；产物落 runs/c15_oos_review/。
 """
@@ -31,13 +32,43 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"
 
 import c15_common as C      # noqa: E402
 import c15_oos_audit as A   # noqa: E402
-from execution_layer import MF_BUY          # 执行层单一来源（不许复制常量）  # noqa: E402
+from execution_layer import MF_BUY, FEE_MAIN  # 执行层与费用单一来源（不许复制常量）  # noqa: E402
 from spec_validate import _exec_pnl_realtime  # 现行诊断口径（对照用）        # noqa: E402
 
-FEE_MAIN = 0.15        # 双边成本（%），与 mf_mono_backtest.FEE 同源
-FEE_SCENARIOS = (0.0, 0.15, 0.30)
+FEE_SCENARIOS = (0.0, FEE_MAIN, 0.30)
 LIMIT_PCT = 0.10       # 主板涨跌幅（%）；ST 已在选池负面清单排除
 EPS = 0.005
+
+
+def unsellable_at_open(bar, limit_pct=LIMIT_PCT, eps=EPS):
+    """T+2 开盘跌停不可卖判定（未复权价格域，2026-10-19 P0-3 修正）。
+
+    开盘价触及跌停价（round(raw_pc*(1-limit_pct),2)，主板 10%）时无法开盘成交。
+    必须用未复权 raw_o 对比未复权跌停价——复权价与昨收的比值在除权日会失真。
+    数据缺失（无 raw 字段）时返回 False，与「无数据不标记」的既有约定一致。
+
+    旧实现为「开盘==昨收 且 收盘==跌停价」（平开+封死），与模块 docstring
+    自述「开盘价触及跌停价」不符：一字跌停漏标、非跌停开盘但收盘封死误标。
+    """
+    rpc = bar.get("raw_pc")
+    ro = bar.get("raw_o")
+    if rpc is None or ro is None:
+        return False
+    return abs(ro - round(rpc * (1 - limit_pct), 2)) <= eps
+
+
+def sealed_at_close(bar, limit_pct=LIMIT_PCT, eps=EPS):
+    """T+2 收盘封死跌停判定（未复权价格域）：收盘==跌停价。
+
+    仅用于报告分类计数（「盘中封死」）：这类票开盘未跌停、可正常按开盘离场，
+    但收盘价卖出大概率排队失败——现行 B/C 口径按开盘离场不受影响，
+    此处单列以披露边界。
+    """
+    rpc = bar.get("raw_pc")
+    rc = bar.get("raw_c")
+    if rpc is None or rc is None:
+        return False
+    return abs(rc - round(rpc * (1 - limit_pct), 2)) <= eps
 
 
 def _pct(a, base):
@@ -116,23 +147,17 @@ def evaluate(rows, bars_all):
             out.append(rec)
             continue
         r2o, r2c = _pct(bar2["o"], bar0["c"]), _pct(bar2["c"], bar0["c"])
-        # 跌停不可卖（用未复权价判：复权价无法判跌停）
-        rc, rpc = bar2.get("raw_c"), bar2.get("raw_pc")
-        rec["unsellable_open"] = bool(rc and rpc and bar2["o"] is not None
-                                      and abs(bar2["o"] - round(rpc, 2)) < 1e-6
-                                      and abs(rc - round(rpc * (1 - LIMIT_PCT), 2)) < EPS)
-        exit_open = r2c if rec["unsellable_open"] else r2o      # 跌停则只能按收盘离场
+        # 跌停不可卖（未复权价格域，P0-3 修正）：开盘触及跌停价→开盘无法成交；
+        # 盘中封死（收盘==跌停价但开盘未跌停）单列计数，开盘仍可正常离场。
+        rec["unsellable_open"] = unsellable_at_open(bar2)
+        rec["sealed_close"] = sealed_at_close(bar2)
+        exit_open = r2c if rec["unsellable_open"] else r2o      # 开盘跌停则只能按收盘离场
         rec["A"] = round(_ratio(b_["risk_low"] if rec["risk_low_hit"] else r1c, e_ret), 2)
         rec["B"] = round(_ratio(exit_open, e_ret), 2)
         rec["C"] = round(_ratio(exit_open if rec["risk_low_hit"] else r2c, e_ret), 2)
         rec["exit_kind"] = ("跌停改收盘" if rec["unsellable_open"] else "开盘")
         out.append(rec)
     return out
-
-
-def gross(v):
-    """去掉费用前的合并口径（元）：记录里是百分比，费用按双边线性扣。"""
-    return v
 
 
 def agg(recs, key):
@@ -156,7 +181,7 @@ def agg(recs, key):
 def main():
     cal = C.trade_calendar()
     track = C.load_track()
-    recs_audit, dup, missing = A.audit_records(track, cal)
+    recs_audit, dup, missing, missing_empty = A.audit_records(track, cal)
     rows = A.enrich(A.clean_rows(track, recs_audit))
     codes = sorted({str(r.get("code")) for r in rows if r.get("code")})
     d0 = min(r["pool_date"] for r in rows)
@@ -171,7 +196,8 @@ def main():
     L = ["# C15 复审 · A 股可执行口径收益（3/3）", "",
          "样本 = 修正口径 C7 票（日期严格匹配）。三套口径：", "",
          "- **A 诊断口径（现行）**：T+1 盘中触 risk_low 即止损离场——"
-         "A 股 T+1 制度下当日买入不可卖，**该止损不可执行**，只作乐观代理。",
+         "A 股 T+1 制度下当日买入不可卖，**该止损不可执行**，A 口径是"
+         "**不可执行的乐观上界**，仅作诊断代理；策略决策以 B/C 制度口径为准。",
          "- **B 制度口径·开盘离场**：T+1 按买点成交 → T+1 收盘持有（不可卖）→ T+2 开盘卖出。",
          "- **C 制度口径·风险感知**：T+1 触过 risk_low 则 T+2 开盘卖，否则 T+2 收盘卖。",
          "",
@@ -181,7 +207,7 @@ def main():
          f"- 评估票数：{len(ev)}；其中买点未成交（按纪律放弃）：**{len(notraded)}** 只。",
          f"- 已成交但 T+2 日线未到（近两日）：**{len(noT2)}** 只，未计入收益。",
          f"- 可完整评估：**{len(traded)}** 只。", ""]
-    for key, label in (("A", "A 诊断口径（现行，不可执行）"),
+    for key, label in (("A", "A 诊断口径（现行，不可执行·乐观上界）"),
                        ("B", "B 制度口径·T+2 开盘离场"),
                        ("C", "C 制度口径·T+2 风险感知离场")):
         s = agg(ev, key)
@@ -189,6 +215,10 @@ def main():
             L.append(f"- {label}：n={s['n']}，毛均 {s['gross_avg']}%，"
                      f"毛收红率 {s['gross_win']}%，净均（{FEE_MAIN}%）"
                      f"{s['net'][FEE_MAIN]['avg']}%，净收红率 {s['net'][FEE_MAIN]['win']}%。")
+    sA, sB = agg(ev, "A"), agg(ev, "B")
+    if sA.get("n") and sB.get("n"):
+        L.append(f"- **A − B 差额：{sA['net'][FEE_MAIN]['avg'] - sB['net'][FEE_MAIN]['avg']:+.2f}pp**"
+                 "（正差 = 诊断口径高估的部分；决策以 B/C 为准，A 仅作诊断代理）。")
     L += ["", "## 2. 分口径 × 分组", "",
           "| 口径 | 分组 | n | 毛均% | 净均%(0.15) | 净收红率% |", "|---|---|---:|---:|---:|---:|"]
     for key, label in (("A", "A 诊断"), ("B", "B T+2开盘"), ("C", "C T+2风险感知")):
@@ -229,7 +259,11 @@ def main():
                  f"{sum(1 for r in ev if r.get('risk_low_hit'))} 只，"
                  f"这些票在制度口径下只能次日离场，风险暴露至少多留一夜。")
     uns = [r for r in ev if r.get("unsellable_open")]
-    L.append(f"- T+2 开盘跌停不可卖、改按收盘离场的票：{len(uns)} 只。")
+    sea = [r for r in ev if r.get("sealed_close") and not r.get("unsellable_open")]
+    L.append(f"- T+2 开盘跌停不可卖、改按收盘离场的票：{len(uns)} 只；"
+             f"开盘未跌停但收盘封死跌停的票：{len(sea)} 只（开盘离场不受影响，单列披露）。")
+    L.append("- 跌停判定口径 2026-10-19 修正（P0-3）：改为「开盘价触及跌停价"
+             "（未复权价格域）」，修正前为「平开且收盘封死」——两口径计数不可直接比较。")
 
     # 收益差分解：从「选股质量」到「制度口径净收益」的每一段损耗
     L += ["", "## 5. 缺口分解：选股质量 → 实际净收益", ""]

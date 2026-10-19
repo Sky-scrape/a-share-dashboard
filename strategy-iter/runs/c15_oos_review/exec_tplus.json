@@ -39,6 +39,7 @@
    "risk_close_hit": false,
    "mark_t1": -1.4,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -98,6 +99,7 @@
    "risk_close_hit": false,
    "mark_t1": 8.8,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -211,6 +213,7 @@
    "risk_close_hit": false,
    "mark_t1": 4.97,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -252,6 +255,7 @@
    "risk_close_hit": false,
    "mark_t1": -5.57,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -311,6 +315,7 @@
    "risk_close_hit": false,
    "mark_t1": -4.23,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -334,6 +339,7 @@
    "risk_close_hit": false,
    "mark_t1": -4.03,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -357,6 +363,7 @@
    "risk_close_hit": true,
    "mark_t1": -7.3,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -380,6 +387,7 @@
    "risk_close_hit": true,
    "mark_t1": -6.69,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -403,6 +411,7 @@
    "risk_close_hit": false,
    "mark_t1": 9.31,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -426,6 +435,7 @@
    "risk_close_hit": false,
    "mark_t1": 5.79,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -467,6 +477,7 @@
    "risk_close_hit": false,
    "mark_t1": 5.03,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -562,6 +573,7 @@
    "risk_close_hit": false,
    "mark_t1": -3.08,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -639,6 +651,7 @@
    "risk_close_hit": false,
    "mark_t1": -3.78,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -680,6 +693,7 @@
    "risk_close_hit": false,
    "mark_t1": 0.8,
    "unsellable_open": false,
+   "sealed_close": false,
    "exit_kind": "开盘"
   },
   {
@@ -692,7 +706,7 @@
    "score": 87.0,
    "close": -9.99,
    "t1": "2026-10-15",
-   "t2": null,
+   "t2": "2026-10-16",
    "diag": null,
    "A": null,
    "B": null,
@@ -710,13 +724,34 @@
    "score": 79.5,
    "close": -3.04,
    "t1": "2026-10-15",
-   "t2": null,
+   "t2": "2026-10-16",
    "diag": null,
    "A": null,
    "B": null,
    "C": null,
    "note": "未成交",
    "entry_note": "开盘超窗放弃"
+  },
+  {
+   "validation_date": "20261016",
+   "pool_date": "20261015",
+   "code": "002913",
+   "name": "奥士康",
+   "group": "nlu",
+   "env": "defensive",
+   "score": 90.1,
+   "close": -5.72,
+   "t1": "2026-10-16",
+   "t2": null,
+   "diag": -4.88,
+   "A": null,
+   "B": null,
+   "C": null,
+   "note": "T+2 日线未到（今天尚未收盘）",
+   "entry_note": "开盘即成交",
+   "risk_low_hit": true,
+   "risk_close_hit": true,
+   "mark_t1": -6.58
   }
  ],
  "A": {
@@ -777,5 +812,5 @@
   }
  },
  "not_traded": 22,
- "no_t2": 0
+ "no_t2": 1
 }

@@ -36,6 +36,9 @@ venv/
 # ---- 本地环境与密钥 ----
 .env
 *.lock
+# 依赖锁定文件是可复现构建的组成部分，必须入库（P0-2，2026-10-19）：
+# 上面 *.lock 只为挡 pip-compile 等本地工具产物，这里显式放行统一锁文件
+!requirements.lock
 
 # ---- 缓存 / 开发日志（本地生成，不入库）----
 backend/recap/.ht_cache/

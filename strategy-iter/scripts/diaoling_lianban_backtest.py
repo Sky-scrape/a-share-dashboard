@@ -39,11 +39,12 @@ import sys
 from pathlib import Path
 
 TRADING_DAYS_PER_YEAR = 244
-FEE = 0.15  # 双边成本（%），与 exp_hold_sizing / mf_mono_backtest 同口径
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
 from scripts.backtest_capital import trade_pnl  # noqa: E402
 from scripts.mf_mono_backtest import curve_from_daily, stats_block, monthly_table  # noqa: E402
+from execution_layer import FEE_MAIN as FEE  # 双边成本（%）单一来源（P1-5 收编）  # noqa: E402
 
 # M3 冻结 ladder_tiers 的档位分 → 连板数（唯一映射；0.55=1板被排除）
 LADDER_TIER_TO_N = {0.55: 1, 0.9: 2, 1.0: 3}   # 1.0 档 = ≥3 板（含 4 板档合并）

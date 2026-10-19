@@ -17,13 +17,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest-cov
+      - name: Install dependencies (locked)
+        run: pip install -r requirements.lock pytest-cov
       - name: Run engine regression tests
         run: python -m pytest quant/tests tests -q --cov=backend --cov=quant/quant_sim --cov-report=term-missing:skip-covered --cov-report=xml --no-cov-on-fail
+      - name: Smoke test (API contract + frontend structure, data-dependent checks SKIP on clean clone)
+        run: python tests/smoke.py
       - name: Outbound HTTP guard（出站调用点守卫，backend 裸 requests 必须走 http_retry/netguard）
         if: runner.os == 'Linux'
         run: python tools/check_outbound.py
+      - name: Lint (ruff, 宽松基线见 ruff.toml)
+        if: runner.os == 'Linux'
+        run: |
+          pip install ruff==0.14.5
+          ruff check .
+      - name: Type check (mypy, backend 纯函数层宽松起步)
+        if: runner.os == 'Linux'
+        run: |
+          pip install mypy==1.19.0 types-requests
+          mypy backend/execution_layer.py backend/landing.py backend/version.py backend/trade_cal.py --ignore-missing-imports --no-error-summary --pretty
+      - name: Frontend syntax check (node --check)
+        if: runner.os == 'Linux'
+        run: |
+          ls web/*.js web/*/app.js web/lib/*.js | grep -v echarts.min.js | xargs -I{} node --check {}
       - name: Upload coverage
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
