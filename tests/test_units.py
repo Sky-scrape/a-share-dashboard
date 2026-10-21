@@ -1586,3 +1586,53 @@ def test_pool_not_final_accepts_iso(tmp_path, monkeypatch):
     # 与 _pick_gaps 组合：ISO 口径贯通（场次已收盘 + 未终版 → 进缺口）
     got = _pick_gaps(["2026-10-19", "2026-10-20"], lambda d: True, uct.pool_not_final)
     assert got == ["2026-10-20"]
+
+
+def test_main_skips_finalization_when_us_fetch_fails(monkeypatch):
+    """加严（2026-10-21）：us_market 抓取（含重试）失败必须中止本次终版结算——否则
+    factors 陈旧时 row_freshness 仍会因「场次已按墙钟收盘」放行，池会被按过期隔夜
+    美股数据标成终版（C6 闸门取值偏）。缺口留给下一次链自动补。"""
+    import us_close_task as uct
+
+    runs, notes = [], []
+    monkeypatch.setattr(uct, "sync_research_db", lambda: True)
+    monkeypatch.setattr(uct, "wait_us_close", lambda: None)
+    monkeypatch.setattr(uct, "run_us_fetch", lambda: False)      # 抓取失败
+    monkeypatch.setattr(uct, "run_step", lambda cmd: (runs.append(cmd[-1]) or True))
+    monkeypatch.setattr(uct, "_notify", lambda *a, **k: notes.append(k.get("key")))
+    monkeypatch.setattr(uct, "_log", lambda *a, **k: None)
+
+    rc = uct.main()
+
+    assert rc == 1
+    assert runs == []                    # 抓取失败 → 一个后续步骤都没跑
+    assert notes == ["chain:us-failed"]
+
+
+def test_run_us_fetch_retries_once_then_succeeds(monkeypatch):
+    """开机触发时网络可能未就绪：us_market 失败须重试一次（等待时长可注入为空）。"""
+    import us_close_task as uct
+
+    seq, calls, waits = [False, True], [], []
+    monkeypatch.setattr(uct, "run_step", lambda cmd: (calls.append(list(cmd)) or seq.pop(0)))
+    monkeypatch.setattr(uct.time, "sleep", lambda s: waits.append(s))
+    monkeypatch.setattr(uct, "_log", lambda *a, **k: None)
+
+    assert uct.run_us_fetch() is True
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert waits == [uct.US_FETCH_RETRY_S]
+
+
+def test_run_us_fetch_gives_up_after_one_retry(monkeypatch):
+    import us_close_task as uct
+
+    seq, calls = [False, False], []
+    monkeypatch.setattr(uct, "run_step", lambda cmd: (calls.append(list(cmd)) or seq.pop(0)))
+    monkeypatch.setattr(uct.time, "sleep", lambda s: None)
+    monkeypatch.setattr(uct, "_log", lambda *a, **k: None)
+    assert uct.run_us_fetch() is False
+    assert len(calls) == 2               # 只重试一次，不无限重试
+
+    seq2, calls2 = [True], []            # 首跑成功 → 不重试
+    monkeypatch.setattr(uct, "run_step", lambda cmd: (calls2.append(list(cmd)) or seq2.pop(0)))
+    assert uct.run_us_fetch() is True and len(calls2) == 1

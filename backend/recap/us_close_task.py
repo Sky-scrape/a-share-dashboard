@@ -12,6 +12,8 @@ T 日复盘的完成时点从 T 日 17:05 推迟到 T+1 美股收盘后 1 小时
      「T 日 release ≈17:11 发布」存在竞态（0911/0912/0913 压线赶上，0914 未
      赶上→SKIP），而本链的池/验证全部依赖 T 日线——重建前必须再同步一次；
   3. python backend/us_market.py                  # 抓隔夜美股 + 重建 factors.json
+     （失败按 US_FETCH_RETRY_S 重试一次；仍失败即中止本次终版结算，防 C6 闸门用过期
+     factors——缺口留给下一次链）
   4. 缺口兜底（2026-10-21 事故新增）：近 GAP_LOOKBACK 个 A 股交易日里，凡
      「隔夜场次已收盘（us_market.row_freshness=True）但备选池仍是 pending 占位」
      者逐日补跑——本链被中断 / 04:05 被错过时，被跳过的那个 T 次日不会再被算到
@@ -39,6 +41,7 @@ LOG = os.path.join(ROOT, ".status", "logs", "usclose.log")
 US_CLOSE_ET = (16, 20)     # 美东收盘 16:00 + 20 分钟缓冲（数据落定 + 守卫放行）
 MAX_WAIT_MIN = 120         # 等待上限（异常早触发时兜底）
 GAP_LOOKBACK = 6           # 缺口兜底回溯的 A 股交易日数（覆盖一周内任何一次漏跑）
+US_FETCH_RETRY_S = 90      # us_market 失败后的重试等待（秒）：开机触发时网络常未就绪
 
 
 def _log(msg):
@@ -194,6 +197,22 @@ def run_step(cmd: list[str]) -> bool:
     return r.returncode == 0
 
 
+def run_us_fetch() -> bool:
+    """抓隔夜美股 + 重建 factors.json；失败后按 US_FETCH_RETRY_S 重试一次。
+
+    开机触发（BootTrigger）时网络往往尚未就绪，单次失败即中止会让该日池顺延到
+    下一次链；这里给一次短重试兜住这种瞬时失败。仍失败则返回 False，由 main
+    中止本次终版结算（防 C6 隔夜美股闸门用到过期 factors）。
+    """
+    cmd = [sys.executable, os.path.join("backend", "us_market.py")]
+    if run_step(cmd):
+        return True
+    _log(f"[warn] us_market fetch failed; retry in {US_FETCH_RETRY_S}s "
+         f"(boot-time network may not be ready)")
+    time.sleep(US_FETCH_RETRY_S)
+    return run_step(cmd)
+
+
 def _notify(title, text, key, min_hours=12):
     """链路失败推送（0915 起）：尽力而为，绝不反过来打断链路。key 节流防重复。"""
     try:
@@ -209,13 +228,19 @@ def main():
     sync_research_db()   # 先补研究库（利用等待窗口），T 日线是后面池/验证的硬依赖
     wait_us_close()
 
-    ok_us = run_step([sys.executable, os.path.join("backend", "us_market.py")])
+    ok_us = run_us_fetch()
     if not ok_us:
-        _log("[warn] us_market fetch failed; proceed with existing factors.json")
+        # 加严（2026-10-21）：抓取（含一次短重试）仍失败即中止本次终版结算。旧版只在
+        # [warn] 后继续——一旦 factors 陈旧（如开机触发时网络未就绪），row_freshness
+        # 仍会因「场次已按墙钟收盘」放行，从而把池按过期隔夜美股数据标成终版
+        # （C6 闸门取值偏）。缺口留给下一次链（04:05 / 开机触发 / 缺口兜底）自动补。
+        _log("[warn] us_market fetch failed (after retry); skip finalization this run")
         _notify("隔夜美股抓取失败",
                 "us_close_task 中 us_market.py 失败，factors.json 沿用旧值——"
-                "环境闸门可能用到过期数据。白天可在看板手动重抓。",
+                "为避免 C6 隔夜美股闸门用到过期数据，本次跳过终版结算，"
+                "缺口留给下一次链自动补跑。白天可在看板手动重抓。",
                 key="chain:us-failed")
+        return 1
 
     sys.path.insert(0, os.path.join(ROOT, "backend"))
     import us_market  # noqa: PLC0415
