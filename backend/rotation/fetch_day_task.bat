@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0..\.."
 set PYTHONIOENCODING=utf-8
 rem [data-2 2026-10-06] bare `python` resolved to LibreOffice's bundled interpreter

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem 美股收盘后复盘完成链（C6 时序改造）：等待美股收盘+20min（脚本内 DST 感知等待）
 rem 后，抓取隔夜美股 -> 完成 T 日备选池/验证 -> 校验 -> 派生面板。
 rem 计划任务 arecap-usclose-fetch 每日 04:05 触发；17:05 的 fetch_task.bat 只负责

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 rem 实时竞价定时任务入口（建议交易日 09:14 触发；采集器内部自行等待 09:15-09:25 时间线）
 cd /d "%~dp0..\.."
 set PYTHONIOENCODING=utf-8
