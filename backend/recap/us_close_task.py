@@ -12,9 +12,13 @@ T 日复盘的完成时点从 T 日 17:05 推迟到 T+1 美股收盘后 1 小时
      「T 日 release ≈17:11 发布」存在竞态（0911/0912/0913 压线赶上，0914 未
      赶上→SKIP），而本链的池/验证全部依赖 T 日线——重建前必须再同步一次；
   3. python backend/us_market.py                  # 抓隔夜美股 + 重建 factors.json
-  4. T = 上一个 A 股交易日；T 无快照 → 告警退出（17:05 采集失败，白天人工补）
-  5. python backend/recap/speculate.py --date T   # 备选池（含闸门）+ T-1 验证归因
-  6. python backend/recap/check_snapshot.py data/recap/<T>.json
+  4. 缺口兜底（2026-10-21 事故新增）：近 GAP_LOOKBACK 个 A 股交易日里，凡
+     「隔夜场次已收盘（us_market.row_freshness=True）但备选池仍是 pending 占位」
+     者逐日补跑——本链被中断 / 04:05 被错过时，被跳过的那个 T 次日不会再被算到
+     （次日链只算次日），这道扫描保证「漏跑的池」被下一次链自动补出；
+     上一交易日无快照 → 告警（17:05 采集失败，白天人工补），但仍继续扫描更早缺口。
+  5. 每个缺口 T：python backend/recap/speculate.py --date T   # 备选池终版 + 验证归因
+  6. python backend/recap/check_snapshot.py data/recap/<T>.<ext>
   7. python backend/derive.py
 
 全部步骤落盘 .status/logs/usclose.log；A 股节假日（无 T 快照）只跳过复盘步骤，
@@ -34,6 +38,7 @@ LOG = os.path.join(ROOT, ".status", "logs", "usclose.log")
 
 US_CLOSE_ET = (16, 20)     # 美东收盘 16:00 + 20 分钟缓冲（数据落定 + 守卫放行）
 MAX_WAIT_MIN = 120         # 等待上限（异常早触发时兜底）
+GAP_LOOKBACK = 6           # 缺口兜底回溯的 A 股交易日数（覆盖一周内任何一次漏跑）
 
 
 def _log(msg):
@@ -90,13 +95,89 @@ def sync_research_db() -> bool:
         return False
 
 
-def prev_ashare_trade_date() -> str | None:
-    """上一个 A 股交易日（ISO，相对北京时间今天）；来源 us_market 日历单一来源。"""
+def prev_ashare_trade_date(dates=None) -> str | None:
+    """上一个 A 股交易日（ISO，相对北京时间今天）；来源 us_market 日历单一来源。
+
+    dates 可传入已算好的「今日之前」交易日升序列表（省一次日历解析，见 main）。
+    """
+    if dates is None:
+        sys.path.insert(0, os.path.join(ROOT, "backend"))
+        import us_market  # noqa: PLC0415
+        today = _dt.date.today().isoformat()
+        dates = [d for d in us_market.load_ashare_dates() if d < today]
+    return dates[-1] if dates else None
+
+
+def _snapio():
+    """懒加载快照读写单一入口（backend/recap/snapio.py，兼容 .json / .json.gz）。"""
+    p = os.path.join(ROOT, "backend", "recap")
+    if p not in sys.path:
+        sys.path.insert(0, p)
+    import snapio  # noqa: PLC0415
+    return snapio
+
+
+def _t8(iso: str) -> str:
+    """ISO 日期 -> 8 位快照日键。"""
+    return iso.replace("-", "")
+
+
+def _rel_snap_path(date8: str) -> str:
+    """给 check_snapshot 的相对路径（沿用原链 data/recap/<name> 形态，兼容 .gz）。"""
+    io = _snapio()
+    return "data/recap/" + os.path.basename(io.snap_path(io.RECAP_DATA, date8))
+
+
+def _snap_exists(date8: str) -> bool:
+    io = _snapio()
+    return os.path.exists(io.snap_path(io.RECAP_DATA, date8))
+
+
+def session_closed_target(iso: str) -> bool:
+    """该 A 股日期的「隔夜美股场次」是否已收盘（=该日池可终版化）。
+
+    复用守卫单一来源 us_market.row_freshness：场次未收盘时补跑只会再产出一个
+    pending 占位，故先过这道闸。缺行/读盘异常按 False（宁可不补、不误覆盖）。
+    """
     sys.path.insert(0, os.path.join(ROOT, "backend"))
     import us_market  # noqa: PLC0415
-    today = _dt.date.today().isoformat()
-    dates = [d for d in us_market.load_ashare_dates() if d < today]
-    return dates[-1] if dates else None
+    try:
+        return bool(us_market.row_freshness(iso)[1])
+    except Exception:  # noqa: BLE001 - 读盘异常按“不可终版化”处理
+        return False
+
+
+def pool_not_final(iso: str) -> bool:
+    """该日（ISO 交易日）快照的备选池是否尚未终版（需补跑）。
+
+    入参为 ISO 日期（与 session_closed_target 同口径，_pick_gaps 的两个谓词统一），
+    内部转 8 位快照日键。终版口径 = 有 pool、非 pending 占位、且带口径 note
+    （spec_pool 写入的「…口径（…）」首段）——真池三者同时成立。反之（pending 占位 /
+    pool 段缺失 / error 池无 note）都算未终版、纳入补跑（与改造前「无条件重算 T 日」
+    同覆盖，且历史真池会被 speculate 既有的口径守卫挡下，不会被覆盖）。快照缺失/
+    读不到一律 False——补跑无意义，由调用方 _snap_exists 另行告警。
+    """
+    try:
+        doc = _snapio().load(_t8(iso))
+    except Exception:  # noqa: BLE001 - 读异常按“不需补跑”处理
+        return False
+    if doc is None:
+        return False
+    mod = ((doc.get("modules") or {}).get("speculation") or {}).get("data") or {}
+    pool = mod.get("pool") or {}
+    if not pool:
+        return True
+    return pool.get("stage") == "pending" or not str(pool.get("note") or "").strip()
+
+
+def _pick_gaps(candidates, eligible, pending, limit=GAP_LOOKBACK):
+    """纯函数：挑出「终版前置条件已满足、但备选池仍是 pending 占位」的日期。
+
+    candidates 升序 ISO 交易日串（新在末——逐日补跑保验证/优化器指标落账时序）；
+    eligible(day) 该日隔夜场次已定、可终版化；pending(day) 该日池仍为 pending 占位。
+    仅回溯最近 limit 个交易日（防机器久停后无界补跑）。返回升序子集，不改入参。
+    """
+    return [d for d in candidates[-limit:] if eligible(d) and pending(d)]
 
 
 def run_step(cmd: list[str]) -> bool:
@@ -136,35 +217,51 @@ def main():
                 "环境闸门可能用到过期数据。白天可在看板手动重抓。",
                 key="chain:us-failed")
 
-    t_iso = prev_ashare_trade_date()
+    sys.path.insert(0, os.path.join(ROOT, "backend"))
+    import us_market  # noqa: PLC0415
+    today = _dt.date.today().isoformat()
+    dates = [d for d in us_market.load_ashare_dates() if d < today]   # 升序（新在末）
+    t_iso = prev_ashare_trade_date(dates)
     if not t_iso:
         _log("[abort] 无法确定上一个 A 股交易日（日历缺失）")
         _notify("复盘完成链中止", "无法确定上一个 A 股交易日（日历缺失）。",
                 key="chain:abort")
         return 1
-    t8 = t_iso.replace("-", "")
-    snap = os.path.join(ROOT, "data", "recap", f"{t8}.json")
-    snap_gz = snap + ".gz"
-    if not (os.path.exists(snap) or os.path.exists(snap_gz)):
-        # 无快照 = 17:05 采集链失败：美股已更新，复盘跳过。t8 取自交易日历
+    t8 = _t8(t_iso)
+    if not _snap_exists(t8):
+        # 无快照 = 17:05 采集链失败：美股已更新，本日复盘跳过。t8 取自交易日历
         # （prev_ashare_trade_date），按定义是交易日——快照缺失即真失败，推送。
-        _log(f"[skip] {t8} 无复盘快照（17:05 采集链失败），仅完成美股更新")
+        # 不早退：更早的 pending 缺口仍由下面的缺口扫描兜底补出。
+        _log(f"[skip] {t8} 无复盘快照（17:05 采集链失败），本日终版跳过")
         _notify("复盘完成链跳过",
                 f"{t8} 无复盘快照——17:05 采集链很可能失败了，白天请人工补抓。",
                 key="chain:snap-missing")
-        return 0 if ok_us else 1
 
-    steps = [
-        [sys.executable, os.path.join("backend", "recap", "speculate.py"), "--date", t8],
-        [sys.executable, os.path.join("backend", "recap", "check_snapshot.py"), f"data/recap/{t8}.json"],
-        [sys.executable, os.path.join("backend", "derive.py")],
-    ]
+    # 缺口兜底（2026-10-21 事故）：链被中断 / 04:05 被错过时，被跳过的那个 T 次日不会
+    # 再被算到（次日链只算次日）——这里把「场次已收盘但池仍未终版」的历史日期逐日补跑，
+    # 保证漏跑的池必被下一次链自动补出。
+    gaps = _pick_gaps(dates, session_closed_target, pool_not_final)
+    window = dates[-GAP_LOOKBACK:]
+    _log(f"缺口扫描（近 {len(window)} 交易日 {window[0] if window else '-'}..{t_iso}）："
+         f"待补 {len(gaps)} 日 {gaps or '-'}")
+    if len(gaps) >= GAP_LOOKBACK:
+        _log(f"[warn] 缺口触达回溯上限 {GAP_LOOKBACK} 日，久停可能仍有更早缺口未补")
+
+    steps = []
+    for d in gaps:
+        d8 = _t8(d)
+        steps.append([sys.executable, os.path.join("backend", "recap", "speculate.py"),
+                      "--date", d8])
+        steps.append([sys.executable, os.path.join("backend", "recap", "check_snapshot.py"),
+                      _rel_snap_path(d8)])
+    steps.append([sys.executable, os.path.join("backend", "derive.py")])
     rcs = [run_step(c) for c in steps]
-    _log(f"==== us-close recap chain end (us={ok_us} steps={rcs}) ====")
+    _log(f"==== us-close recap chain end (us={ok_us} gaps={len(gaps)} steps={rcs}) ====")
     if not all(rcs):
         bad = [os.path.basename(c[-1]) for c, rc in zip(steps, rcs) if not rc]
         _notify("复盘完成链步骤失败",
-                f"{t8} 链中失败步骤：{', '.join(bad)}（明细见 .status/logs/usclose.log）",
+                f"缺口 {gaps or t8} 链中失败步骤：{', '.join(bad)}"
+                f"（明细见 .status/logs/usclose.log）",
                 key="chain:steps-failed")
     return 0 if all(rcs) else 1
 

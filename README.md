@@ -183,7 +183,7 @@ A/
 
 | 任务 | 时间 | 命令 |
 | --- | --- | --- |
-| arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；hithink data sync 研究库增量（非阻塞——17:05 那次与上游「T 日 release ≈17:11 发布」存在竞态，漏赶会致 T 日线整层缺失，2026-09-14 实例）→ us_market.py 抓隔夜美股 → speculate --date 上一交易日（备选池含 C6 隔夜美股闸门）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
+| arecap-usclose-fetch | 每日 04:05 | backend/recap/us_close_task.bat → us_close_task.py（等待美股收盘+20min，DST 感知；hithink data sync 研究库增量（非阻塞——17:05 那次与上游「T 日 release ≈17:11 发布」存在竞态，漏赶会致 T 日线整层缺失，2026-09-14 实例）→ us_market.py 抓隔夜美股 → **缺口兜底**：近 6 个 A 股交易日里「隔夜场次已收盘但备选池仍是 pending 占位」者逐日补跑 speculate --date T（备选池含 C6 隔夜美股闸门；防链被中断 / 04:05 被错过时该 T 池永不回头补，2026-10-21 事故）→ 快照校验 → derive，日志 .status/logs/usclose.log）。C6 时序改造后**复盘完成时点**：T 日池在 T+1 美股收盘后 1 小时内生成 |
 | areauction-live-fetch | 交易日 09:14 | backend/auction/auction_task.bat（09:15–09:24:30 每 30s live 轮询 + 09:25:10 终态 + 基准，日志 .status/logs/fetch-auction.log）；已设为**不看电池、错过可补跑、上限 PT30M** |
 | rotation-intraday-fetch | 交易日 09:25 | backend/rotation/fetch_day_task.bat → ths_collect.py 盘中逐分钟轮询循环（数据只到 15:00，收盘定格后自退）；不看电池、错过可补跑、上限 PT8H |
 | arecap-daily-fetch | 每日 17:05 | backend/recap/fetch_task.bat（C6 改造后只做 A 股数据落盘：抓取 + hithink data sync（附属，失败仅记 [warn]）+ 概念周更 + gzip 归档 + **收盘后补刷全球总览**（CN 热力图数据源是实时快照，盘前那轮抓不到当日数据，见下行说明），日志 .status/logs/fetch-recap.log；备选池在次日 04:05 链完成）；**失败时自动调 backend/notify_once.py 推送失败明细（2026-09-15）** |

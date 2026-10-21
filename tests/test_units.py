@@ -1517,3 +1517,72 @@ def test_record_validation_wires_exec_t2_summary(monkeypatch, tmp_path):
     bad = dict(vals)
     bad["20260911"] = {"date": "20260909", "rules": "c7", "picks": []}
     assert "20260911" not in sv._track_for_diag({"validations": bad})
+
+
+# ---------------- us_close_task：缺口兜底挑选（2026-10-21 漏跑补跑）----------------
+
+from us_close_task import GAP_LOOKBACK, _pick_gaps  # noqa: E402
+
+
+def test_pick_gaps_basic():
+    # 窗口内 1 个「可终版化且池未终版」→ 只挑它（升序返回）
+    cand = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20"]
+    got = _pick_gaps(cand, lambda d: d == "2026-10-20", lambda d: d == "2026-10-20")
+    assert got == ["2026-10-20"]
+
+
+def test_pick_gaps_filters():
+    cand = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20"]
+    # 场次未收盘（eligible=False）不进缺口——补跑只会再产出一个 pending 占位
+    got = _pick_gaps(cand, lambda d: d != "2026-10-20", lambda d: True)
+    assert got == ["2026-10-15", "2026-10-16", "2026-10-19"]
+    # 已终版（pending=False）不进缺口
+    got = _pick_gaps(cand, lambda d: True, lambda d: d == "2026-10-16")
+    assert got == ["2026-10-16"]
+    # 条件都不满足 → 空
+    assert _pick_gaps(cand, lambda d: False, lambda d: True) == []
+    assert _pick_gaps(cand, lambda d: True, lambda d: False) == []
+
+
+def test_pick_gaps_window_cap():
+    # 7 个候选、回溯上限 6 → 只回溯最近 6 个（防机器久停后无界补跑）
+    cand = [f"2026-10-{i:02d}" for i in range(10, 17)]
+    assert len(cand) == 7 and GAP_LOOKBACK == 6
+    got = _pick_gaps(cand, lambda d: True, lambda d: True)
+    assert got == cand[-GAP_LOOKBACK:]
+    assert cand[0] not in got
+
+
+def test_pick_gaps_limit_and_purity():
+    cand = ["a", "b", "c", "d"]
+    assert _pick_gaps(cand, lambda d: True, lambda d: True, limit=2) == ["c", "d"]
+    assert cand == ["a", "b", "c", "d"]   # 不改入参
+    assert _pick_gaps([], lambda d: True, lambda d: True) == []
+
+
+def test_pool_not_final_accepts_iso(tmp_path, monkeypatch):
+    """回归：main 传 ISO 日期（2026-10-20），pool_not_final 须自行转 8 位快照键——
+    否则读不到快照一律 False，缺口会被漏检（2026-10-21 演练实证）。"""
+    import json
+    import snapio
+    import us_close_task as uct
+    monkeypatch.setattr(snapio, "RECAP_DATA", str(tmp_path))
+
+    def write(date8, pool):
+        doc = {"modules": {"speculation": {"data": {"pool": pool}}}}
+        (tmp_path / (date8 + ".json")).write_text(
+            json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    write("20261020", {"stage": "pending", "picks": [],
+                       "note": "隔夜美股场次未定（当前 us_date=2026-10-19，待 T 日场次收盘）"})
+    write("20261019", {"stage": None, "picks": [{"代码": "600001"}],
+                       "note": "C7 主板概念口径（strategy-iter C1→C3…）"})
+    write("20261016", {"ok": False, "error": "RuntimeError: boom", "picks": []})
+
+    assert uct.pool_not_final("2026-10-20") is True     # pending 占位
+    assert uct.pool_not_final("2026-10-19") is False    # 真池（带口径 note）
+    assert uct.pool_not_final("2026-10-16") is True     # error 池无 note = 未终版
+    assert uct.pool_not_final("2026-10-15") is False    # 无快照 → 不补
+    # 与 _pick_gaps 组合：ISO 口径贯通（场次已收盘 + 未终版 → 进缺口）
+    got = _pick_gaps(["2026-10-19", "2026-10-20"], lambda d: True, uct.pool_not_final)
+    assert got == ["2026-10-20"]
