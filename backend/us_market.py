@@ -205,7 +205,13 @@ def fetch_kline(sym: str, count: int = KLINE_COUNT_BACKFILL) -> list[list]:
     def _get():
         r = _safe_get(_kline_url(sym, count))
         r.raise_for_status()
-        return r.json()
+        try:
+            return r.json()
+        except ValueError:
+            # 200 但 body 非 JSON（典型：上游限流页/风控页）——守卫只采非 200，
+            # 这形态由这里补采，再按网络类异常走既有重试（is_retryable 认 JSON 解析失败）
+            netguard.capture_sample(_kline_url(sym, count), resp=r, note="json-decode")
+            raise
     d = retry(_get, tries=2, delay=2.0)
     s = _safe_sym(sym)
     node = (d or {}).get("data", {}).get(s) or {}

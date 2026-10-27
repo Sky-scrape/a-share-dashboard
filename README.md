@@ -269,6 +269,15 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 - **全球总览**：新浪通道为主（环球指数/美股指数/美股个股实时；本网络环境东财 push2 系列接口不通，勿用）；美股个股 5/20 日窗口直接解析新浪 staticdata 日线；A股雷达动量复用本地复盘快照逐日复合，A股热力图行业窗口用快照复合、个股窗口用 hithink 前复权日线（限流自动重试）；世界地图 GeoJSON 已本地化在 web/lib/map/
 - **研究库**：hithink 本地 DuckDB（`hithink-finance db query` 可查 10 年日线），每日 data sync 增量（17:05 与次日 04:05 各一次防竞态）；上游未发布时日线层会整层缺口——投机分析验证侧 OHLC 缺行走腾讯前复权日线备源兜底（`spec_ohlc_fb`，行带备源标记；东财 push2 本网络直连不通故弃用），层探测状态落 `.status/duckdb.json`（/api/health `duckdb` 段 + 新鲜度弹窗告警）；全市场扫描（低吸组/偏离/量能）无备源，缺口日诚实降级（量能闸门不启用，`_market_amt_ratio` 拒用错日数据）
 
+### 上游失败现场采样与应急取数（2026-10-27 起）
+
+出站守卫 `netguard.safe_get`（美股隔夜 / OHLC 备源等抓取路径）在失败分支自动把
+「状态码 / 异常 + 响应体前 2KB」落 `.status/upstream/`（滚动保留 50 份，200 正常
+响应零采样）；`chain:us-failed` 推送自动附最新一条采样摘要，先判读再动手。
+主备源同挂时的人工应急取数（云端 Web Fetch）与采样判读见
+[docs/运维手册-上游应急取数.md](docs/运维手册-上游应急取数.md)——定位是人工应急
+通道，不进生产代码路径、不进无人值守链。
+
 ### hithink CLI 排障（主力数据源，2026-09-27 起）
 
 `/api/health` 的 `hithink` 段每 10 分钟探活一次 `auth status`（失败推送手机告警）。

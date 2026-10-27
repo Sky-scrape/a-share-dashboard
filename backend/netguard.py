@@ -26,11 +26,22 @@ spec_validate 直到 2026-09-24 才同步。按 execution_layer 抽 MF_BUY 的�
     - 该段由本机回环代理持有，代理按 **hostname** 而非此 IP 决定上游路由。
     - 第 1 层主机白名单是字面量硬编码，仍为实际控制；本豁免只放宽第 2 层。
   豁免严格限定为该 /15，不放行任何真实私网/环回/链路本地/组播段。
+
+2026-10-27 起（上游失败现场采样）：
+  本模块另承担「失效归因」的另一半：safe_get 失败分支自动把状态码/异常类型 +
+  响应体头落 .status/upstream/（capture_sample，us_market / spec_ohlc_fb 的抓取
+  都经此处）。动机与 diagnose() 同源——失效曾只表现为上游几十条同质报错
+  （0924 fake-IP 误杀即如此），难辨限流页/改版页/本机断网。采样是诊断副线：
+  任何失败都不外抛、不影响主链路；200 的正常响应永不采样（正常轮询零额外 I/O）。
 """
 from __future__ import annotations
 
+import datetime as _dt
 import ipaddress
+import os
 import socket
+import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
@@ -83,10 +94,118 @@ def check_url(url: str, allowed_hosts, port: int = 443) -> None:
 
 
 def safe_get(url: str, allowed_hosts, params=None, timeout: float = 20.0):
-    """守卫后的 GET：https + 主机白名单 + 受限地址阻断，禁跟随重定向。"""
+    """守卫后的 GET：https + 主机白名单 + 受限地址阻断，禁跟随重定向。
+
+    失败分支留现场采样（capture_sample）：网络异常记异常，响应到达但非 200 记
+    状态码 + body 头——守卫拦截（check_url 抛 ValueError）不采样，那不是上游的锅。
+    """
     check_url(url, allowed_hosts)
-    return requests.get(url, params=params, timeout=timeout,
-                        allow_redirects=False, headers=_UA)
+    try:
+        r = requests.get(url, params=params, timeout=timeout,
+                         allow_redirects=False, headers=_UA)
+    except Exception as e:  # noqa: BLE001 - 采样后原样上抛
+        capture_sample(url, exc=e)
+        raise
+    if r.status_code != 200:
+        capture_sample(url, resp=r)
+    return r
+
+
+# ---------------------------------------------------------------- 上游失败现场采样
+
+_SAMPLE_BODY_HEAD = 2048   # 响应体采样字节数：够辨认限流页/改版页，不拖大落盘
+_SAMPLE_KEEP = 50          # 目录滚动上限（.status/upstream/，gitignore 内）
+
+
+def _sample_dir() -> str:
+    """现场采样目录（仓库 .status/upstream/）；测试换桩此函数即可隔离。"""
+    return str(Path(__file__).resolve().parents[1] / ".status" / "upstream")
+
+
+def capture_sample(url: str, *, resp=None, exc=None, note: str = "",
+                   body_head: int = _SAMPLE_BODY_HEAD, keep: int = _SAMPLE_KEEP):
+    """上游失败现场采样（尽力而为，绝不抛）：状态码/异常 + 响应体前 N 字节落盘。
+
+    两条守卫入口（safe_get / http_retry.guarded_get）中前者已挂钩（2026-10-27 起，
+    覆盖 us_market / spec_ohlc_fb 抓取路径）；guarded_get 侧待后续批次；
+    us_market.fetch_kline 对「200 但 body 非 JSON」（典型限流页）带 note 主动采。
+    文件名带微秒戳防并发覆写（us_market 57 标的多线程同拍失败的场景），写完按
+    keep 滚动；链路推送用 latest_sample_note() 取最新一条摘要。返回采样路径，
+    采样自身失败返回 None——诊断是副线，绝不反过来打断抓取。写盘走 fsutil
+    原子写单一来源（_safe_dst 规范化校验 + 临时文件替换，不留半截文件）。
+    """
+    try:
+        if resp is None and exc is None:
+            return None
+        host = urlsplit(url).hostname or "unknown"
+        safe_host = "".join(c if c.isalnum() or c in "._-" else "_" for c in host)[:40]
+        lines = [
+            f"time: {_dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+            f"url: {url}",
+        ]
+        if resp is not None:
+            lines.append(f"status: {getattr(resp, 'status_code', '?')}")
+        if exc is not None:
+            lines.append(f"error: {type(exc).__name__}: {exc}")
+        if note:
+            lines.append(f"note: {note}")
+        body = getattr(resp, "content", None) if resp is not None else None
+        if body:
+            head = bytes(body[:body_head]).decode("utf-8", "replace")
+            lines.append(f"--- body head ({min(len(body), body_head)}/{len(body)} bytes) ---")
+            lines.append(head)
+        d = _sample_dir()
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, f"{_dt.datetime.now():%Y%m%d_%H%M%S_%f}_{safe_host}.txt")
+        import fsutil  # noqa: PLC0415  延迟导入：netguard 被独立引入时不强拉写盘依赖
+        fsutil.save_text_atomic(path, "\n".join(lines) + "\n", newline="\n")
+        _prune_samples(d, keep)
+        return path
+    except Exception:  # noqa: BLE001 - 诊断副线，任何失败不影响主链路
+        return None
+
+
+def _prune_samples(d: str, keep: int) -> None:
+    """按文件名（微秒戳前缀，天然按时间序）滚动，只留最新 keep 份。"""
+    try:
+        names = sorted(n for n in os.listdir(d) if n.endswith(".txt"))
+    except OSError:
+        return
+    for n in names[:-keep] if len(names) > keep else []:
+        try:
+            os.remove(os.path.join(d, n))
+        except OSError:
+            pass
+
+
+def latest_sample_note(max_age_hours: float = 24.0) -> str | None:
+    """最新一条失败现场的一行摘要（无采样或已超龄返回 None）。供链路失败推送附带。
+
+    us_close_task 的 chain:us-failed 用它把「失败 + 现场」并成一条推送：先看
+    status/error 行即可分辨限流页/改版/断网，body 头去 .status/upstream/ 细看。
+    """
+    try:
+        d = _sample_dir()
+        names = sorted(n for n in os.listdir(d) if n.endswith(".txt"))
+        if not names:
+            return None
+        name = names[-1]
+        path = os.path.join(d, name)
+        if time.time() - os.path.getmtime(path) > max_age_hours * 3600:
+            return None
+        status = err = None
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.startswith("status: "):
+                    status = line[8:].strip()
+                elif line.startswith("error: "):
+                    err = line[7:].strip()
+                elif line.startswith("---"):
+                    break
+        detail = f"status={status}" if status else f"error={(err or '?')[:80]}"
+        return f"上游失败现场已采样：.status/upstream/{name}（{detail}）"
+    except Exception:  # noqa: BLE001 - 摘要拿不到就当没有，不影响推送主文
+        return None
 
 
 def diagnose(allowed_hosts) -> list[dict]:

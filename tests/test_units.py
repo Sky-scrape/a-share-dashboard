@@ -1098,6 +1098,103 @@ def test_guarded_get_allows_and_blocks(monkeypatch):
     assert len(calls) == 1            # 两次拦截都未到达 requests
 
 
+# ------------------------------------------------- 上游失败现场采样（2026-10-27）
+
+class _FakeResp:
+    """最小 Response 桩：safe_get / capture_sample 只摸 status_code 与 content。"""
+
+    def __init__(self, status_code=200, content=b""):
+        self.status_code = status_code
+        self.content = content
+
+
+def test_capture_sample_writes_status_body_and_prunes(tmp_path, monkeypatch):
+    """采样落盘：状态码 + body 头写入文件；目录按 keep 滚动只留最新若干份。"""
+    import netguard
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path))
+    for _ in range(3):
+        netguard.capture_sample("https://h.example.com/api",
+                                resp=_FakeResp(503, b"<html>busy</html>"))
+    assert len(os.listdir(tmp_path)) == 3
+    netguard.capture_sample("https://h.example.com/api",
+                            resp=_FakeResp(503, b"<html>busy</html>"), keep=2)
+    files = sorted(os.listdir(tmp_path))
+    assert len(files) == 2                       # 滚动只留最新 keep 份
+    text = (tmp_path / files[-1]).read_text(encoding="utf-8")
+    assert "status: 503" in text and "<html>busy</html>" in text
+    assert "url: https://h.example.com/api" in text
+
+
+def test_capture_sample_records_exception_and_never_raises(tmp_path, monkeypatch):
+    """无 resp/exc 不采样；异常路径记异常类型；采样自身失败绝不外抛。"""
+    import netguard
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path))
+    assert netguard.capture_sample("https://h.example.com/x") is None
+    p = netguard.capture_sample("https://h.example.com/x", exc=TimeoutError("timed out"))
+    assert p and os.path.exists(p)
+    assert "error: TimeoutError: timed out" in open(p, encoding="utf-8").read()
+    # 目录不可写（换成文件路径冒充目录）→ 返回 None 而非抛
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path / "f"))
+    (tmp_path / "f").write_text("not a dir", encoding="utf-8")
+    assert netguard.capture_sample("https://h.example.com/x",
+                                   exc=OSError("down")) is None
+
+
+def test_safe_get_captures_upstream_failures(tmp_path, monkeypatch):
+    """safe_get 失败分支留现场：非 200 采状态码+body、网络异常采异常、200 零采样。"""
+    import netguard
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(netguard.socket, "getaddrinfo",
+                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    hosts = ("web.ifzq.gtimg.cn",)
+
+    def _boom(url, **k):
+        raise TimeoutError("t")
+
+    monkeypatch.setattr(netguard.requests, "get", _boom)
+    with pytest.raises(TimeoutError):
+        netguard.safe_get("https://web.ifzq.gtimg.cn/api", hosts)
+    monkeypatch.setattr(netguard.requests, "get", lambda url, **k: _FakeResp(502, b"gw"))
+    netguard.safe_get("https://web.ifzq.gtimg.cn/api", hosts)
+    monkeypatch.setattr(netguard.requests, "get", lambda url, **k: _FakeResp())
+    netguard.safe_get("https://web.ifzq.gtimg.cn/api", hosts)
+    assert len(os.listdir(tmp_path)) == 2        # 200 正常响应不采样
+
+
+def test_latest_sample_note_reports_newest_or_none(tmp_path, monkeypatch):
+    """推送摘要：取最新一条；空目录 / 全部超龄 → None。"""
+    import time as _time
+    import netguard
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path))
+    assert netguard.latest_sample_note() is None
+    old = netguard.capture_sample("https://h.example.com/b", exc=OSError("down"))
+    os.utime(old, (_time.time() - 25 * 3600,) * 2)
+    assert netguard.latest_sample_note() is None          # 全部超龄不报
+    netguard.capture_sample("https://h.example.com/a", resp=_FakeResp(429, b"x"))
+    note = netguard.latest_sample_note()
+    assert note and "status=429" in note and ".status/upstream/" in note
+
+
+def test_main_us_failed_push_carries_sample_note(monkeypatch, tmp_path):
+    """chain:us-failed 推送附最新失败现场采样与应急取数手册指引（2026-10-27）。"""
+    import netguard
+    import us_close_task as uct
+    monkeypatch.setattr(netguard, "_sample_dir", lambda: str(tmp_path))
+    netguard.capture_sample("https://web.ifzq.gtimg.cn/x", resp=_FakeResp(502, b"gw"))
+    texts = []
+    monkeypatch.setattr(uct, "sync_research_db", lambda: True)
+    monkeypatch.setattr(uct, "wait_us_close", lambda: None)
+    monkeypatch.setattr(uct, "run_us_fetch", lambda: False)
+    monkeypatch.setattr(uct, "_notify", lambda t, text, **k: texts.append(text))
+    monkeypatch.setattr(uct, "_log", lambda *a, **k: None)
+
+    rc = uct.main()
+
+    assert rc == 1
+    assert any("上游失败现场已采样" in t for t in texts)
+    assert any("docs/运维手册-上游应急取数.md" in t for t in texts)
+
+
 # ------------------------------------------------- 看门狗日志清理（O-4 · 2026-09-27）
 
 def test_watchdog_prune_logs_removes_only_expired(tmp_path, monkeypatch):

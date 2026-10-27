@@ -235,11 +235,18 @@ def main():
         # 仍会因「场次已按墙钟收盘」放行，从而把池按过期隔夜美股数据标成终版
         # （C6 闸门取值偏）。缺口留给下一次链（04:05 / 开机触发 / 缺口兜底）自动补。
         _log("[warn] us_market fetch failed (after retry); skip finalization this run")
-        _notify("隔夜美股抓取失败",
-                "us_close_task 中 us_market.py 失败，factors.json 沿用旧值——"
+        text = ("us_close_task 中 us_market.py 失败，factors.json 沿用旧值——"
                 "为避免 C6 隔夜美股闸门用到过期数据，本次跳过终版结算，"
-                "缺口留给下一次链自动补跑。白天可在看板手动重抓。",
-                key="chain:us-failed")
+                "缺口留给下一次链自动补跑。白天可在看板手动重抓。")
+        try:   # 附最新失败现场采样（netguard.capture_sample 落盘），推送与明细不互堵
+            sys.path.insert(0, os.path.join(ROOT, "backend"))
+            import netguard  # noqa: PLC0415
+            note = netguard.latest_sample_note()
+            if note:
+                text += f"\n{note}\n应急取数与采样判读见 docs/运维手册-上游应急取数.md"
+        except Exception as e:  # noqa: BLE001 - 采样摘要是诊断副线，拿不到照常推送
+            _log(f"[warn] sample note unavailable: {type(e).__name__}")
+        _notify("隔夜美股抓取失败", text, key="chain:us-failed")
         return 1
 
     sys.path.insert(0, os.path.join(ROOT, "backend"))
