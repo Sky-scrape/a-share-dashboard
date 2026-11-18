@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C20g~i 分位口径复核 · 低市值+低换手</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171b21; --line:#262c35; --txt:#e6eaef; --dim:#8b95a3;
+    --red:#e5484d; --green:#2fa84f; --blue:#4a90d9; --amber:#e0a340;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.68 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    padding:28px 22px 60px}
+  .wrap{max-width:1020px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 6px;letter-spacing:.3px}
+  h2{font-size:16px;margin:36px 0 12px;padding-left:10px;border-left:3px solid var(--blue)}
+  h3{font-size:14px;margin:24px 0 8px;color:#c3ccd8}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  th:first-child,td:first-child{text-align:left}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#1c222a}
+  tbody tr.hl{background:#1b2430}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  .dim{color:var(--dim)}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;
+    background:#232a33;color:#9aa5b3;margin-left:4px}
+  .tag.bad{background:#3a1e20;color:#e5847f}
+  .tag.ok{background:#17301f;color:#63c07f}
+  .tag.mid{background:#2e2a18;color:#d9bb6a}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}
+  .kpi div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:13px 15px}
+  .kpi .lab{font-size:12px;color:var(--dim);margin-bottom:5px}
+  .kpi .val{font-size:20px;font-weight:600;letter-spacing:.2px}
+  .kpi .note{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .verdict{border-left:3px solid var(--amber);background:#1f1c14;
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .verdict b{color:var(--amber)}
+  .wrong{border-left:3px solid var(--red);background:#201314;
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .wrong b{color:var(--red)}
+  ul{margin:8px 0 8px 18px;padding:0} li{margin:5px 0}
+  .foot{margin-top:42px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:12px}
+  code{background:#22282f;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note-box{font-size:12.5px;margin-top:8px;color:#aab4c1}
+  .strike{text-decoration:line-through;opacity:.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>分位口径复核：低市值+低换手（能不能选？）</h1>
+<div class="sub">
+  C20g~i ｜ 训练 2026-07-01~08-31，样本外 09-01~10-30 ｜ r_oc 口径，双边费 0.15%<br>
+  触发：「但能不能选『低市值+低换手』」——这一问指向上一版的方法缺陷
+</div>
+
+<div class="verdict">
+  <b>你的方向是对的，我上一版有一半是假阴性。</b><br>
+  把绝对阈值（<code>cap&lt;30亿</code>）换成<b>每日横截面分位</b>后，
+  同一组合的样本外 t 从 1.40 升到 <b>2.11</b>，衰减从「只剩 33%」变成「保留 54%」。<br>
+  但反向也有个意外：<b>「低市值」这一项本身在做负贡献</b>。真正有效的是低换手，
+  而低换手在五个市值层全部有效、且<b>市值越大越强</b>。硬加小市值 = 主动放弃 t 最高的那一层。<br>
+  <b>扣费后依然亏钱</b>（最好配置净值 0.8460，全市场 0.7814）。因子有效 ≠ 策略能赚钱。
+</div>
+
+<div class="kpi">
+  <div><div class="lab">绝对阈值 · OOS t</div>
+       <div class="val neg">1.40</div><div class="note">不显著</div></div>
+  <div><div class="lab">分位口径 · OOS t</div>
+       <div class="val pos">2.11</div><div class="note">显著</div></div>
+  <div><div class="lab">超额保留率</div>
+       <div class="val pos">54%</div><div class="note">绝对阈值仅 33%</div></div>
+  <div><div class="lab">OOS 扣费净值</div>
+       <div class="val neg">0.8460</div><div class="note">最好的配置仍是亏的</div></div>
+</div>
+
+<h2>0. 先说我上一版错在哪</h2>
+<div class="wrong">
+  <b>错误一：用了绝对阈值。</b><code>cap&lt;30亿</code> 的池子在样本外从日均 667 只缩到 616 只，
+  等于悄悄换了池；而且实盘根本无法预知「今年 30 亿算小」。<br>
+  <b>错误二：正交化时剔除了波动率。</b>turn 与 atr 的相关是 <b>0.671</b>，
+  剔掉波动率等于剔掉换手率本来就在测量的东西。我把「同义变量被剔除后的残差」
+  误读成「因子无效」——这比漏掉因子更危险，因为它看起来更严谨。
+</div>
+
+<div class="card">
+<table>
+  <thead><tr><th>口径</th><th>训练日均只数</th><th>OOS 日均只数</th><th>池子变化</th></tr></thead>
+  <tbody>
+    <tr><td>绝对 <code>cap&lt;30亿</code></td><td>667</td><td>616</td>
+        <td class="neg">−7.6%（换池了）</td></tr>
+    <tr><td>分位 <code>cap_pct≤30%</code></td><td>931</td><td>938</td>
+        <td class="pos">+0.8%（稳定）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>1. 换口径后：低市值+低换手确实更稳</h2>
+<div class="card">
+<table>
+  <thead><tr><th>组合</th><th>训练超额</th><th>t</th><th>OOS 超额</th><th>t</th>
+    <th>OOS 扣费</th><th>OOS 净值</th></tr></thead>
+  <tbody>
+    <tr><td>绝对 cap&lt;30亿 + turn≤1.71%</td><td>+0.345%</td><td>2.83</td>
+        <td>+0.113%</td><td class="neg">1.40</td><td>−0.553%</td><td>0.8167</td></tr>
+    <tr class="hl"><td><b>分位 cap≤30% + turn≤30%</b></td><td><b>+0.279%</b></td><td><b>2.40</b></td>
+        <td><b>+0.151%</b></td><td class="pos"><b>2.11</b></td><td><b>−0.506%</b></td><td><b>0.8274</b></td></tr>
+    <tr><td>分位 cap≤50% + turn≤30%</td><td>+0.259%</td><td>2.47</td>
+        <td>+0.168%</td><td class="pos">2.64</td><td>−0.476%</td><td>0.8333</td></tr>
+    <tr><td>分位 cap≤50% + turn≤50%</td><td>+0.250%</td><td>2.84</td>
+        <td>+0.155%</td><td class="pos">2.86</td><td>−0.485%</td><td>0.8294</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+分位版本的训练段 t 也没掉（2.83→2.40），说明<b>不是靠放宽到噪声里抬 t 值</b>，
+而是阈值定义更贴近「当日最不活跃的那批」这个真实含义。
+</div>
+</div>
+
+<h3>逐月路径：衰减变缓，但 10 月仍在</h3>
+<div class="card">
+<table>
+  <thead><tr><th>月份</th><th>cap≤20% + turn≤20%</th><th>t</th>
+    <th>cap≤30% + turn≤30%</th><th>t</th></tr></thead>
+  <tbody>
+    <tr><td>2026-07</td><td class="pos">+0.256%</td><td>1.07</td>
+        <td class="pos">+0.385%</td><td>2.07</td></tr>
+    <tr><td>2026-08</td><td class="pos">+0.250%</td><td>1.94</td>
+        <td class="pos">+0.159%</td><td>1.22</td></tr>
+    <tr><td>2026-09</td><td class="pos">+0.184%</td><td>1.83</td>
+        <td class="pos">+0.201%</td><td class="pos">2.25</td></tr>
+    <tr><td>2026-10</td><td class="pos">+0.090%</td><td>0.55</td>
+        <td class="pos">+0.084%</td><td>0.76</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+四个月<b>全部为正</b>，这是第 23 节绝对阈值版本没有的（那一版 10 月是 −0.015%）。
+10 月 t 值只有 0.55/0.76，说明优势在收窄但没消失。
+</div>
+</div>
+
+<h2>2. 意外发现：「低市值」本身在做负贡献</h2>
+<div class="sub">固定换手≤30%，逐级放宽市值上限，看超额与 t 值怎么动（OOS）。</div>
+<div class="card">
+<table>
+  <thead><tr><th>市值上限</th><th>OOS 超额</th><th>t</th><th>OOS 净值</th><th>日均只数</th></tr></thead>
+  <tbody>
+    <tr><td>≤20%</td><td>+0.128%</td><td class="neg">1.57</td><td>0.8198</td><td>82</td></tr>
+    <tr><td>≤30%</td><td>+0.151%</td><td>2.11</td><td>0.8274</td><td>144</td></tr>
+    <tr><td>≤50%</td><td>+0.168%</td><td>2.64</td><td>0.8333</td><td>306</td></tr>
+    <tr><td>≤70%</td><td>+0.173%</td><td class="pos">2.65</td><td>0.8363</td><td>496</td></tr>
+    <tr class="hl"><td><b>不加市值约束</b></td><td><b>+0.203%</b></td><td class="pos"><b>2.09</b></td>
+        <td><b>0.8460</b></td><td>938</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+<b>超额随市值上限放宽单调上升</b>，t 值也是（2.65→1.57 反过来看就是：越往小盘压，t 越低）。
+净值同理：不加约束 0.8460 &gt; ≤70% 0.8363 &gt; ≤30% 0.8274 &gt; ≤20% 0.8198。
+</div>
+</div>
+
+<h3>原因：低换手是全市场现象，不是小盘现象</h3>
+<div class="card">
+<table>
+  <thead><tr><th>市值分层</th><th>该层全样本 OOS</th><th>该层 + 换手≤30%</th><th>t</th><th>增量</th></tr></thead>
+  <tbody>
+    <tr><td>最低 20%</td><td>+0.017%</td><td>+0.128%</td><td>1.57</td><td class="pos">+0.111pp</td></tr>
+    <tr><td>20-40%</td><td>+0.014%</td><td>+0.178%</td><td class="pos">2.78</td><td class="pos">+0.164pp</td></tr>
+    <tr><td>40-60%</td><td>−0.024%</td><td>+0.168%</td><td class="pos">2.32</td><td class="pos">+0.192pp</td></tr>
+    <tr><td>60-80%</td><td>−0.006%</td><td>+0.201%</td><td class="pos">2.01</td><td class="pos">+0.207pp</td></tr>
+    <tr><td>最高 20%</td><td>−0.001%</td><td>+0.255%</td><td>1.52</td><td class="pos">+0.256pp</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+五个分层<b>全部有效，且增量随市值上升而增大</b>。所以叠加小市值不是「强化」，是「自我限制」——
+它把 t 值最高的那几层主动排除掉了。
+</div>
+</div>
+
+<h2>3. 我上一版的「正交化证伪」是过度剔除</h2>
+<div class="card">
+<table>
+  <thead><tr><th>turn_pct 与</th><th>逐日 rank 相关中位</th><th>判断</th></tr></thead>
+  <tbody>
+    <tr><td><code>atr_rank</code>（波动率）</td><td class="neg">+0.671</td>
+        <td><span class="tag bad">高度同义，不能当控制变量</span></td></tr>
+    <tr><td><code>amount_pct</code>（成交额）</td><td class="warn">+0.478</td>
+        <td><span class="tag mid">定义同源（turn≈amount/流通市值）</span></td></tr>
+    <tr><td><code>cap_pct</code>（市值）</td><td>−0.223</td>
+        <td><span class="tag ok">可作控制变量</span></td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+用波动率做控制变量，等于把「低波动」这个换手率本来就在测量的东西剔掉；
+用成交额做控制变量更离谱，<code>turn ≈ amount / 流通市值</code>，剔掉成交额就是剔掉换手率本身。<br><br>
+<b>反证</b>：只剔除成交额（不剔波动率）后，残差最低 20% 在 OOS 仍为
+<b class="pos">+0.206%（t=1.57）</b>，没有消失。所以「换手率是低波动的代理」这个判断站不住。
+</div>
+</div>
+
+<h2>4. 修正对照表</h2>
+<div class="card">
+<table>
+  <thead><tr><th>项</th><th>上一版结论</th><th>修正后</th></tr></thead>
+  <tbody>
+    <tr><td>低市值+低换手</td><td class="neg">未通过（t=1.40）</td>
+        <td class="pos">通过（分位 t=2.11），但有效的是「低换手」</td></tr>
+    <tr><td>低市值</td><td class="neg">归零</td>
+        <td class="warn">归零，且在组合里是<b>负贡献</b></td></tr>
+    <tr><td>低换手是独立因子</td><td class="neg">否（正交化证伪）</td>
+        <td class="pos">是（剔除成交额后仍 t=1.57~1.96）</td></tr>
+    <tr><td>扣费后能否赚钱</td><td class="neg">否</td>
+        <td class="neg">仍否（最好配置净值 0.8460）</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>5. 所以：能不能选？</h2>
+<div class="verdict">
+  <b>能选，但要改条件——不是「低市值+低换手」，而是「低换手」，小市值能不加就不加。</b>
+  <ul>
+    <li>用<b>每日换手率分位 ≤30%</b>（当日最不活跃的三成），不要用绝对换手数值。</li>
+    <li>不要叠小市值。<b>低换手在五个市值层全部有效且越大越强</b>，加小市值只会把 t 从 2.65 压到 1.57。</li>
+    <li>如果必须限制池子（比如流动性/研究覆盖），用 <b>市值≤70% 分位</b>，不要用 ≤30%。</li>
+    <li><b>扣费后仍为负</b>：最好配置 OOS 净值 0.8460，日均扣费 −0.436%。
+        9-10 月市场整体在跌（全市场 −0.489%/日），这个因子只是「少亏」。
+        它在 7-8 月确实赚钱，但那是市场没跌的时候。</li>
+  </ul>
+  <b>真正的用法是「准入池」而不是「选股器」</b>：先用换手率分位把可交易范围收敛到最不活跃的 30%，
+  再在这个池子里判断「今天该不该买」——这才是缺口所在。
+</div>
+
+<h2>6. 口径规范（写入流程）</h2>
+<div class="card">
+<ul>
+  <li>截面因子的分组阈值<b>一律用每日横截面分位</b>，禁止用绝对数值（会漂移、会换池、不可实盘执行）。</li>
+  <li>正交化前<b>必须先输出相关系数矩阵</b>；|ρ| &gt; 0.6 的控制变量只能靠财经逻辑判断，不能机械剔除。</li>
+  <li>报告「超额」时<b>必须同时报绝对收益与扣费后净值</b>；超额为正不等于赚钱。</li>
+  <li>分层稳定性检验必须做：<b>若因子在某层单独更强，叠加该层的约束通常是错的</b>。</li>
+</ul>
+</div>
+
+<div class="foot">
+  产物：<code>c20g_pctrank.csv</code> · <code>c20h_diagnose.csv</code> · <code>c20i_sizecheck.csv</code><br>
+  脚本：<code>scripts/c20g_pctrank.py</code> · <code>c20h_diagnose.py</code> · <code>c20i_sizecheck.py</code><br>
+  日志：<code>reports/rounds_log.md</code> 第 24 节 ｜ 数据：同花顺问财 · 2026-11-04
+</div>
+
+</div>
+</body>
+</html>

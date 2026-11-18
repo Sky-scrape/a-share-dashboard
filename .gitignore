@@ -23,6 +23,9 @@ quant/notebooks/
 # ---- 策略自迭代：原始数据与大数据文件（本地生成，不入库）----
 strategy-iter/data/
 strategy-iter/raw/
+# 研究轮次的中间面板（C16~C20 的 panel/pool parquet 合计 300MB+，留在本地复现；
+# 需要入库时 git add -f）
+strategy-iter/runs/**/*.parquet
 
 # ---- Python ----
 __pycache__/
@@ -63,3 +66,6 @@ strategy-iter/.mimosa/
 
 # ZCode 会话目录（本地工具，不入库）
 /.zcode/
+
+# 研究脚本的 stderr 落盘（未捕获时为空/诊断用，不入库）
+strategy-iter/runs/**/*.err

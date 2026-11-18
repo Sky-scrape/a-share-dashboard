@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C20j~k 市值阈值 100 亿复核</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171b21; --line:#262c35; --txt:#e6eaef; --dim:#8b95a3;
+    --red:#e5484d; --green:#2fa84f; --blue:#4a90d9; --amber:#e0a340;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.68 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    padding:28px 22px 60px}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 6px;letter-spacing:.3px}
+  h2{font-size:16px;margin:36px 0 12px;padding-left:10px;border-left:3px solid var(--blue)}
+  h3{font-size:14px;margin:24px 0 8px;color:#c3ccd8}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+  th,td{padding:6px 9px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  th:first-child,td:first-child{text-align:left}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#1c222a}
+  tbody tr.hl{background:#1b2430}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  .dim{color:var(--dim)}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;
+    background:#232a33;color:#9aa5b3;margin-left:4px}
+  .tag.bad{background:#3a1e20;color:#e5847f}
+  .tag.ok{background:#17301f;color:#63c07f}
+  .tag.mid{background:#2e2a18;color:#d9bb6a}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}
+  .kpi div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:13px 15px}
+  .kpi .lab{font-size:12px;color:var(--dim);margin-bottom:5px}
+  .kpi .val{font-size:20px;font-weight:600;letter-spacing:.2px}
+  .kpi .note{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .verdict{border-left:3px solid var(--amber);background:#1f1c14;
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .verdict b{color:var(--amber)}
+  ul{margin:8px 0 8px 18px;padding:0} li{margin:5px 0}
+  .foot{margin-top:42px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:12px}
+  code{background:#22282f;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note-box{font-size:12.5px;margin-top:8px;color:#aab4c1}
+  .curve{display:flex;align-items:flex-end;gap:3px;height:120px;margin:14px 0 4px;
+    padding:0 2px}
+  .curve i{flex:1;background:linear-gradient(180deg,#4a90d9,#2b5c8f);
+    border-radius:2px 2px 0 0;position:relative;min-height:3px}
+  .curve i.peak{background:linear-gradient(180deg,#63c07f,#2f7a48)}
+  .curve-lbl{display:flex;gap:3px;font-size:10px;color:var(--dim)}
+  .curve-lbl span{flex:1;text-align:center;transform:rotate(-45deg);transform-origin:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>市值阈值换成 100 亿：结果变好，但不是因为「小市值」</h1>
+<div class="sub">
+  C20j~k ｜ 训练 2026-07-01~08-31，样本外 09-01~10-30 ｜ r_oc 口径，双边费 0.15%<br>
+  换手一律用每日横截面分位（按上一轮确立的规范）
+</div>
+
+<div class="verdict">
+  <b>100 亿确实比 30 亿好，而且好得不小。</b><br>
+  OOS t 从 <b>1.54</b> 升到 <b>2.66</b>，超额从 +0.118% 升到 +0.170%，净值从 0.8190 升到 0.8354。<br>
+  <b>但原因不是「小市值选得更准」</b>——恰恰相反：t 值随市值上限放宽一路上升，
+  峰值在 <b>120 亿（t=2.71）</b>，之后才回落。<b>30 亿是这条曲线上最差的位置之一。</b><br>
+  <b>额外收获</b>：100 亿恰好是「覆盖分位最稳定」的阈值（训练/样本外覆盖都是 64.1%，漂移 0.0pp），
+  这让它比 30 亿（漂移 1.9pp）更适合作为固定规则写进系统。
+</div>
+
+<div class="kpi">
+  <div><div class="lab">cap&lt;30亿 · OOS t</div>
+       <div class="val neg">1.54</div><div class="note">不显著</div></div>
+  <div><div class="lab">cap&lt;100亿 · OOS t</div>
+       <div class="val pos">2.66</div><div class="note">显著</div></div>
+  <div><div class="lab">t 值峰值</div>
+       <div class="val pos">120亿</div><div class="note">t=2.71</div></div>
+  <div><div class="lab">100亿 分位漂移</div>
+       <div class="val pos">0.0pp</div><div class="note">覆盖恒为 64.1%</div></div>
+</div>
+
+<h2>1. 100 亿在每日横截面里等于什么</h2>
+<div class="card">
+<table>
+  <thead><tr><th>阈值</th><th>训练覆盖分位</th><th>OOS 覆盖分位</th><th>漂移</th><th>日均只数</th></tr></thead>
+  <tbody>
+    <tr><td>20 亿</td><td>8.0%</td><td>6.1%</td><td class="warn">1.9pp</td><td>~22</td></tr>
+    <tr><td>30 亿</td><td>21.1%</td><td>19.2%</td><td class="warn">1.9pp</td><td>79</td></tr>
+    <tr><td>50 亿</td><td>41.2%</td><td>39.8%</td><td>1.4pp</td><td>220</td></tr>
+    <tr><td>80 亿</td><td>57.2%</td><td>57.3%</td><td class="pos">0.1pp</td><td>384</td></tr>
+    <tr class="hl"><td><b>100 亿</b></td><td><b>64.1%</b></td><td><b>64.1%</b></td>
+        <td class="pos"><b>0.0pp</b></td><td>449</td></tr>
+    <tr><td>120 亿</td><td>69.2%</td><td>69.7%</td><td class="pos">0.5pp</td><td>495</td></tr>
+    <tr><td>150 亿</td><td>74.3%</td><td>74.9%</td><td>0.6pp</td><td>557</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+当日 cap 中位数：训练 63.7 亿 / 样本外 65.0 亿。<b>100 亿约等于「市值最低 64%」</b>，
+换句话说它是「剔除头部三分之一」——不是小盘，是大盘以下的全体。
+</div>
+</div>
+
+<h2>2. t 值曲线：峰值在 120 亿，30 亿是差位置</h2>
+<div class="card">
+<div class="curve">
+  <i style="height:28%"></i><i style="height:57%"></i><i style="height:80%"></i>
+  <i style="height:90%"></i><i style="height:93%"></i><i style="height:96%"></i>
+  <i style="height:98%"></i><i class="peak" style="height:100%"></i>
+  <i style="height:98.5%"></i><i style="height:95%"></i><i style="height:91.5%"></i>
+  <i style="height:85%"></i><i style="height:77%"></i>
+</div>
+<div class="curve-lbl">
+  <span>20</span><span>30</span><span>40</span><span>50</span><span>60</span><span>80</span>
+  <span>100</span><span>120</span><span>150</span><span>200</span><span>300</span>
+  <span>500</span><span>不限</span>
+</div>
+<table style="margin-top:16px">
+  <thead><tr><th>市值上限</th><th>n</th><th>日均只数</th><th>超额</th><th>t</th>
+    <th>扣费净值</th><th>日波动</th></tr></thead>
+  <tbody>
+    <tr><td>&lt;20亿</td><td>830</td><td>22</td><td>+0.057%</td>
+        <td class="neg">0.77</td><td>0.8019</td><td>1.11</td></tr>
+    <tr><td>&lt;30亿</td><td>2,998</td><td>79</td><td>+0.118%</td>
+        <td class="neg">1.54</td><td>0.8190</td><td>1.08</td></tr>
+    <tr><td>&lt;40亿</td><td>5,803</td><td>153</td><td>+0.146%</td>
+        <td>2.17</td><td>0.8286</td><td>1.08</td></tr>
+    <tr><td>&lt;50亿</td><td>8,353</td><td>220</td><td>+0.153%</td>
+        <td>2.45</td><td>0.8299</td><td>1.08</td></tr>
+    <tr><td>&lt;60亿</td><td>10,988</td><td>289</td><td>+0.160%</td>
+        <td>2.52</td><td>0.8314</td><td>1.06</td></tr>
+    <tr><td>&lt;80亿</td><td>14,576</td><td>384</td><td>+0.165%</td>
+        <td>2.61</td><td>0.8337</td><td>1.04</td></tr>
+    <tr class="hl"><td><b>&lt;100亿</b></td><td>17,048</td><td>449</td><td><b>+0.170%</b></td>
+        <td class="pos"><b>2.66</b></td><td><b>0.8354</b></td><td>1.02</td></tr>
+    <tr><td><b>&lt;120亿</b></td><td>18,815</td><td>495</td><td><b>+0.177%</b></td>
+        <td class="pos"><b>2.71</b> ←峰值</td><td>0.8377</td><td>1.01</td></tr>
+    <tr><td>&lt;150亿</td><td>21,151</td><td>557</td><td>+0.178%</td>
+        <td>2.67</td><td>0.8382</td><td>1.00</td></tr>
+    <tr><td>&lt;200亿</td><td>23,705</td><td>624</td><td>+0.181%</td>
+        <td>2.57</td><td>0.8392</td><td>0.98</td></tr>
+    <tr><td>&lt;300亿</td><td>27,163</td><td>715</td><td>+0.194%</td>
+        <td>2.48</td><td>0.8431</td><td>0.96</td></tr>
+    <tr><td>不限</td><td>35,633</td><td>938</td><td>+0.203%</td>
+        <td>2.09</td><td>0.8460</td><td>0.86</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+<b>t 值是个倒 U</b>：30 亿 1.54 → 120 亿 2.71（峰）→ 不限 2.09。<br>
+为什么两头都差？<b>30 亿端</b>池子太小（日均 79 只，只有 22 亿时日均 22 只），噪声压过信号；
+<b>不限端</b>把头部大盘股放进来，而那些票的低换手是「机构锁仓」，不是「没人炒」，语义变了。<br>
+<b>净值却单调上升</b>（0.8190 → 0.8460），因为池子越大越分散越抗跌。这和 t 值背离，是两个不同的目标。
+</div>
+</div>
+
+<h2>3. 「30~100 亿」这个中间段是最好的吗？</h2>
+<div class="card">
+<table>
+  <thead><tr><th>市值区间</th><th>训练超额</th><th>t</th><th>OOS 超额</th><th>t</th><th>OOS 净值</th></tr></thead>
+  <tbody>
+    <tr><td>0-30 亿</td><td>+0.303%</td><td>2.41</td><td>+0.118%</td><td class="neg">1.54</td><td>0.8190</td></tr>
+    <tr><td>30-50 亿</td><td>+0.260%</td><td>2.42</td><td>+0.173%</td><td class="pos">2.85</td><td>0.8366</td></tr>
+    <tr><td>50-100 亿</td><td>+0.178%</td><td>1.47</td><td>+0.187%</td><td class="pos">2.41</td><td>0.8412</td></tr>
+    <tr><td>100-150 亿</td><td>+0.164%</td><td>1.01</td><td>+0.212%</td><td>2.10</td><td>0.8505</td></tr>
+    <tr><td>&gt;150 亿</td><td>+0.178%</td><td>0.94</td><td>+0.240%</td><td>1.54</td><td>0.8554</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+分段看，<b>30-50 亿这一段单独最稳</b>（OOS t=2.85）；但 50-100 亿也不差（2.41）。
+0-30 亿这一段是全表最弱（1.54）。<br>
+<b>所以「100 亿以下」是把「最差的 0-30 亿」和「较好的 30-100 亿」混在一起</b>——
+它比 30 亿好，是因为它<b>稀释</b>了 0-30 亿的噪声，而不是因为 100 亿本身有什么魔力。
+</div>
+</div>
+
+<h2>4. 换手档 × 市值档：最优格子在哪</h2>
+<div class="card">
+<table>
+  <thead><tr><th>换手分位 ↓ / 市值 →</th><th>&lt;30亿</th><th>&lt;50亿</th>
+    <th>&lt;100亿</th><th>&lt;150亿</th><th>&lt;300亿</th><th>不限</th></tr></thead>
+  <tbody>
+    <tr><td>≤10%</td><td class="neg">0.63</td><td>1.38</td><td>2.08</td><td>2.23</td><td>2.19</td><td>1.96</td></tr>
+    <tr><td>≤20%</td><td class="neg">1.30</td><td>1.93</td><td>2.31</td><td>2.35</td><td>2.30</td><td>1.93</td></tr>
+    <tr class="hl"><td>≤30%</td><td>1.54</td><td>2.45</td><td>2.66</td><td><b>2.67</b></td><td>2.48</td><td>2.09</td></tr>
+    <tr><td>≤50%</td><td>1.60</td><td>2.49</td><td><b>3.22</b></td><td><b>3.30</b></td><td>3.01</td><td>2.44</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+（表内为 OOS 日级 t 值）<br>
+<b>最优格子是「换手≤50% + 市值&lt;100~150亿」（t=3.22~3.30）</b>，比换手≤30% 更宽也更稳。<br>
+换手≤10% 反而更差（2.08~2.23）——太严会把池子压到几百只，噪声上来。
+</div>
+</div>
+
+<h2>5. 必须泼的冷水</h2>
+<div class="card">
+<h3>5.1 剔除单月检验</h3>
+<table>
+  <thead><tr><th>样本</th><th>天数</th><th>t</th><th>结论</th></tr></thead>
+  <tbody>
+    <tr><td>全 OOS</td><td>38</td><td>2.66</td><td class="pos">显著</td></tr>
+    <tr><td>剔除 2026-10</td><td>21</td><td>2.11</td><td class="pos">仍显著</td></tr>
+    <tr><td>剔除 2026-09</td><td>17</td><td class="neg">1.67</td><td class="neg">掉出显著</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+<b>结论依赖 9 月。</b>剔掉 9 月只剩 17 个交易日，t 就掉到 1.67。
+不是致命的（样本本来就短），但说明<b>这还不是一个经过充分检验的因子</b>，
+只能说「在 7-10 月这段数据上没有证伪」。要等 11-12 月真正的新数据。
+</div>
+
+<h3>5.2 扣费后依然是亏的</h3>
+<table>
+  <thead><tr><th>组合</th><th>OOS 绝对收益</th><th>扣费后</th><th>OOS 净值</th></tr></thead>
+  <tbody>
+    <tr><td>全市场基线</td><td class="neg">−0.489%</td><td class="neg">−0.639%</td><td class="neg">0.7814</td></tr>
+    <tr><td>cap&lt;30亿 + 换手≤30%</td><td class="neg">−0.392%</td><td class="neg">−0.542%</td><td>0.8190</td></tr>
+    <tr class="hl"><td><b>cap&lt;100亿 + 换手≤30%</b></td><td class="neg">−0.318%</td><td class="neg">−0.468%</td><td>0.8354</td></tr>
+    <tr><td>换手≤30%（不限市值）</td><td class="neg">−0.286%</td><td class="neg">−0.436%</td><td class="pos">0.8460</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+9-10 月是整体下行市（全市场 −0.489%/日，38 天里净值 0.7814）。
+100 亿这档把亏损从 −0.639% 收窄到 −0.468%，<b>相对改善 0.17pp/日，但绝对仍是负的</b>。<br>
+<b>因子有效 ≠ 策略赚钱。</b>它只在 7-8 月那种市场里真正赚到钱。
+</div>
+</div>
+
+<h2>6. 所以，100 亿该怎么用</h2>
+<div class="verdict">
+  <b>建议：用 100 亿，但理解清楚它在做什么——它是在「稀释噪声」，不是「精准选小盘」。</b>
+  <ul>
+    <li><b>阈值</b>：市值 &lt;100 亿 + 每日换手分位 ≤30%（若求更稳，用换手 ≤50%）。</li>
+    <li><b>为什么不选更窄</b>：0-30 亿是全表最弱段（t=1.54），且日均只有 79 只，噪声大。</li>
+    <li><b>为什么不选更宽</b>：不加市值约束 t=2.09，低于 100~150 亿的 2.66~2.67；
+        且会把「机构锁仓型低换手」混进池子，语义变了。</li>
+    <li><b>100 亿的额外好处</b>：覆盖分位 64.1% 且训练/样本外<b>零漂移</b>，
+        是唯一可以当固定规则写进系统的档位（30 亿会漂 1.9pp）。</li>
+    <li><b>但别指望它赚钱</b>：扣费后 OOS 仍是 −0.468%/日。它的用途是<b>把可交易范围收敛</b>，
+        然后在这个池子里解决「今天该不该买」——那才是真正没解决的问题。</li>
+  </ul>
+</div>
+
+<h2>7. 小结表：三次口径演进</h2>
+<div class="card">
+<table>
+  <thead><tr><th>口径</th><th>OOS 超额</th><th>t</th><th>净值</th><th>日均只数</th><th>问题</th></tr></thead>
+  <tbody>
+    <tr><td>绝对 cap&lt;30亿 + 绝对换手≤1.71%</td><td>+0.113%</td>
+        <td class="neg">1.40</td><td>0.8167</td><td>616</td>
+        <td>阈值漂移、池子缩水</td></tr>
+    <tr><td>分位 cap≤30% + 换手≤30%</td><td>+0.151%</td>
+        <td>2.11</td><td>0.8274</td><td>144</td>
+        <td>池子太小</td></tr>
+    <tr class="hl"><td><b>绝对 cap&lt;100亿 + 分位换手≤30%</b></td><td><b>+0.170%</b></td>
+        <td class="pos"><b>2.66</b></td><td><b>0.8354</b></td><td>449</td>
+        <td>依赖 9 月，扣费仍负</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="foot">
+  产物：<code>c20j_cap100.csv</code> · <code>c20k_curve.csv</code><br>
+  脚本：<code>scripts/c20j_cap100.py</code> · <code>c20k_curve.py</code><br>
+  日志：<code>reports/rounds_log.md</code> 第 25 节 ｜ 数据：同花顺问财 · 2026-11-04
+</div>
+
+</div>
+</body>
+</html>

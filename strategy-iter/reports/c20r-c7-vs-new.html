@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C7 vs 新池：谁更好</title>
+<style>
+  :root{
+    --bg:#0f1216; --card:#171b21; --line:#262c35; --txt:#e6eaef; --dim:#8b95a3;
+    --red:#e5484d; --green:#2fa84f; --blue:#4a90d9; --amber:#e0a340;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.72 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    padding:28px 22px 60px}
+  .wrap{max-width:1020px;margin:0 auto}
+  h1{font-size:21px;margin:0 0 6px;letter-spacing:.3px}
+  h2{font-size:16px;margin:36px 0 12px;padding-left:10px;border-left:3px solid var(--blue)}
+  h3{font-size:14px;margin:24px 0 8px;color:#c3ccd8}
+  .sub{color:var(--dim);font-size:12.5px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:16px 18px;margin:14px 0}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+  th,td{padding:7px 9px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  th:first-child,td:first-child{text-align:left}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#1c222a}
+  tbody tr.hl{background:#1b2430}
+  .pos{color:var(--green)} .neg{color:var(--red)} .warn{color:var(--amber)}
+  .dim{color:var(--dim)}
+  .tag{display:inline-block;font-size:11px;padding:1px 7px;border-radius:4px;
+    background:#232a33;color:#9aa5b3;margin-left:4px}
+  .tag.bad{background:#3a1e20;color:#e5847f}
+  .tag.ok{background:#17301f;color:#63c07f}
+  .tag.mid{background:#2e2a18;color:#d9bb6a}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}
+  .kpi div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:13px 15px}
+  .kpi .lab{font-size:12px;color:var(--dim);margin-bottom:5px}
+  .kpi .val{font-size:20px;font-weight:600;letter-spacing:.2px}
+  .kpi .note{font-size:11.5px;color:var(--dim);margin-top:3px}
+  .verdict{border-left:3px solid var(--amber);background:#1f1c14;
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .verdict b{color:var(--amber)}
+  .wrong{border-left:3px solid var(--red);background:#201314;
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0}
+  .wrong b{color:var(--red)}
+  ul{margin:8px 0 8px 18px;padding:0} li{margin:5px 0}
+  .foot{margin-top:42px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--dim);font-size:12px}
+  code{background:#22282f;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note-box{font-size:12.5px;margin-top:8px;color:#aab4c1}
+  .bars{display:flex;gap:24px;margin:18px 0 6px;align-items:flex-end;height:150px}
+  .bars .grp{flex:1;display:flex;gap:6px;align-items:flex-end;justify-content:center}
+  .bars i{width:34px;border-radius:3px 3px 0 0;position:relative}
+  .bars .lab{text-align:center;font-size:11px;color:var(--dim);margin-top:6px}
+  .b-c7{background:linear-gradient(180deg,#4a90d9,#2b5c8f)}
+  .b-new{background:linear-gradient(180deg,#e0a340,#8f6420)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>C7 与新池，哪个更好</h1>
+<div class="sub">
+  C20r~u ｜ 统一口径：同费率 0.15%、同持仓 1 日、无前视 ｜ C7 数字取 C15 风格漂移复核（已 bootstrap 检验）<br>
+  新池 = 市值&lt;100亿 + 换手分位≤50% + 下影分位≤30%
+</div>
+
+<div class="verdict">
+  <b>就 7-10 月这段，C7 更好——但没好多少，而且两者都不该重仓。</b><br><br>
+  同口径笔均净：C7 <b>−0.12%</b> vs 新池 <b>−0.19%</b>，差 0.07pp。<br>
+  分月看：C7 在 7-8 月 <b>+0.81%</b>，新池只有 <b>+0.02%</b>；9-10 月 C7 <b>−1.17%</b>，
+  新池 <b>−0.43%</b>——<b>各有胜负，且都随市场同步走坏</b>。<br><br>
+  <b>真正的差别不在收益率，在仓位占用</b>：C7 每天约 1 笔（大量空仓），
+  新池每天 225 笔（满仓）。C7 的 −0.12% 是「偶尔下一注」的结果，
+  新池的 −0.19% 是「天天满仓」的结果。风险暴露差了 200 倍。
+</div>
+
+<div class="kpi">
+  <div><div class="lab">C7 · 7-10月笔均净</div>
+       <div class="val neg">−0.12%</div><div class="note">87 笔 / 82 日</div></div>
+  <div><div class="lab">新池 · 7-10月日均净</div>
+       <div class="val neg">−0.19%</div><div class="note">满仓等权</div></div>
+  <div><div class="lab">C7 日均笔数</div>
+       <div class="val">1.06</div><div class="note">45% 交易日有成交</div></div>
+  <div><div class="lab">新池日均笔数</div>
+       <div class="val warn">225</div><div class="note">每天都满仓</div></div>
+</div>
+
+<h2>1. 先说我在这一轮犯的错（必须留痕）</h2>
+<div class="wrong">
+  <b>我差点给出「新池 +1.505%/笔，完胜 C7」的结论。</b>那是前视偏差造出来的。
+  <table style="margin-top:10px">
+    <thead><tr><th>逐项加买点条件</th><th>n</th><th>笔均毛收益</th><th>变化</th></tr></thead>
+    <tbody>
+      <tr><td>① 只要收益有效</td><td>18,077</td><td>+0.167%</td><td class="dim">—</td></tr>
+      <tr><td>② + 开盘涨幅 0~5%</td><td>10,080</td><td>+0.035%</td><td class="dim">−0.13pp</td></tr>
+      <tr><td>③ + 最低≥昨收−3%</td><td>9,210</td><td>+0.338%</td><td class="dim">+0.30pp</td></tr>
+      <tr class="hl"><td><b>④ + 收盘 &gt; 开盘</b></td><td>4,873</td>
+          <td class="neg"><b>+1.655%</b></td><td class="neg"><b>+1.32pp ← 假的</b></td></tr>
+    </tbody>
+  </table>
+  <div class="note-box">
+    第 ④ 条用 <b>T+1 收盘</b> 的信息决定 <b>T+1 开盘</b> 是否买入——那时候你还不知道收盘价。
+    一条规则凭空造出 1.32pp 收益。<br>
+    <b>这是本项目第二次犯同类错误</b>（C16 第 17 节「T+1 开盘 0~5% 筛选造成 +0.335% 假象」）。
+    已写入检查清单：<b>任何用 T+n 收盘数据筛选 T+n 开盘买入的规则，一律视为前视</b>。
+  </div>
+</div>
+
+<h2>2. 同口径对照（无前视）</h2>
+<div class="card">
+<div class="bars">
+  <div class="grp">
+    <i class="b-c7" style="height:60%"></i><i class="b-new" style="height:1.5%"></i>
+  </div>
+  <div class="grp">
+    <i class="b-c7" style="height:87%"></i><i class="b-new" style="height:32%"></i>
+  </div>
+  <div class="grp">
+    <i class="b-c7" style="height:9%"></i><i class="b-new" style="height:14%"></i>
+  </div>
+</div>
+<div style="display:flex;gap:24px;font-size:11px;color:var(--dim);text-align:center">
+  <span style="flex:1">07-08</span><span style="flex:1">09-10</span><span style="flex:1">07-10</span>
+</div>
+<div style="font-size:11px;color:var(--dim);margin-top:4px">
+  <span style="color:#4a90d9">■</span> C7 &nbsp;&nbsp;
+  <span style="color:#e0a340">■</span> 新池（柱高取绝对值，两段均向下）
+</div>
+
+<table style="margin-top:18px">
+  <thead><tr><th>策略</th><th>07-08</th><th>09-10</th><th>07-10</th><th>日均笔数</th><th>仓位占用</th></tr></thead>
+  <tbody>
+    <tr class="hl"><td><b>C7（涨停打板）</b></td><td class="pos"><b>+0.81%</b></td>
+        <td class="neg"><b>−1.17%</b></td><td class="neg"><b>−0.12%</b></td>
+        <td>1.06</td><td class="pos">45% 交易日</td></tr>
+    <tr><td><b>新池（三因子）</b></td><td class="pos">+0.02%</td>
+        <td class="neg">−0.43%</td><td class="neg">−0.19%</td>
+        <td class="warn">225</td><td class="neg">100% 满仓</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+扣费后，两者在 7-10 月<b>都是负的</b>。C7 略好 0.07pp/笔。<br>
+但 C7 这个数字的 95% 置信区间<b>跨过 0</b>（C15 已做 bootstrap：t=0.75），
+新池同样不显著（日级 t=−1.27）。<b>「谁更好」在统计上都站不住。</b>
+</div>
+</div>
+
+<h2>3. 它们其实是同一个病</h2>
+<div class="card">
+<table>
+  <thead><tr><th></th><th>C7 07-10 月</th><th>新池 07-08 月</th><th>新池 09-10 月</th></tr></thead>
+  <tbody>
+    <tr><td>隔夜（T+1 收 → T+2 开）</td><td class="neg">−0.96 ~ −1.09%</td>
+        <td class="neg">−0.044%</td><td class="neg">−0.049%</td></tr>
+    <tr><td>日内</td><td class="pos">+0.05 ~ +2.05%</td>
+        <td class="pos">+0.448%</td><td class="neg">−0.058%</td></tr>
+    <tr><td>净</td><td class="neg">−1.17% ~ +0.81%</td>
+        <td class="pos">+0.251%</td><td class="neg">−0.258%</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+<b>两者的钱都来自日内动量，都被隔夜吃掉。</b>差别只在量级：<br>
+· C7 日内能到 +2%，但隔夜 −1%，剩一点；9-10 月日内归零，就变成净亏。<br>
+· 新池日内只有 +0.45%，隔夜 −0.04%（因为池子分散、波动小），7-8 月小赚，9-10 月双降。<br><br>
+<b>这不是「哪个策略更好」的问题，是 A 股 T+1 强制过夜这个硬成本在两个策略上同时生效。</b>
+C15 的结论在这里第二次得到验证。
+</div>
+</div>
+
+<h2>4. 但 C7 有一个新池没有的东西</h2>
+<div class="card">
+<div class="note-box" style="margin-top:0">
+<b>不只在收益率，在「它可以不做」。</b>
+</div>
+<table>
+  <thead><tr><th>维度</th><th>C7</th><th>新池</th></tr></thead>
+  <tbody>
+    <tr><td>选股条件</td><td>涨停 + 题材 + 打分 ≥70，稀有</td>
+        <td>市值/换手/下影三个分位，宽松</td></tr>
+    <tr><td>日均标的</td><td class="pos">1.06 只</td><td class="warn">225 只</td></tr>
+    <tr><td>无信号时</td><td class="pos">自然空仓（55% 的交易日）</td>
+        <td class="neg">仍然满仓（买整个池）</td></tr>
+    <tr><td>风险暴露</td><td class="pos">可控，可选择性放弃</td><td class="neg">等同于持有大半个市场</td></tr>
+    <tr><td>容量</td><td class="warn">小（每日 1 只，资金容量有限）</td>
+        <td class="pos">大（分散 225 只）</td></tr>
+    <tr><td>可解释性</td><td class="pos">强（有题材、有逻辑链）</td>
+        <td class="warn">弱（纯统计筛选）</td></tr>
+  </tbody>
+</table>
+<div class="note-box">
+新池 OOS 净值 0.8467 相对全市场 0.7814 有 <b>+8.4%</b> 的相对优势——
+但这是「满仓扛跌」换来的相对值。C7 的 <b>−0.12%</b> 是「大部分时间不参与」换来的绝对值。
+<b>在下跌市里，空仓本身就是一个 alpha。</b>
+</div>
+</div>
+
+<h2>5. 结论</h2>
+<div class="verdict">
+  <ul>
+    <li><b>收益率上：C7 略优</b>（−0.12% vs −0.19%），但差距 0.07pp，且都不显著。</li>
+    <li><b>风险结构上：C7 明显更优</b>（1 笔/日 vs 225 笔/日，可空仓）。</li>
+    <li><b>容量上：新池更优</b>（能承载大资金，C7 不能）。</li>
+    <li><b>真正该做的不是二选一</b>：新池的价值是「收敛可交易范围」，C7 的价值是「有明确信号才动手」。
+        两者结合——<b>用新池当准入池，再用 C7 那类高选择性信号触发</b>——
+        才是这一整轮研究指向的方向。</li>
+    <li><b>但都还不能上线</b>：7-10 月 87 笔 vs 38 日，样本都不够。
+        C7 需要等 11-12 月，新池也需要。当前任何「谁更好」的结论都只有方向意义。</li>
+  </ul>
+  <b>一句话：如果只能选一个保留，保留 C7，因为它的资金占用方式更安全；但新池的三因子不要丢，它是准入闸门的原料。</b>
+</div>
+
+<h2>6. 本轮纠错清单（已加入流程）</h2>
+<div class="card">
+<table>
+  <thead><tr><th>#</th><th>错误</th><th>检查动作</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>用 T+n 收盘数据筛 T+n 开盘买入</td>
+        <td>写任何回测前，先列出每个筛选条件的信息时点</td></tr>
+    <tr><td>2</td><td>用 validation.csv 的 <code>buy_triggered</code> 直接回放</td>
+        <td><code>buy_triggered</code> 是结果字段，不能当信号用</td></tr>
+    <tr><td>3</td><td>不同持仓期/笔数的策略直接比收益</td>
+        <td>比之前先统一：费率、持仓天数、买入时点</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="foot">
+  产物：<code>c20t_t2_compare.csv</code>（含错误版本，留痕）· <code>c20u_final_compare.csv</code><br>
+  脚本：<code>c20r_compare.py</code> · <code>c20s_c7_vs_new.py</code> ·
+  <code>c20t_t2_compare.py</code> · <code>c20u_final_compare.py</code><br>
+  C7 数字来源：<code>runs/c15_window_C7_1030/风格漂移复核-20261103.md</code><br>
+  日志：<code>reports/rounds_log.md</code> 第 27 节 ｜ 2026-11-04
+</div>
+
+</div>
+</body>
+</html>

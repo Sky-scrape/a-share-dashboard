@@ -15,10 +15,10 @@ RAW = BASE / "raw"
 # ---- 窗口日期唯一来源：scripts/export_local.py 与 scripts/fetch_pools.py 由此派生 ----
 WIN_START = "2025-11-03"   # warm-up start for pools/industries (= fetch_pools.START)
 SEL_START = "2026-01-02"   # first selection day (first 2026 trade day)
-SEL_END = "2026-10-14"     # last selectable trade day T（导出上界 T+1 不在此硬编码，
+SEL_END = "2026-10-30"     # last selectable trade day T（导出上界 T+1 不在此硬编码，
                            # export_local 从本地库现取 SEL_END 之后首个交易日）
-                           # 2026-10-16 C15 复审外推：09-17 → 10-14（本地库日线至 10-15，
-                           # 令 T+1=10-15 可得；10-15 池待 10-16 收盘后日线才可验证）
+                           # 外推史：2026-10-16 C15 复审 09-17 → 10-14（本地库日线至 10-15）；
+                           # 2026-11-03 风格漂移复核 10-14 → 10-30（10-31 周六，T+1=11-02）。
 
 
 def load_daily() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -233,8 +233,13 @@ class Store:
         # quick lookups
         self.pool_by_date = {d: g for d, g in self.pool.groupby("date")}
         self.dt_by_date = {d: g for d, g in self.dt.groupby("date")} if not self.dt.empty else {}
-        self.raw_idx = {(r.thscode, r.date): r for r in self.raw.itertuples()}
-        self.qfq_idx = {(r.thscode, r.date): r for r in self.qfq.itertuples()}
+        # 点查索引惰性构建（2026-11-03）：每个索引 275 万行 namedtuple 常驻约 1.4GB，
+        # 两个一起建在 ≤4GB 的进程里直接 MemoryError（build_store 曾因此跑不起来）。
+        # 引擎主链路（select/validate/precompute）走的是 DataFrame 切片，**从不访问**
+        # 这两个索引，只有 scripts/exp_hold_sizing.py 用 raw_idx/qfq_idx 点查——
+        # 改成首次访问才构建，语义与命中内容完全不变。
+        self._raw_idx = None
+        self._qfq_idx = None
         # primary industry per stock: finest level first
         if not self.membership.empty:
             m = self.membership.sort_values(["thscode", "level"])
@@ -243,6 +248,20 @@ class Store:
             self.prim_ind = pd.DataFrame()
         self.date_set = set(self.trade_dates)
         self.first_date = self.raw.groupby("thscode")["date"].min().to_dict()
+
+    @property
+    def raw_idx(self):
+        """{(thscode, date): row}，首次访问时构建（见 __init__ 注释）。"""
+        if self._raw_idx is None:
+            self._raw_idx = {(r.thscode, r.date): r for r in self.raw.itertuples()}
+        return self._raw_idx
+
+    @property
+    def qfq_idx(self):
+        """{(thscode, date): row}，首次访问时构建（见 __init__ 注释）。"""
+        if self._qfq_idx is None:
+            self._qfq_idx = {(r.thscode, r.date): r for r in self.qfq.itertuples()}
+        return self._qfq_idx
 
     def next_trade_date(self, d: str) -> str | None:
         ts = self.trade_dates
