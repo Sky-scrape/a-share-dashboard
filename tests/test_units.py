@@ -635,6 +635,102 @@ def test_oos_state_mixed_rules_and_cum():
     assert "_wins" not in o["per_day"][0]              # 内部累加字段不下发
 
 
+# ---------------- 可成交口径（2026-11-03 修测量 P0） ----------------
+
+def _exec_pick(close, open_pct, net=None, buckets=(), group="lu", rules="c7"):
+    """台账行：net 非 None 视为成交（带 exec_t2），否则未成交/未补算。"""
+    p = {"close": close, "open": open_pct, "group": group, "rules": rules,
+         "in_window": net is not None, "buckets": list(buckets)}
+    if net is not None:
+        p["exec_t2"] = {"net": net, "note": "T+2 开盘离场"}
+    return p
+
+
+def test_exec_ret_never_falls_back_to_t1():
+    """学习目标只认制度口径：未补算/未成交一律 None，绝不拿 T+1 收盘顶替。
+
+    C15 实测隔夜漂移吃掉 2.16pp，用 close 当目标等于把亏损学成盈利。"""
+    f = speculate._exec_ret
+    assert f(_exec_pick(3.0, 1.0, net=-2.5)) == (-2.5, "ok")
+    assert f(_exec_pick(9.0, 8.0))[0] is None             # 高开超窗：无 exec_t2
+    assert f(_exec_pick(9.0, 8.0))[1] == "T+2未补算"
+    assert f({"close": 1.0, "exec_t2": {"net": None, "note": "开盘超窗放弃"}})[1] == "开盘超窗放弃"
+    assert f({"close": None})[0] is None
+
+
+def test_optimizer_learns_only_filled_samples(monkeypatch):
+    """分桶均值只取成交样本：买不到的涨票不能再把烂桶洗白。
+
+    构造 8 笔成交（同桶 ladder_1，净 -2.0%）+ 5 笔高开买不到（收盘 +9%）：
+    旧口径 13 笔均 close 被高开票拉到接近 0 → 不惩罚；新口径 n=8、均 -2.0 → 惩罚 4。
+    """
+    import spec_validate
+    picks = ([_exec_pick(-1.0, 1.0, net=-2.0, buckets=["ladder_1"])] * 8
+             + [_exec_pick(9.0, 9.5, buckets=["ladder_1"])] * 5)
+    track = {"validations": {"20261030": {"rules": "c7", "picks": picks}}}
+    monkeypatch.setattr(spec_validate, "_load_track", lambda: track)
+    st = spec_validate._optimizer_state("20261103")
+    assert st["samples"]["lu"] == 8                      # 只数成交样本
+    assert st["n_cand"]["lu"] == 13                      # 候选数另计
+    assert st["exec_rate"]["lu"] == round(8 / 13 * 100, 1)
+    assert st["bucket_stats"]["lu"]["ladder_1"]["n"] == 8
+    assert st["bucket_stats"]["lu"]["ladder_1"]["avg"] == -2.0
+    assert st["bucket_stats"]["lu"]["ladder_1"]["avg_close"] == round(
+        (8 * -1.0 + 5 * 9.0) / 13, 2)                    # 旧口径留痕供对照
+    assert st["penalties"]["lu"]["ladder_1"] == 4        # 新口径下该桶受罚
+
+
+def test_optimizer_gate_not_loosened_by_new_metric(monkeypatch):
+    """换口径不放宽门槛样本要求：18 笔成交 < 20 → 门槛保持基线，不因净益为负而抬起。"""
+    import spec_validate
+    picks = [_exec_pick(-1.0, 1.0, net=-3.0, buckets=["ladder_1"])] * 18
+    track = {"validations": {"20261030": {"rules": "c7", "picks": picks}}}
+    monkeypatch.setattr(spec_validate, "_load_track", lambda: track)
+    st = spec_validate._optimizer_state("20261103")
+    assert st["samples"]["lu"] == 18
+    assert st["min_score"]["lu"] == 70.0                 # 未达 20 笔，不动作
+
+
+def test_oos_exec_state_excludes_unfilled():
+    rows = ([_exec_pick(1.0, 0.5, net=2.0), _exec_pick(2.0, 1.0, net=-1.0),
+             _exec_pick(-3.0, 0.2, net=0.5)]
+            + [_exec_pick(9.0, 8.0)] * 3                 # 买不到
+            + [_exec_pick(-5.0, -4.0)] * 2)              # 低开超窗
+    d = speculate._oos_exec_state(rows)
+    assert d["n"] == 3 and d["n_all"] == 8
+    assert d["fill_rate"] == 37.5
+    assert d["pnl_avg"] == round((2.0 - 1.0 + 0.5) / 3, 3)
+    assert d["win_rate"] == round(2 / 3 * 100, 1)
+    assert d["verdict"] == "accumulating"                # 3 < 8 笔，不下结论
+
+
+def test_oos_exec_verdict_thresholds():
+    f = speculate._oos_exec_verdict
+    assert f(-0.68, 24) == "warn"        # <=0 → 不赚钱就复核
+    assert f(-1.2, 24) == "severe"
+    assert f(0.9, 24) == "ok"            # 正收益即 ok（基线 0.72 只作展示）
+    assert f(-3.0, 7) == "accumulating"  # 样本不足不判
+    assert f(None, 0) == "empty"
+
+
+def test_oos_state_carries_exec_parallel_block():
+    """样本外追踪必须同时下发冻结口径与可成交口径（两者互不替代）。"""
+    track = {"validations": {
+        "20260907": {"rules": "c7", "picks": [_exec_pick(2.0, 1.0, net=1.5),
+                                              _exec_pick(9.0, 8.5)]},
+    }}
+    o = speculate._oos_state(track)
+    assert o["verdict"] == "ok"          # 冻结口径照旧：n=2（含买不到的票）均 +5.5%
+    assert o["exec"]["n"] == 1 and o["exec"]["n_all"] == 2
+    assert o["exec"]["pnl_avg"] == 1.5   # 只有成交的那笔进可成交口径
+
+
+def test_oos_exec_baseline_single_source():
+    """可成交口径基线与 C15 复审全窗口同值（217 笔成交 / 净均 +0.720%）。"""
+    assert speculate._OOS_EXEC_BASELINE["pnl_avg"] == 0.720
+    assert speculate._OOS_EXEC_MIN_N == 8
+
+
 def test_observation_state_transitions():
     # concept_cold 到线且均次 ≤-0.4 → escalate；strong_concept 未到线 → observing
     rows = ([{"close": -0.5, "buckets": ["concept_cold"], "strong_concept": None}] * 30

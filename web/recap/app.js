@@ -1165,7 +1165,17 @@ function renderPool() {
         + (s.strong_sector_rate != null ? ' · 强于板块' + s.strong_sector_rate + '%' : '') + '</span>') : "";
       h += '<div style="margin:4px 0 8px;font-size:12px;color:var(--text-2)"><span style="font-family:var(--mono)">' + esc(va.date || "-") + '</span> 选出的标的今日表现：'
         + chip("涨停组", st.lu) + chip("低吸组", st.nlu)
-        + (st.overall && st.overall.valid ? ('<span class="sp-badge">买点触发率 ' + st.overall.buy_trigger_rate + '%</span>') : "") + '</div>';
+        + (st.overall && st.overall.valid ? ('<span class="sp-badge">买点触发率 ' + st.overall.buy_trigger_rate + '%</span>') : "")
+        + (function () {
+          // 2026-11-03 修测量：开盘超窗 = 买点窗外的票，一分钱买不到，
+          // 却全额计入上面的「胜率/均次日」——必须同日并列显示，否则单个数字必误导。
+          const ps = va.picks || [], ok = ps.filter(function (x) { return x.close != null; });
+          if (!ok.length) return "";
+          const iw = ok.filter(function (x) { return x.in_window; }).length;
+          const hi = ok.filter(function (x) { return x.in_window === false && x.open > 0; }).length;
+          return '<span class="sp-badge" style="color:' + (iw ? "var(--text-2)" : "var(--gold)") + '">可成交 '
+            + iw + '/' + ok.length + (hi ? '（高开超窗 ' + hi + '）' : '') + '</span>';
+        })() + '</div>';
       if (va.note) h += '<div style="margin:0 0 6px;font-size:12px;color:var(--gold)">⚠ ' + esc(va.note) + '</div>';
       const ex = st.exec;
       const exg = (k, lbl) => { const e = ex && ex[k];
@@ -1221,7 +1231,10 @@ function renderPool() {
       h += '<div style="margin-top:6px;font-size:13px;color:var(--text-2)">🔄 自我优化器 <b style="color:var(--gold)">' + esc(op.version || "-") + '</b>'
         + ' · 入选门槛 涨停 ' + esc((op.min_score || {}).lu ?? "-") + ' / 低吸 ' + esc((op.min_score || {}).nlu ?? "-")
         + ' · 生效惩罚 ' + np + ' 项'
-        + ' · 滚动窗口 ' + esc(op.window_days ?? 45) + ' 日（样本 涨停 ' + esc((op.samples || {}).lu ?? 0) + ' / 低吸 ' + esc((op.samples || {}).nlu ?? 0) + '）'
+        + ' · 滚动窗口 ' + esc(op.window_days ?? 45) + ' 日（成交样本 涨停 ' + esc((op.samples || {}).lu ?? 0) + ' / 低吸 ' + esc((op.samples || {}).nlu ?? 0)
+        + ((op.n_cand && (op.n_cand.lu != null)) ? '，候选 ' + esc(op.n_cand.lu) + ' / ' + esc(op.n_cand.nlu) : '') + '）'
+        + (op.exec_rate && op.exec_rate.lu != null ? ' · 成交率 涨停 ' + esc(op.exec_rate.lu) + '% / 低吸 ' + esc(op.exec_rate.nlu) + '%' : '')
+        + (op.learn_metric ? '<br>学习目标：' + esc(op.learn_metric) : '')
         + '<br>' + esc(op.note || "") + (op.error ? ' <span class="sp-badge sev">' + esc(op.error) + '</span>' : '') + '</div>';
       // 样本外追踪（C7 固化后 rules=c7 验证闭环）+ 到期复审 + 观察项到期
       const oos = op.oos;
@@ -1229,6 +1242,20 @@ function renderPool() {
         const vd = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], empty: ["var(--text-2)", "待积累"] }[oos.verdict] || ["var(--text-2)", esc(oos.verdict)];
         h += '<div style="margin-top:8px;font-size:13px">📡 <b>样本外追踪</b>'
           + '（基线=调参区间 ' + esc(oos.baseline.win_rate) + '% / +' + (+oos.baseline.avg_close).toFixed(2) + '%）：<b style="color:' + vd[0] + '">' + vd[1] + '</b>';
+        // 可成交口径（2026-11-03 修测量）：冻结口径的分母含开盘超窗、买不到的票，
+        // 两段并列展示；账户实际发生的是这一段。
+        const _ex = oos.exec;
+        if (_ex && _ex.n) {
+          const ev = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], accumulating: ["var(--text-2)", "样本积累中"], empty: ["var(--text-2)", "无成交"] }[_ex.verdict] || ["var(--text-2)", esc(_ex.verdict)];
+          const col = _ex.pnl_avg >= 0 ? "var(--up)" : "var(--down)";
+          h += '<div style="font-size:12px;margin-top:3px">💸 <b>可成交口径</b>（决策看这一行）：成交 <b>' + _ex.n + '</b>/' + _ex.n_all
+            + '（成交率 ' + esc(_ex.fill_rate) + '%）· 净均 <b style="color:' + col + '">' + f1(_ex.pnl_avg) + '</b>'
+            + ' · 收红 ' + esc(_ex.win_rate ?? "-") + '% · 判定 <b style="color:' + ev[0] + '">' + ev[1] + '</b>'
+            + '<div style="color:var(--text-2)">　对比基线 +' + (+_ex.baseline.pnl_avg).toFixed(2) + '%（' + esc(_ex.baseline.source)
+            + '）；成交少于 ' + esc(_ex.min_n) + ' 笔不下结论</div></div>';
+        } else if (_ex) {
+          h += '<div style="font-size:12px;margin-top:3px;color:var(--text-2)">💸 可成交口径：尚无成交样本（候选 ' + esc(_ex.n_all ?? 0) + ' 笔全部开盘超窗，或 T+2 未补算）</div>';
+        }
         const dr = oos.drift;
         if (dr && dr.level && dr.level !== "accumulating" && dr.n > 0) {
           const dl = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"] }[dr.level] || ["var(--text-2)", esc(dr.level)];

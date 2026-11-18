@@ -487,7 +487,22 @@ def record_validation(date8, val):
 
 
 def _optimizer_state(date8):
-    """滚动窗口（仅 C7 口径样本）→ 有界旋钮。纯函数：同输入必同输出。"""
+    """滚动窗口（仅 C7 口径样本）→ 有界旋钮。纯函数：同输入必同输出。
+
+    **学习目标 = 可成交口径（2026-11-03 修测量，P0）**：此前用 `close`（T+1 收盘
+    vs T 收盘）作分桶均值与门槛判据，分母含开盘超窗、永远买不到的票。生产台账
+    实测的后果：`lu.ladder_1`（最大桶 n=22）avg_close +3.95% 被判定为最强、永不受罚，
+    实际成交后 T+2 净益 **-0.74%**；`lu.theme_2` 被高开票撑成 +2.11%，实际 **-3.58%**
+    ——最烂的桶因「涨得最多的票买不到」而逃过惩罚。现改为：
+
+    - 分母只取**成交样本**（`_exec_ret` 非空），未成交/未补算的票不进学习；
+    - 分桶均值用制度口径净益（含费、T+2 离场），阈值沿用 -0.4% / -1.0%；
+    - `samples` 语义随之变为「成交样本数」，另给 `n_cand` / `exec_rate` 暴露
+      选股与执行的脱节程度（原 `samples` 的候选计数保留在 n_cand）。
+
+    门槛调整仍要求 ≥`_OPT_MINSCORE_MIN_N` 笔成交样本，**不因换口径而放宽**：
+    宁可样本不足显示「积累中」，也不让 8 笔噪声去抬门槛（C15 §4 明确禁止直接抬
+    minscore，缩池假象风险最高）。"""
     track = _load_track()
     iso_day = _dt.datetime.strptime(_date_iso(date8), "%Y-%m-%d")
     cutoff = iso_day - _dt.timedelta(days=_OPT_WINDOW_DAYS)
@@ -505,26 +520,42 @@ def _optimizer_state(date8):
             if p.get("rules") != "c7" or p.get("close") is None:
                 continue
             rows.append(p)
-    state = {"min_score": {}, "penalties": {}, "samples": {}, "bucket_stats": {}}
+    state = {"min_score": {}, "penalties": {}, "samples": {}, "n_cand": {},
+             "exec_rate": {}, "bucket_stats": {}}
     for grp in ("lu", "nlu"):
         g = [p for p in rows if p.get("group") == grp]
         lo, hi = _OPT_MIN_SCORE[grp]
-        cr = [p["close"] for p in g]
+        # 可成交样本：只有这些笔产生了真实交易，才配影响旋钮
+        learned = [(p, _exec_ret(p)[0]) for p in g]
+        learned = [(p, r) for p, r in learned if r is not None]
+        er = [r for _p, r in learned]
         ms = float(_OPT_BASELINE_MINSCORE[grp])   # 无证据时保持 C7 固化基线，不自动放宽
-        if len(cr) >= _OPT_MINSCORE_MIN_N and sum(cr) / len(cr) < 0:
-            # 近期均值为负 → 抬门槛过滤边缘分（幅度与负程度挂钩，封顶 hi）
-            ms = min(hi, ms + min(10.0, math.ceil(abs(sum(cr) / len(cr)) * 2)))
+        if len(er) >= _OPT_MINSCORE_MIN_N and sum(er) / len(er) < 0:
+            # 近期净益均值为负 → 抬门槛过滤边缘分（幅度与负程度挂钩，封顶 hi）
+            ms = min(hi, ms + min(10.0, math.ceil(abs(sum(er) / len(er)) * 2)))
         state["min_score"][grp] = ms
-        state["samples"][grp] = len(g)
+        state["samples"][grp] = len(er)
+        state["n_cand"][grp] = len(g)
+        state["exec_rate"][grp] = (round(100.0 * len(er) / len(g), 1) if g else None)
         buckets = {}
-        for p in g:
+        for p in g:                       # 全部候选（旧口径口径留存，供回溯对照）
             for bk in (p.get("buckets") or []):
-                buckets.setdefault(bk, []).append(p["close"])
+                buckets.setdefault(bk, {"all": [], "fill": []})["all"].append(p)
+        for p, r in learned:              # 仅成交样本参与判定
+            for bk in (p.get("buckets") or []):
+                if bk in buckets:
+                    buckets[bk]["fill"].append((p, r))
         pens, bstat = {}, {}
-        for bk, xs in sorted(buckets.items()):
-            avg = sum(xs) / len(xs)
-            bstat[bk] = {"n": len(xs), "avg": round(avg, 2)}
-            if len(xs) >= _OPT_BUCKET_MIN_N:
+        for bk, bx in sorted(buckets.items()):
+            vals = [r for _p, r in bx["fill"]]
+            avg = sum(vals) / len(vals) if vals else None
+            bstat[bk] = {"n": len(vals), "n_all": len(bx["all"]),
+                         "avg": (round(avg, 2) if avg is not None else None),
+                         # avg_close 保留旧口径（全部候选的 T+1 收盘均值），
+                         # 供回溯对比「旧指标当时怎么说这个桶」
+                         "avg_close": round(
+                             sum(p["close"] for p in bx["all"]) / len(bx["all"]), 2)}
+            if avg is not None and len(vals) >= _OPT_BUCKET_MIN_N:
                 if avg <= -1.0:
                     pens[bk] = 4
                 elif avg <= -0.4:
@@ -558,6 +589,28 @@ _OOS_VERDICT_TEXT = {
     "severe": "严重衰减：按《自动选股与策略自迭代系统.md》重开完整迭代",
 }
 
+# ---- 可成交口径（2026-11-03「修测量」第 2 步，P0）----
+# 病灶：上面那套冻结判定用 `close`（T+1 收盘 vs T 收盘）做分母，**包含开盘超窗、
+# 根本买不到**的票。生产台账实测（2026-09-03~11-03，C7 有效 64 笔）：
+#   全样本   收盘胜率 54.7% / 均 +2.28%（看板展示的就是这个）
+#   可成交   仅 26 笔（41%），制度口径 T+2 净益 -0.68%、胜率 45.8%
+#   30 个验证日里 8 天（27%）一只都没成交
+# 指标被「买不到的涨票」撑住 → 优化器学错目标 → 看板持续判 ok。这是度量事故，不是
+# 策略事故。故新增**平行**判定：冻结口径（_OOS_BASELINE / _oos_verdict）原样保留、
+# 继续下发，可成交口径并列展示，两者互不替代——单一数字都不足以支撑决策。
+_OOS_EXEC_BASELINE = {
+    # C15 复审全窗口 2026-01~09 / 217 笔成交 / 制度口径 T+2 开盘离场 / 含费 0.15%：
+    # 净均 +0.720%（strategy-iter/runs/c15_oos_review/report.md §3.2 表 B 行）。
+    "pnl_avg": 0.720,
+    "source": "C15 全窗口 217 笔成交 · T+2 开盘离场 · 含费",
+}
+# 阈值性质说明：以下三条是 2026-11-03 新立，**尚未经样本外验证**（生产侧才有 24 笔
+# 成交样本）。刻意取得保守——只抓「明显不赚钱」，不做精细分档；攒够样本后按
+# 《自动选股与策略自迭代系统.md》预注册流程重定，不得就地手调。
+_OOS_EXEC_CRIT_PNL = -1.0   # 净均 ≤ -1.0% → severe
+_OOS_EXEC_WARN_PNL = 0.0    # 净均 ≤ 0 → warn（不赚钱就值得复核，相对基线无意义）
+_OOS_EXEC_MIN_N = 8         # 少于 8 笔成交不下结论（生产日均成交约 0.9 笔）
+
 
 def _oos_verdict(win_rate, avg_close, n):
     """累积样本外统计 → 判定（纯函数）。n<=0 返回 empty。"""
@@ -569,6 +622,75 @@ def _oos_verdict(win_rate, avg_close, n):
     if drop >= _OOS_WARN_WIN_DROP or avg_close < _OOS_WARN_MEAN:
         return "warn"
     return "ok"
+
+
+def _exec_ret(p):
+    """学习目标/可成交口径的唯一取数口：制度口径净益（%），只对**真正成交**的票有值。
+
+    返回 (net|None, 原因)：
+
+    - `exec_t2.net` 已补算 → 用它。该字段由 `spec_exec_t2.entry_of` 判定买点窗与
+      限价触及后算出（T+1 买 → T+1 收盘持有 → T+2 开盘卖 → 双边费），是**唯一
+      可执行的收益口径**。
+    - 未补算（T+2 数据未到 / 当日新记录）→ None。**绝不退回 T+1 口径顶替**：
+      C15 复审实测隔夜漂移（T+1 收盘 → T+2 开盘）在研究窗就吃掉 2.16pp、
+      样本外 2.06pp（report.md §3.3），拿它当学习目标等于把亏损学成盈利。
+    - 未成交（开盘超窗 / 限价未触及 / 数据不足）→ None。这些票不产生交易，
+      不该进优化器，也不该进胜率分母。
+    """
+    if p.get("close") is None:
+        return None, "无行情"
+    e = p.get("exec_t2")
+    if not isinstance(e, dict):
+        return None, "T+2未补算"
+    net = e.get("net")
+    if net is None:
+        return None, str(e.get("note") or "未成交")
+    try:
+        return float(net), "ok"
+    except (TypeError, ValueError):
+        return None, "净益非法"
+
+
+def _oos_exec_verdict(pnl_avg, n):
+    """可成交口径判定（纯函数）：口径见 _OOS_EXEC_* 常量。"""
+    if n <= 0:
+        return "empty"
+    if n < _OOS_EXEC_MIN_N:
+        return "accumulating"
+    if pnl_avg is not None and pnl_avg <= _OOS_EXEC_CRIT_PNL:
+        return "severe"
+    if pnl_avg is not None and pnl_avg <= _OOS_EXEC_WARN_PNL:
+        return "warn"
+    return "ok"
+
+
+def _oos_exec_state(rows):
+    """样本外**可成交口径**汇总（纯函数）：只有成交的票进分母。
+
+    与冻结口径（_oos_state 主段）并列下发，不替代它。字段刻意与主段对齐
+    （n / win_rate / avg）以便前端同构展示，另加 n_fill / fill_rate 暴露
+    「选股与执行脱节」的程度——这是本口径存在的主要理由。
+    """
+    got = []
+    for p in rows:
+        r, _why = _exec_ret(p)
+        if r is not None:
+            got.append(r)
+    n = len(got)
+    n_all = len(rows)
+    pnl_avg = round(sum(got) / n, 3) if n else None
+    return {
+        "n": n,                                  # 成交笔数（判定分母）
+        "n_all": n_all,                          # 候选笔数
+        "fill_rate": round(100.0 * n / n_all, 1) if n_all else None,
+        "pnl_avg": pnl_avg,
+        "win_rate": (round(100.0 * sum(1 for v in got if v > 0) / n, 1) if n else None),
+        "baseline": dict(_OOS_EXEC_BASELINE),
+        "verdict": _oos_exec_verdict(pnl_avg, n),
+        "min_n": _OOS_EXEC_MIN_N,
+        "thresholds": {"severe_pnl": _OOS_EXEC_CRIT_PNL, "warn_pnl": _OOS_EXEC_WARN_PNL},
+    }
 
 
 def _c7_rows(track):
@@ -652,6 +774,9 @@ def _oos_state(track):
                                     if sc else None),
             "baseline": dict(_OOS_BASELINE),
             "verdict": _oos_verdict(win_rate or 0.0, avg_close or 0.0, n),
+            # 可成交口径（2026-11-03 新增，平行判定）：上面的 verdict 是冻结口径，
+            # 分母含买不到的票；这一段才是账户实际会发生的事，两者并列展示。
+            "exec": _oos_exec_state(rows_all),
             "drift": drift,
             "review_every": _OOS_REVIEW_EVERY,
             "next_review_in": (_OOS_REVIEW_EVERY - (days % _OOS_REVIEW_EVERY)) if days else None,
@@ -781,13 +906,17 @@ def update_optimizer(date8, persist=True):
     out = {"version": ver, "updated": str(date8),
            "min_score": state["min_score"], "penalties": state["penalties"],
            "bucket_stats": state["bucket_stats"], "samples": state["samples"],
+           "n_cand": state["n_cand"], "exec_rate": state["exec_rate"],
+           "learn_metric": "制度口径净益（可成交样本，含费）",
            "window_days": _OPT_WINDOW_DAYS, "changes": changed,
            "oos": oos, "observations": obs,
            "note": ("今日调整： " + "；".join(changed)) if changed else
-                   ("窗口内无需调整（涨停组 n=%d / 低吸组 n=%d）"
+                   ("窗口内无需调整（成交样本 涨停组 n=%d / 低吸组 n=%d）"
                     % (state["samples"]["lu"], state["samples"]["nlu"])) if enough else
-                   ("窗口样本积累中（涨停组 n=%d / 低吸组 n=%d），按 C7 固化基线口径"
-                    % (state["samples"]["lu"], state["samples"]["nlu"]))}
+                   ("窗口成交样本积累中（涨停组 n=%d / 低吸组 n=%d，候选 %d / %d），"
+                    "按 C7 固化基线口径"
+                    % (state["samples"]["lu"], state["samples"]["nlu"],
+                       state["n_cand"]["lu"], state["n_cand"]["nlu"]))}
     if persist:
         fsutil.save_json_atomic(POOL_OPT, {
             "version": ver, "updated": str(date8),

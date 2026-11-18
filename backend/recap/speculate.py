@@ -110,9 +110,11 @@ from spec_validate import (  # noqa: E402
     _OBS_STRONG_CONCEPT_MIN, _OBS_STRONG_CONCEPT_N,
     _OOS_BASELINE, _OOS_CRIT_WIN_DROP, _OOS_REVIEW_EVERY,
     _OOS_VERDICT_TEXT, _OOS_WARN_MEAN, _OOS_WARN_WIN_DROP,
+    _OOS_EXEC_BASELINE, _OOS_EXEC_MIN_N,
     POOL_OPT, POOL_TRACK,
-    _c7_rows, _exec_pnl_realtime, _load_opt, _load_track,
-    _observation_state, _oos_state, _oos_verdict, _optimizer_state,
+    _c7_rows, _exec_pnl_realtime, _exec_ret, _load_opt, _load_track,
+    _observation_state, _oos_exec_state, _oos_exec_verdict, _oos_state, _oos_verdict,
+    _optimizer_state,
     _pick_buckets, _save_track, _val_attribute, _val_exec_stats,
     _val_stats, record_validation, update_optimizer, validate_prev_pool)
 
