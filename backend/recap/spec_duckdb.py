@@ -281,3 +281,68 @@ def _record_layer_status(date8, layer_n, last_bar, fallback, db_error, note):
 def layer_status():
     """最近一次 ohlc_rets 的研究库层状态（验证 note / 健康聚合读取）。"""
     return dict(_LAST_STATUS)
+
+
+def refresh_layer_status(date8):
+    """同步完成后主动重探日线层并落状态（不依赖随后的 ohlc_rets 调用）。
+
+    背景（2026-11-18 实例）：17:05 抓取链内的 T+2 补算先于 data sync 落盘，
+    探测到 T 日整层缺失并写 ok=False；若当日冰点无票（次日终版链没有验证
+    对象），就不会再调用 ohlc_rets，假告警一直停在 .status/duckdb.json。
+    data sync 之后调用本函数，把状态刷新为同步后的真实情况（同步失败则如实
+    告警）。必须重新探测——进程内 _PROBE_CACHE 可能存着同步前的旧结果。
+    """
+    _PROBE_CACHE.pop(str(date8), None)
+    layer_n, last_bar = _layer_probe(date8)
+    db_error = None if layer_n is not None else "probe-failed"
+    if layer_n is None:
+        note = "本地研究库探测失败"
+    elif layer_n == 0:
+        note = f"本地研究库缺 {last_bar or '-'} 之后的日线层"
+    else:
+        note = "同步后自检：验证日日线层在库"
+    _record_layer_status(date8, layer_n, last_bar, None, db_error, note)
+    return layer_status()
+
+
+def _latest_trade_date8(include_today, today=None):
+    """最近 A 股交易日的 8 位键；include_today=False 时严格早于今天。
+
+    自检目标日：抓取链（17:05）取「今天若是交易日则今天」，终版链（04:05）
+    取「今天之前最近交易日」（链要结算的那天）。日历缺失返回 None。
+    """
+    import us_market  # noqa: PLC0415 - 仅自检路径需要，避免模块导入期拉日历
+    today = today or _dt.date.today().isoformat()
+    dates = [d for d in us_market.load_ashare_dates()
+             if (d <= today if include_today else d < today)]
+    return dates[-1].replace("-", "") if dates else None
+
+
+def main(argv=None):
+    """CLI：同步后自检（17:05 抓取链 / 04:05 终版链）或手工探测指定日。"""
+    import argparse  # noqa: PLC0415 - CLI 专用，不让模块导入多背一个依赖
+    ap = argparse.ArgumentParser(description="研究库日线层探测（同步后自检）")
+    ap.add_argument("--after-fetch", action="store_true",
+                    help="17:05 抓取链：今天若是交易日取今天，否则取此前最近交易日")
+    ap.add_argument("--after-sync", action="store_true",
+                    help="04:05 终版链：取今天之前最近一个 A 股交易日")
+    ap.add_argument("--date", help="8 位日期（手工探测指定日）")
+    args = ap.parse_args(argv)
+    if args.date:
+        date8 = args.date
+    elif args.after_fetch:
+        date8 = _latest_trade_date8(include_today=True)
+    elif args.after_sync:
+        date8 = _latest_trade_date8(include_today=False)
+    else:
+        ap.error("需要 --after-fetch / --after-sync / --date 之一")
+    if not date8:
+        print("交易日历缺失，跳过研究库日线层探测")
+        return 1
+    st = refresh_layer_status(date8)
+    print(json.dumps(st, ensure_ascii=False))
+    return 0 if st.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

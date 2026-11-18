@@ -1059,6 +1059,70 @@ def test_ohlc_rets_healthy_day_no_probe_no_alarm(monkeypatch, tmp_path):
     assert st["ok"] is True and st["last_bar"] == "2026-09-14" and st["fallback"] is None
 
 
+def test_refresh_layer_status_after_sync_overrides_old_probe(monkeypatch, tmp_path):
+    # 同步后自检：必须绕开同步前的进程内探测缓存，按新结果覆盖状态文件
+    # （2026-11-18 实例：17:05 预演写 ok=False，冰点无票的次日不再调用 ohlc_rets）
+    import json as _json
+    import spec_duckdb
+
+    spec_duckdb._PROBE_CACHE.clear()
+    spec_duckdb._PROBE_CACHE["20261117"] = (0, "2026-11-16")   # 同步前的旧探测
+    try:
+        monkeypatch.setattr(spec_duckdb, "_db_export",
+                            lambda sql, tag: [{"n": 5573, "last_bar": "2026-11-17"}])
+        monkeypatch.setattr(spec_duckdb, "DUCKDB_STATUS", str(tmp_path / "duckdb.json"))
+        st = spec_duckdb.refresh_layer_status("20261117")
+        assert st["ok"] is True and st["layer_n"] == 5573
+        assert st["last_bar"] == "2026-11-17" and st["fallback"] is None
+        on_disk = _json.loads((tmp_path / "duckdb.json").read_text(encoding="utf-8"))
+        assert on_disk["ok"] is True and on_disk["probed"] == "20261117"
+        assert "同步后" in on_disk["note"]
+    finally:
+        spec_duckdb._PROBE_CACHE.clear()
+
+
+def test_refresh_layer_status_missing_layer_and_probe_failure(monkeypatch, tmp_path):
+    # 同步失败/上游晚发布：状态必须如实告警（不能把缺层洗成 ok）
+    import json as _json
+    import spec_duckdb
+
+    spec_duckdb._PROBE_CACHE.clear()
+    try:
+        monkeypatch.setattr(spec_duckdb, "_db_export",
+                            lambda sql, tag: [{"n": 0, "last_bar": "2026-11-16"}])
+        monkeypatch.setattr(spec_duckdb, "DUCKDB_STATUS", str(tmp_path / "duckdb.json"))
+        st = spec_duckdb.refresh_layer_status("20261117")
+        assert st["ok"] is False and st["layer_n"] == 0
+        assert st["note"] == "本地研究库缺 2026-11-16 之后的日线层"
+
+        def boom(sql, tag):
+            raise RuntimeError("cli down")
+
+        monkeypatch.setattr(spec_duckdb, "_db_export", boom)
+        spec_duckdb._PROBE_CACHE.clear()
+        st = spec_duckdb.refresh_layer_status("20261117")
+        assert st["ok"] is False and st["db_error"] == "probe-failed"
+        assert st["note"] == "本地研究库探测失败"
+        on_disk = _json.loads((tmp_path / "duckdb.json").read_text(encoding="utf-8"))
+        assert on_disk["ok"] is False and on_disk["db_error"] == "probe-failed"
+    finally:
+        spec_duckdb._PROBE_CACHE.clear()
+
+
+def test_layer_probe_target_dates(monkeypatch):
+    # 抓取链（17:05）取今天若是交易日；终版链（04:05）取今天之前最近交易日
+    import spec_duckdb, us_market
+
+    cal = ["2026-11-13", "2026-11-16", "2026-11-17", "2026-11-18"]
+    monkeypatch.setattr(us_market, "load_ashare_dates", lambda: cal)
+    assert spec_duckdb._latest_trade_date8(True, today="2026-11-18") == "20261118"
+    assert spec_duckdb._latest_trade_date8(False, today="2026-11-18") == "20261117"
+    assert spec_duckdb._latest_trade_date8(True, today="2026-11-21") == "20261118"   # 周末
+    assert spec_duckdb._latest_trade_date8(False, today="2026-11-21") == "20261118"
+    monkeypatch.setattr(us_market, "load_ashare_dates", lambda: [])
+    assert spec_duckdb._latest_trade_date8(True, today="2026-11-18") is None
+
+
 def test_market_amt_ratio_requires_t_day_bar(monkeypatch):
     # 本地库落后（T 日 bar 缺失）时必须返回 None：拿 T-1 当 T 是静默用错日数据
     import spec_duckdb

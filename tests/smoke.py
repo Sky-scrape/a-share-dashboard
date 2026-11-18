@@ -343,10 +343,13 @@ def main():
         rot_html = _page_src("web")
         rot_py = open(os.path.join(ROOT, "backend", "derive.py"), encoding="utf-8").read()
         st, dts = get(base, "/api/dates")
-        check_or_skip("日K回填后日期列表覆盖 7 月", st == 200 and any(d <= "2026-07-10" for d in (dts or {}).get("dates") or []),
+        # 回填窗口日期写死会被 120 天保留期滚掉（2026-11-18：07-15 已清理，最早剩
+        # 07-20）——改为按当前可用的回填窗口（≤2026-08-31）取最早一天验证，语义不变
+        _bf_dates = [d for d in (dts or {}).get("dates") or [] if d <= "2026-08-31"]
+        check_or_skip("日K回填后日期列表覆盖回填窗口（≤2026-08-31）", st == 200 and bool(_bf_dates),
                       f"n={len((dts or {}).get('dates') or [])}", data_key="rotation")
-        if (dts or {}).get("dates"):
-            st, bf = get(base, "/api/day?date=2026-07-15")
+        if _bf_dates:
+            st, bf = get(base, "/api/day?date=" + min(_bf_dates))
             check("回填日文件 src=ths-daily + daily_only + 两点",
                   st == 200 and bf.get("src") == "ths-daily" and bf.get("daily_only") is True
                   and bf.get("times") == ["开盘", "收盘"], str(bf.get("src")))
@@ -542,6 +545,13 @@ def main():
                     encoding="utf-8").read()
         check("17:05 采集失败推送出口（bat 挂 notify_once）",
               "def recap_failed(" in _no and "notify_once.py recap-failed" in _ftb)
+        # 2026-11-18 假告警滞留：17:05 预演先于 sync 写 ok=False，冰点无票的次日
+        # 不再调用 ohlc_rets，状态永远不刷新。两条链的 sync 之后都要主动自检。
+        check("同步后研究库日线层自检（防假告警滞留）",
+              "def refresh_layer_status(" in sp_src2
+              and "def probe_research_layer(" in _ucsrc
+              and "probe_research_layer()" in _ucsrc
+              and "spec_duckdb.py --after-fetch" in _ftb)
         # 2026-10-16 补 10-15 缺口事故：上游请求无超时 + 系统级中断 = 进程挂到
         # PT1H 被杀，期间无快照也无日志；整轮抓取装硬上限，到点强退并留可诊断日志
         _fd = open(os.path.join(ROOT, "backend", "recap", "fetch_daily.py"),
@@ -717,7 +727,7 @@ def main():
         check("新鲜度胶囊展示盘中停滞告警（2026-09-02 静默失败事故防回退）",
               "r.stall" in _fsrc and "盘中断采" in _fsrc)
         check("新鲜度胶囊展示研究库日线缺口告警（2026-09-15 0914 事故防回退）",
-              "h.duckdb" in _fsrc and "腾讯备源回填" in _fsrc)
+              "h.duckdb" in _fsrc and "腾讯备源回填" in _fsrc and "探测于" in _fsrc)
         # esc 单一来源（2026-09-04 收敛）：global/quant 旧副本不转义单引号，而龙虎榜/热股
         # 上游文本直接进 innerHTML——那是实际注入面；此后只许 lib/util.js 一处定义
         _usrc = open(os.path.join(ROOT, "web", "lib", "util.js"), encoding="utf-8").read()

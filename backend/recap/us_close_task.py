@@ -87,15 +87,17 @@ def sync_research_db() -> bool:
         return False
     # 默认 1GiB 上限在本机会让 sync 提交失败（README「重建或换机时记得带上」）
     os.environ.setdefault("HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT", "4GiB")
+    ok = False
     try:
         d = ht.ht("data", "sync", timeout=600) or {}
         _log(f"sync ok: decision={(d or {}).get('decision')} "
              f"release={(d or {}).get('release_id')}")
-        return True
+        ok = True
     except Exception as e:  # noqa: BLE001 - 非阻塞：缺口由探测+备源兜底
         _log(f"[warn] hithink data sync failed (non-blocking): "
              f"{type(e).__name__}: {str(e)[:200]}")
-        return False
+    probe_research_layer()   # 同步后自检：刷新 .status/duckdb.json（防假告警滞留）
+    return ok
 
 
 def prev_ashare_trade_date(dates=None) -> str | None:
@@ -109,6 +111,32 @@ def prev_ashare_trade_date(dates=None) -> str | None:
         today = _dt.date.today().isoformat()
         dates = [d for d in us_market.load_ashare_dates() if d < today]
     return dates[-1] if dates else None
+
+
+def probe_research_layer() -> bool:
+    """同步后主动重探日线层并刷新 .status/duckdb.json（非阻塞）。
+
+    2026-11-18 实例：17:05 抓取链内的 T+2 补算先于 data sync 落盘，会把
+    「T 日整层缺失」写进状态；若当天冰点无票（次日终版链没有验证对象），
+    就不会再调用 ohlc_rets，假告警一直挂到下一次有人查行情。这里在 sync
+    之后无条件重探一次，把状态刷新为同步后的真实情况。
+    """
+    p = os.path.join(ROOT, "backend", "recap")
+    if p not in sys.path:
+        sys.path.insert(0, p)
+    try:
+        import spec_duckdb  # noqa: PLC0415
+        iso = prev_ashare_trade_date()
+        if not iso:
+            _log("[warn] 研究库自检跳过：交易日历缺失")
+            return False
+        st = spec_duckdb.refresh_layer_status(iso.replace("-", ""))
+        _log(f"duckdb 自检: ok={st.get('ok')} layer_n={st.get('layer_n')} "
+             f"last_bar={st.get('last_bar')} probed={st.get('probed')}")
+        return True
+    except Exception as e:  # noqa: BLE001 - 诊断副线，任何失败不阻断链
+        _log(f"[warn] 研究库自检失败（非阻塞）: {type(e).__name__}: {str(e)[:150]}")
+        return False
 
 
 def _snapio():

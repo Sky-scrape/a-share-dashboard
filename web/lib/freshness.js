@@ -35,6 +35,10 @@ function renderFreshness(slotId) {
     if (s.length === 8) return s.slice(4, 6) + "/" + s.slice(6, 8);   // 复盘 8 位日期
     return s;
   }
+  function shortStamp(s) {          // "2026-11-17 17:05:38" -> "11-17 17:05"（探测时刻）
+    if (!s || s.length < 16) return s || "";
+    return s.slice(5, 10) + " " + s.slice(11, 16);
+  }
   function detailsHtml(h) {
     var html = "";
     var r = h.rotation || {}, c = h.recap || {};
@@ -59,6 +63,9 @@ function renderFreshness(slotId) {
     var dk = h.duckdb || {};
     if (dk.present) {
       html += "<h5>研究库日线 " + (dk.probed ? shortDate(dk.probed) : "-") + "</h5>";
+      if (dk.updated_at) {   // 探测时刻：区分「刚查的」与「几小时前的旧状态」
+        html += '<div style="color:var(--text-3)">探测于 ' + esc(shortStamp(dk.updated_at)) + "</div>";
+      }
       if (dk.stale) {
         html += '<div class="err">⚠ ' + esc(dk.note || "本地研究库缺验证日日线层") + "</div>";
         if (dk.fallback && dk.fallback.n) {

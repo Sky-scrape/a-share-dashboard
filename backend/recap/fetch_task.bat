@@ -33,6 +33,11 @@ set "HT_EXE=hithink-finance"
 for /f "usebackq delims=" %%E in (`%PY% backend\hithink_cli.py 2^>nul`) do set "HT_EXE=%%E"
 call "%HT_EXE%" data sync --format json >> .status\logs\fetch-recap.log 2>&1
 if errorlevel 1 echo [warn] hithink data sync failed (non-blocking) >> .status\logs\fetch-recap.log
+rem 同步后自检（2026-11-18 假告警滞留实例）：17:05 抓取链内的 T+2 补算先于 sync
+rem 落盘，会把「T 日整层缺失」写进 .status/duckdb.json；冰点无票的次日不会再有
+rem ohlc_rets 调用，不主动重探就会一直显示缺日线层。非阻塞，失败只记 [warn]。
+%PY% backend\recap\spec_duckdb.py --after-fetch >> .status\logs\fetch-recap.log 2>&1
+if errorlevel 1 echo [warn] duckdb layer probe failed (non-blocking) >> .status\logs\fetch-recap.log
 rem gzip archive snapshots older than 14 days
 %PY% backend\recap\archive.py --older-than 14 >> .status\logs\fetch-recap.log 2>&1
 rem 全球总览收盘后刷新：CN 热力图数据源是**实时快照**，08:40 盘前抓不到当日成交数据，
