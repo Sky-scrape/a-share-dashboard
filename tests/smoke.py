@@ -703,7 +703,7 @@ def main():
               and re.search(r'index_hist_cache\.series\(code, (_prov\.)?DATE\)', pv0))
         # 轮动速度/持续强势展示新口径（2026-09-04 重定义，详见 derive.py）
         check("复盘页展示新口径（在榜X/10日·累计），旧「连续≥3日」文案不回潮",
-              "在榜" in rp and "近10日在榜≥4日" in rp
+              "在榜" in rp and "近 10 天至少 4 天进前 10" in rp
               and "连续≥3日" not in rp and "100%=完全换血" not in rp)
         # 投机分析后端契约：口径常量（防阈值/基准被改动）、providers 接线、registry 收录
         sp_src = sp_src2   # 拼接源码同上（门面 + spec_* 六模块）
@@ -725,9 +725,9 @@ def main():
         check("rotation 新鲜度胶囊槽", 'id="freshPillSlot"' in rot)
         _fsrc = open(os.path.join(ROOT, "web", "lib", "freshness.js"), encoding="utf-8").read()
         check("新鲜度胶囊展示盘中停滞告警（2026-09-02 静默失败事故防回退）",
-              "r.stall" in _fsrc and "盘中断采" in _fsrc)
+              "r.stall" in _fsrc and "采集中断" in _fsrc)
         check("新鲜度胶囊展示研究库日线缺口告警（2026-09-15 0914 事故防回退）",
-              "h.duckdb" in _fsrc and "腾讯备源回填" in _fsrc and "探测于" in _fsrc)
+              "h.duckdb" in _fsrc and "备用源补回" in _fsrc and "检查于" in _fsrc)
         # esc 单一来源（2026-09-04 收敛）：global/quant 旧副本不转义单引号，而龙虎榜/热股
         # 上游文本直接进 innerHTML——那是实际注入面；此后只许 lib/util.js 一处定义
         _usrc = open(os.path.join(ROOT, "web", "lib", "util.js"), encoding="utf-8").read()
@@ -769,7 +769,7 @@ def main():
               and "CITIES" in gp and gp.count("tz:") >= 5)
         check("global 地图+走势面板", 'id="mapChart"' in gp and 'id="trendChart"' in gp and "registerMap" in gp)
         check("global 轮动雷达为象限散点", 'id="radarChart"' in gp and "markArea" in gp and
-              "type: 'scatter'" in gp and "ROTATION RADAR" in gp)
+              "type: 'scatter'" in gp and "轮动雷达" in gp)
         check("global 雷达榜单与切换", 'id="radarList"' in gp and 'id="radarMkt"' in gp)
         check("global 热力面板", 'id="heatChart"' in gp and "type: 'treemap'" in gp)
         check("global 热力周期切换与涨跌停色阶", 'id="heatWinSeg"' in gp and "HEAT_CLAMP" in gp and
@@ -864,11 +864,11 @@ def main():
         # 前端回退观察池聚合，绝不能冒充「整个板块的强度」——标题显性降级 + 恢复指引；
         # server 端自愈补抓（交易日 fail-closed + 节流 + 采集锁防重入）兜底恢复全成分口径
         check("板块竞价强度回退口径显性标注（观察池偏样本 ≠ 全板块）+ 恢复指引在",
-              "板块竞价强度 · 观察池偏样本" in auc_html and "非全板块口径" in auc_html)
+              "板块竞价强度 · 仅观察池" in auc_html and "只统计观察池内的股票" in auc_html)
         # 空态画进图体（2026-09-18）：全线低开日涨榜为空时不再是一整块白板（0917 实测 89 行业全低开）
         check("板块竞价强度空态画进图体（无高开/低开行业时给数据日+最深缺口+切换指引）",
               "无" in auc_html and "graphic: [{ type: \"text\"" in auc_html
-              and "个一级行业竞价" in auc_html and "观察池内无" in auc_html)
+              and "个行业竞价" in auc_html and "观察池内没有" in auc_html)
         # 自选卡空数据标注（2026-09-18）：920xxx 等源未覆盖票显示原因，不再只给一排 "-"
         check("自选卡空竞价数据显式标注原因（源未覆盖/未撮合）",
               "无竞价数据" in auc_html and "源未覆盖或未参与撮合" in auc_html)
@@ -928,7 +928,7 @@ def main():
         check("auction 页 10s 轮询+304", "POLL_MS = 10000" in ap and "If-None-Match" in ap)
         check("auction 页数据日诚实标注（隔日/周末/缺终态不当成今日）",
               "function dataFreshness" in ap and "今日竞价未采集" in ap and "非今日 " in ap
-              and "今日缺终态" in ap)
+              and "今日缺定盘" in ap)
         check("auction 页补抓走 status 轮询（非固定解禁）",
               "/api/auction/status" in ap and "function watchAuctionFetch" in ap)
         check("auction 页渲染错误隔离", "function safeRender" in ap and "safeRender(renderFinal" in ap)
@@ -1105,7 +1105,7 @@ def main():
               and "dict(rnd, label=fin_label)" in asrc and "_notes" in asrc)
         check("曲线弹窗区分逐轮/补抓快照且按 ts 排序",
               "function roundInWindow" in ap and "var auc = all.filter(roundInWindow)" in ap
-              and "all.sort(function" in ap and "竞价定盘（补抓快照）" in ap
+              and "all.sort(function" in ap and "竞价定盘（补抓）" in ap
               and "补抓 \" + slot" in ap)
         _oc = re.search(r'function openCurve\(code\) \{(.*?)\n\}', ap, re.S)
         # 2026-09-04：fetchSeries 增加 15s 节流（applyPayload/定时器双通道去重），
@@ -1150,7 +1150,7 @@ def main():
               and "roundInWindow" in ap.split("function renderFlip")[1].split('$("flipSeg")')[0]
               and 'class="body rankScroll" style="padding:0 4px 4px">\n        <table class="tbl one-left" id="flipTable"' in ap)
         check("flip 不吃盘后冻结快照：窗口外轮次不参与；series 由 ETag 轮询驱动",
-              "等待今日逐轮竞价数据" in ap and ap.count("fetchSeries(false)") >= 3
+              "今日暂无逐轮数据" in ap and ap.count("fetchSeries(false)") >= 3
               and "现价取" not in ap.split("function renderFlip")[1].split('$("flipSeg")')[0])
         # 强弱转换筛选优化（2026-09-04）：此前只比首末两点且起点落在最不可信的 09:15
         # 可撤单期；终点还可能被午后手动补抓的现价快照污染（当日实测 65/70 只被污染）。
@@ -1165,7 +1165,7 @@ def main():
               and "Math.min.apply(null, tl)" in _fsrc and "FLIP_AMT" in _fsrc
               and "flipNote" in ap)
         check("体检面板已移到右列最下方且无重复",
-              ap.count("今日采集体检</h2>") == 1
+              ap.count("今日数据检查</h2>") == 1
               and ap.index('id="checkNote"') > ap.index('id="benchList"'))
         # 右栏四面板（强势候选/涨停接力/兑现/采集体检）：全部只读 payload 现成字段。
         # 去重融合（2026-09-04）：涨停接力不再带逐只 TOP 表（与强势候选重复排同一批股票，
@@ -1214,7 +1214,7 @@ def main():
         check("逐轮覆盖一轮只顶一格（+step；写成 +step*2 会把真漏采盖掉）",
               "slot.sec + step;" in ap and "slot.sec + step * 2" not in ap)
         check("体检面板显示任务 note 且隔日时序不计入今日覆盖",
-              "st.note" in ap and "不计入覆盖" in ap and "rm.date === today8()" in ap)
+              "st.note" in ap and "不计入" in ap and "rm.date === today8()" in ap)
         check("候选三档阈值可切且兑现面板竞价中拒绝计算",
               "CAND_RULES" in ap and "09:30 后可算" in ap and 'indexOf("L")' in ap)
         check("auction 页引用共享 tokens/appbar", "/lib/tokens.css" in ap and "appbar.js" in ap)

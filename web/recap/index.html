@@ -265,6 +265,15 @@ tr.sp-row-near td { background: var(--warn-soft); }
 .sp-rules-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .sp-rule-card { border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; background: var(--bg-1); min-width: 0; overflow-wrap: anywhere; }
 .sp-rule-card h4 { font-size: 13px; font-family: var(--serif); letter-spacing: .08em; margin-bottom: 6px; color: var(--text-1); }
+/* 可折叠卡片：复盘结论在前，策略自检/方法论收进 details（2026-11 体验批） */
+.sp-rule-card summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.sp-rule-card summary::-webkit-details-marker { display: none; }
+.sp-rule-card summary::before { content: "▸"; color: var(--text-3); font-size: 11px; }
+.sp-rule-card[open] summary::before { content: "▾"; }
+.sp-rule-card summary b { font-family: var(--serif); font-size: 13px; letter-spacing: .08em; color: var(--text-1); }
+.sp-review-card { order: 9; }
+.sp-method summary { cursor: pointer; color: var(--text-2); font-size: 12px; }
+.sp-method[open] summary { margin-bottom: 10px; }
 .sp-rule-card li { font-size: 12px; color: var(--text-2); margin: 3px 0 3px 16px; line-height: 1.5; }
 .sp-ladder-steps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
 .sp-ladder-steps span { border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 10px; font-size: 12px; background: var(--bg-1); }
@@ -330,11 +339,10 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
 
 <header class="appbar">
   <h1><span class="dot">●</span> 盘后复盘</h1>
-  <span class="sub">市场温度 · 主线结构 · 资金个股 · 风险复盘</span>
   <span id="dateSel"></span>
   <button id="btnRefresh">刷新</button>
   <button id="btnFetch" title="后台重新抓取当日数据（约2-4分钟）"><span class="b-full">重新抓取</span><span class="b-mini">重抓</span></button>
-  <button id="btnExport" title="导出今日复盘小结（Markdown：复制+下载）"><span class="b-full">📤 导出小结</span><span class="b-mini">📤 导出</span></button>
+  <button id="btnExport" title="导出今日复盘小结（Markdown，复制并下载）"><span class="b-full">导出</span><span class="b-mini">导出</span></button>
   <div class="spacer"></div>
   <span id="status"></span>
   <span id="freshPillSlot" class="fresh-pill ok" title="数据新鲜度（点击看明细）"><span class="dot"></span>检查中…</span>
@@ -370,7 +378,7 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
     <a href="#g-risk" data-g="g-risk">④ 风险与复盘</a>
     <a href="#g-spec" data-g="g-spec">⑤ 投机分析</a>
     <a href="#g-pool" data-g="g-pool">⑥ 明日备选池</a>
-    <span class="gnote">点击组标题可折叠（记忆状态）</span>
+    <span class="gnote">点组标题可折叠</span>
   </nav>
 
   <!-- 采集失败告警（页面级置顶，任何折叠状态下都可见） -->
@@ -424,7 +432,7 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
         <div class="section-title">行业板块 · 涨跌幅</div>
         <div class="grid grid-2">
           <div class="card" id="boards"></div>
-          <div class="card" id="boardDetail"><div class="empty" style="padding:30px">点击左侧行业查看近5日走势；若当日有轮动分时，可叠加查看</div></div>
+          <div class="card" id="boardDetail"><div class="empty" style="padding:30px">点击左侧行业查看近 5 日走势</div></div>
         </div>
       </div>
       <div class="section">
@@ -436,7 +444,7 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
         <div class="card" id="ladder"></div>
       </div>
       <div class="section">
-        <div class="section-title">板块强度榜 · 近N日累计</div>
+        <div class="section-title">板块强度榜 · 近5日累计</div>
         <div class="card" id="boardStrength"><div class="empty">加载中…</div></div>
       </div>
       <div class="section">
@@ -455,12 +463,12 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
     <div class="gbody">
       <div class="section">
         <div class="section-title">涨停池（当日 <span id="ztCount"></span> 只）
-          <button id="btnZt2Quant" title="把当前筛选的前 30 只送入量化工作台标的池" style="margin-left:10px;font-size:11px;padding:2px 8px;border:1px solid var(--line,#DDD5C6);border-radius:6px;background:var(--bg-1,#FDFBF6);cursor:pointer;color:var(--text-2,#57534A)">📲 送入量化回测</button></div>
+          <button id="btnZt2Quant" title="把当前筛选的前 30 只加入回测" style="margin-left:10px;font-size:11px;padding:2px 8px;border:1px solid var(--line,#DDD5C6);border-radius:6px;background:var(--bg-1,#FDFBF6);cursor:pointer;color:var(--text-2,#57534A)">加入回测</button></div>
         <input class="search-input" id="ztSearch" placeholder="搜索代码 / 名称 / 行业…">
         <div class="tbl-wrap" id="ztWrap"></div>
       </div>
       <div class="section">
-        <div class="section-title">炸板池（当日 <span id="zbCount"></span> 只 · 曾涨停收盘未封住）</div>
+        <div class="section-title">炸板池（当日 <span id="zbCount"></span> 只 · 曾涨停、收盘没封住）</div>
         <div class="tbl-wrap" id="zbWrap"></div>
       </div>
       <div class="section">
@@ -509,7 +517,7 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
             <span class="note-hint" style="margin-left:auto">点击插入模板后填写，自动保存</span>
           </div>
           <textarea class="note-box" id="noteBox" placeholder="写下今天的复盘思考…"></textarea>
-          <div class="note-hint" id="noteHint">保存到服务器 data/recap/notes/（跨浏览器/换机不丢）；服务不可用时暂存浏览器。</div>
+          <div class="note-hint" id="noteHint">自动保存，换电脑也能看到；服务不可用时暂存本机浏览器。</div>
         </div>
       </div>
     </div>
@@ -523,22 +531,22 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
     </header>
     <div class="gbody">
       <div class="section">
-        <div class="section-title">情绪周期定位<span class="sp-note">启动-发酵-高潮-震荡-退潮 · 规则化机械推断，只给依据不下结论</span></div>
+        <div class="section-title">情绪周期定位<span class="sp-note">按涨停、连板高度、晋级率判断</span></div>
         <div class="card" id="specCycleBox"><div class="empty">加载中…</div></div>
       </div>
       <div class="section">
-        <div class="section-title">题材结构 · 核心识别<span class="sp-note">按涨停原因首段聚类 · 核心 = 连板最高（封板时间最早→封单最大）</span></div>
+        <div class="section-title">题材结构 · 核心识别<span class="sp-note">按涨停原因归类 · 核心取最高连板</span></div>
         <div class="card" id="specThemesBox"><div class="empty">加载中…</div></div>
       </div>
       <div class="section">
-        <div class="section-title">偏离值雷达 · 严重异动监控<span class="sp-note">偏离值 = 个股区间涨幅 − 指数涨幅 · 全市场扫描</span></div>
+        <div class="section-title">偏离值雷达 · 严重异动监控<span class="sp-note">个股涨幅 − 指数涨幅 · 全市场</span></div>
         <div class="card" id="specDevBox">
           <div id="specDevMeta"><div class="empty">加载中…</div></div>
           <div class="tbl-wrap" id="specDevWrap"></div>
         </div>
       </div>
       <div class="section">
-        <div class="section-title">高位承接 · A杀监控<span class="sp-note">昨日 2 连板以上个股今日结局 · 中位股/补涨股最易 A杀</span></div>
+        <div class="section-title">高位承接 · A杀监控<span class="sp-note">昨日 2 连板以上个股今日表现</span></div>
         <div class="card" id="specFateBox">
           <div id="specFateMeta"></div>
           <div class="tbl-wrap" id="specFateWrap"></div>
@@ -559,17 +567,16 @@ body.ready main .section:nth-child(10) { animation-delay: .48s; }
   <section class="gsec" id="g-pool">
     <header class="ghead" data-g="g-pool">
       <span class="gtitle"><span class="gnum">⑥</span>明日交易备选池</span>
-      <span class="gsub">市场判断 · 5 只备选标的 · 风险提醒 · 最终结论</span><span class="gfold">▾</span>
+      <span class="gsub">按当日复盘规则筛选 · 终版在次日美股收盘后生成</span><span class="gfold">▾</span>
     </header>
     <div class="gbody">
       <div class="section">
-        <div class="section-title">明日交易备选池<span class="sp-note">基于当日复盘信息规则化筛选 · 终版池于次日美股收盘后生成 · 非投资建议</span></div>
         <div class="card" id="poolBox"><div class="empty">加载中…</div></div>
       </div>
     </div>
   </section>
 
-  <footer>数据源：hithink-finance（同花顺）主源 + AKShare（新浪/东财）辅源 · 仅个人复盘使用，不构成投资建议</footer>
+  <footer>数据：同花顺 + 新浪/东财 · 仅供个人复盘，不构成投资建议</footer>
 </main>
 
 <script src="/lib/util.js"></script>

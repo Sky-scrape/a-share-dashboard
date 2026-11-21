@@ -187,6 +187,15 @@ table.tbl td .relay-badge.lim { color: var(--gold); background: var(--accent-sof
 #poolEdit { width: 100%; height: 180px; font-family: var(--mono); font-size: 12px; padding: 8px;
   background: var(--bg-1); color: var(--text-1); border: 1px solid var(--line); border-radius: var(--r-sm); resize: vertical; }
 
+@media (max-width: 620px) {
+  /* 手机只保留决策列：代码/匹配量/未匹配/换手率收起，名称-价格-竞价额-量比 一屏放得下 */
+  #rankTable { font-size: 11px; }
+  #rankTable th, #rankTable td { padding: 4px 4px; }
+  #rankTable th:nth-child(2), #rankTable td:nth-child(2),
+  #rankTable th:nth-child(5), #rankTable td:nth-child(5),
+  #rankTable th:nth-child(6), #rankTable td:nth-child(6),
+  #rankTable th:nth-child(7), #rankTable td:nth-child(7) { display: none; }
+}
 /* ---- 页脚 ---- */
 footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-height: 1.8; border-top: 1px solid var(--line); }
 
@@ -202,9 +211,9 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
   <h1><span class="dot">●</span> 实时竞价</h1>
   <!-- 副题保持短口径（2026-09-23 缩减）：时段由下方阶段条与倒计时胶囊表达，
        数据源 hithink-finance 在 README/启动横幅/体检面板交代——顶栏要给导航让宽 -->
-  <span class="sub">集合竞价快照 · 每 30 秒采集</span>
+  <span class="sub">每 30 秒采集</span>
   <button id="btnPool" title="编辑自选观察池">观察池</button>
-  <button id="btnFetch" title="立即补抓一轮终态+基准（后台执行）"><span class="b-full">立即补抓</span><span class="b-mini">补抓</span></button>
+  <button id="btnFetch" title="立即补抓一轮定盘数据（后台执行）"><span class="b-full">立即补抓</span><span class="b-mini">补抓</span></button>
   <div class="spacer"></div>
   <span id="countdownPill" class="fresh-pill" title="竞价时间线"><span class="dot"></span>--:--</span>
   <span id="freshPill" class="fresh-pill" title="数据新鲜度"><span class="dot"></span>检查中…</span>
@@ -215,11 +224,11 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
   <span id="phaseBadge"><span class="pdot"></span><span id="phaseText">加载中…</span></span>
   <span id="phaseNoise"></span>
   <span class="sep"></span>
-  <span class="stat">覆盖 <b id="statCover">-</b></span>
+  <span class="stat">数据 <b id="statCover">-</b></span>
   <span class="stat">观察池 <b id="statPool">-</b></span>
-  <span class="stat">轮次 <b id="statRounds">-</b></span>
+  <span class="stat">采集 <b id="statRounds">-</b></span>
   <span class="stat">更新 <b id="statUpdated">-</b></span>
-  <span class="stat" id="statPhaseWrap">上游阶段 <b id="statPhase">-</b></span>
+  <span class="stat" id="statPhaseWrap">阶段 <b id="statPhase">-</b></span>
 </div>
 
 <main>
@@ -243,8 +252,8 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
             <th data-sort="auction_amount">竞价额</th>
             <th data-sort="auction_volume">匹配量</th>
             <th data-sort="auction_unmatched">未匹配</th>
-            <th data-sort="auction_turnover_pct">换手</th>
-            <th data-sort="auction_yesterday_ratio_pct">量比昨</th>
+            <th data-sort="auction_turnover_pct">换手率</th>
+            <th data-sort="auction_yesterday_ratio_pct">量比</th>
           </tr></thead>
           <tbody id="rankBody"><tr><td colspan="8" class="dim" style="text-align:center;padding:26px">暂无数据</td></tr></tbody>
         </table>
@@ -269,9 +278,9 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
     <section class="panel">
       <div class="ph">
         <h2>09:25 定盘</h2>
-        <span class="note" id="finalNote">9:25 撮合完成后冻结</span>
+        <span class="note" id="finalNote">09:25 撮合后不再变化</span>
         <div class="spacer"></div>
-        <button id="btnFinal2Quant" title="把定盘高开前 30 只送入量化工作台标的池">📲 送入量化回测</button>
+        <button id="btnFinal2Quant" title="把定盘高开前 30 只加入回测">加入回测</button>
       </div>
       <div class="body">
         <div class="finalGrid" id="finalGrid">
@@ -282,7 +291,7 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
         </div>
         <div style="margin-top:10px">
           <div class="note" style="font-size:11px;color:var(--text-3);margin-bottom:4px">定盘高开 TOP10</div>
-          <table class="tbl" id="finalTable"><tbody id="finalBody"><tr><td class="dim" style="text-align:center;padding:16px">尚无终态数据</td></tr></tbody></table>
+          <table class="tbl" id="finalTable"><tbody id="finalBody"><tr><td class="dim" style="text-align:center;padding:16px">尚无定盘数据</td></tr></tbody></table>
         </div>
         <!-- 高开兑现并入定盘（原独立面板与这里的「高开只数」卡重复口径）：
              只留兑现独有指标，高开只数看上方统计卡 -->
@@ -301,23 +310,23 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
     <section class="panel">
       <div class="ph">
         <h2>强势候选</h2>
-        <span class="note" id="candNote">高开+放量+承接</span>
+        <span class="note" id="candNote">高开 + 放量 + 承接</span>
         <div class="spacer"></div>
         <div class="seg" id="candSeg" title="筛选强度">
           <button data-k="loose">宽</button><button data-k="std" class="on">中</button><button data-k="strict">严</button>
         </div>
-        <button id="btnCand2Quant" title="把当前筛选结果全部送入量化工作台标的池">📲 送量化</button>
+        <button id="btnCand2Quant" title="把当前筛选结果全部加入回测">加入回测</button>
       </div>
       <div class="body" style="padding:0 4px 4px">
         <table class="tbl one-left" id="candTable">
-          <thead><tr><th>名称 / 行业</th><th>高开</th><th>量比</th><th title="买方未匹配量 · 百分比＝剩余/匹配量（承接厚度）">承接</th></tr></thead>
+          <thead><tr><th>名称 / 行业</th><th>高开</th><th>量比</th><th title="买方未匹配量 ÷ 匹配量">承接</th></tr></thead>
           <tbody id="candBody"><tr><td colspan="4" class="dim" style="text-align:center;padding:16px">暂无数据</td></tr></tbody>
         </table>
       </div>
     </section>
 
     <section class="panel">
-      <div class="ph"><h2>涨停接力</h2><span class="note" id="relayNote">上一交易日涨停池 → 今日竞价</span></div>
+      <div class="ph"><h2>涨停接力</h2><span class="note" id="relayNote">昨日涨停股今日竞价</span></div>
       <div class="body">
         <!-- 涨停股逐只榜单已并入「强势候选」（接=昨日涨停徽标），这里只留池子级接力统计，
              避免与强势候选重复排同一批股票 -->
@@ -343,7 +352,7 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
     </section>
 
     <section class="panel">
-      <div class="ph"><h2>昨日备选池·执行</h2><span class="note" id="pexNote">冻结执行层窗口实时判定</span></div>
+      <div class="ph"><h2>昨日备选池·执行</h2><span class="note" id="pexNote">竞价是否触发买点</span></div>
       <div class="body" style="padding:0 4px 4px">
         <table class="tbl one-left" id="pexTable">
           <thead><tr><th>名称 / 概念</th><th>竞价</th><th>判定</th></tr></thead>
@@ -359,17 +368,17 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
     </section>
 
     <section class="panel">
-      <div class="ph"><h2>异动提醒</h2><span class="note" id="alertNote">相邻两轮环比突变</span></div>
+      <div class="ph"><h2>异动提醒</h2><span class="note" id="alertNote">与上一轮相比</span></div>
       <div class="body"><ul id="alertList"><li class="dim" style="border:none">等待数据…</li></ul></div>
     </section>
 
     <section class="panel">
-      <div class="ph"><h2>竞价短期基准</h2><span class="note" id="benchNote">auction-benchmark</span></div>
+      <div class="ph"><h2>竞价短期基准</h2><span class="note" id="benchNote">历史同段对比</span></div>
       <div class="body"><ul id="benchList"><li class="dim" style="border:none">暂无数据</li></ul></div>
     </section>
 
     <section class="panel">
-      <div class="ph"><h2>今日采集体检</h2><span class="note" id="checkNote">逐轮覆盖与池子构成</span></div>
+      <div class="ph"><h2>今日数据检查</h2><span class="note" id="checkNote">采集轮次与股票池</span></div>
       <div class="body">
         <div class="covbar" id="covBar"></div>
         <div class="kv kv-soft" id="checkStats"><div class="k">等待数据…</div></div>
@@ -379,16 +388,14 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
 </main>
 
 <footer>
-  数据源：同花顺金融数据服务（hithink-finance CLI：market.auction-snapshot live/final + market.auction-benchmark）。
-  采集节奏：交易日 09:15:00–09:24:30 每 30 秒一轮（批 ≤90 只），09:25:10 取终态。<br>
-  口径提示：09:15–09:20 为可撤单阶段，匹配数据含虚假申报噪音；09:20–09:25 不可撤单；终态以 09:25 撮合为准。
-  竞价接口为 today-only，当日数据由本站采集器自行留存（series.json）。本页面仅为数据展示，不构成投资建议。
+  数据：同花顺集合竞价快照。交易日 09:15–09:24:30 每 30 秒采集一轮，09:25 取定盘数据。<br>
+  09:20 前可以撤单，盘口数字有虚假申报；09:20 后不可撤单，09:25 撮合结果为准。仅供参考，不构成投资建议。
 </footer>
 
 <!-- 个股竞价曲线弹窗 -->
 <div class="mask" id="curveMask">
   <div class="dlg" role="dialog" aria-modal="true" aria-label="个股竞价曲线">
-    <div class="dh"><h3 id="curveTitle">个股竞价曲线</h3><div class="spacer"></div><button id="curveSend">📲 送入量化</button><button id="curveClose">关闭</button></div>
+    <div class="dh"><h3 id="curveTitle">个股竞价曲线</h3><div class="spacer"></div><button id="curveSend">加入回测</button><button id="curveClose">关闭</button></div>
     <div class="db">
       <div id="curveMeta"></div>
       <div id="curveChart"></div>
@@ -403,8 +410,8 @@ footer { padding: 14px 16px 26px; color: var(--text-3); font-size: 11px; line-he
     <div class="dh"><h3>自选观察池</h3><div class="spacer"></div><button id="poolClose">关闭</button></div>
     <div class="db">
       <div class="note" style="font-size:12px;color:var(--text-2);margin-bottom:6px">
-        每行一个代码（6 位或完整 thscode，如 <span class="mono">600519</span> / <span class="mono">000001.SZ</span>），# 后为注释。
-        自选永远包含；其余名额自动补充（昨日涨停池 + 热股榜，总池封顶 <span id="poolMax">300</span>）。
+        每行一个代码（如 <span class="mono">600519</span> 或 <span class="mono">000001.SZ</span>），# 后为备注。
+        自选股固定保留；其余名额从昨日涨停股和热股榜自动补足，最多 <span id="poolMax">300</span> 只。
       </div>
       <textarea id="poolEdit" spellcheck="false"></textarea>
       <div style="margin-top:8px;display:flex;gap:8px;align-items:center">

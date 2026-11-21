@@ -20,12 +20,12 @@ function renderFreshness(slotId) {
     var errs = (seg.failed && seg.failed.length) || (seg.errors && seg.errors.length);
     var incomplete = seg.coverage && seg.coverage.complete === false;
     // 盘中采集停滞（工作日盘中无新数据点）：比「缺数据」更急，明确标出防静默
-    if (seg.stall && seg.stall.stalled) return { c: "warn", t: "盘中断采" };
+    if (seg.stall && seg.stall.stalled) return { c: "warn", t: "采集中断" };
     // 周末宽容：周六/周日凌晨起上一交易日数据本就应是最新的，阈值从 36h 放宽到 120h
     var dow = new Date().getDay();
     var staleLimit = (dow === 0 || dow === 6) ? 120 : 36;
-    if (!fresh && (ageH == null || ageH > staleLimit)) return { c: "bad", t: shortDate(seg.last_date) + " 停滞" };
-    if (errs || incomplete) return { c: "warn", t: shortDate(seg.last_date) + " 缺口" };
+    if (!fresh && (ageH == null || ageH > staleLimit)) return { c: "bad", t: shortDate(seg.last_date) + " 未更新" };
+    if (errs || incomplete) return { c: "warn", t: shortDate(seg.last_date) + " 数据不全" };
     if (!fresh) return { c: "warn", t: shortDate(seg.last_date) };
     return { c: "ok", t: shortDate(seg.last_date) };
   }
@@ -42,44 +42,44 @@ function renderFreshness(slotId) {
   function detailsHtml(h) {
     var html = "";
     var r = h.rotation || {}, c = h.recap || {};
-    html += "<h5>板块轮动 " + (r.last_date || "-") + (r.fetching ? "（抓取中…）" : "") + "</h5>";
+    html += "<h5>轮动数据 " + (r.last_date || "-") + (r.fetching ? "（抓取中…）" : "") + "</h5>";
     if (r.stall && r.stall.stalled) {
       html += '<div class="err">⚠ ' + esc(r.stall.note) + "</div>";
     }
     if (r.coverage && r.coverage.complete === false) {
-      html += '<div class="err">分时不完整：' + (r.coverage.minutes || 0) + " 分钟点，尾点 " +
+      html += '<div class="err">分时数据不全：共 ' + (r.coverage.minutes || 0) + " 分钟，最后 " +
         (r.coverage.last_time || "-") + (r.coverage.trimmed_note ? "（" + esc(r.coverage.trimmed_note) + "）" : "") + "</div>";
     }
     if (r.failed && r.failed.length) {
-      html += '<div class="err">' + r.failed.length + " 个板块失败：" +
+      html += '<div class="err">' + r.failed.length + " 个板块抓取失败：" +
         r.failed.slice(0, 6).map(function (x) { return esc(x.code || x[0] || ""); }).join("、") +
         (r.failed.length > 6 ? " …" : "") + "</div>";
     }
-    html += "<h5>盘后复盘 " + (c.last_date || "-") + (c.fetching ? "（抓取中…）" : "") + "</h5>";
+    html += "<h5>复盘数据 " + (c.last_date || "-") + (c.fetching ? "（抓取中…）" : "") + "</h5>";
     if (c.errors && c.errors.length) {
-      html += '<div class="err">' + c.errors.length + " 个模块失败：" +
+      html += '<div class="err">' + c.errors.length + " 项数据抓取失败：" +
         c.errors.map(function (x) { return esc(x.module); }).join("、") + "</div>";
     }
     var dk = h.duckdb || {};
     if (dk.present) {
-      html += "<h5>研究库日线 " + (dk.probed ? shortDate(dk.probed) : "-") + "</h5>";
+      html += "<h5>研究数据 " + (dk.probed ? shortDate(dk.probed) : "-") + "</h5>";
       if (dk.updated_at) {   // 探测时刻：区分「刚查的」与「几小时前的旧状态」
-        html += '<div style="color:var(--text-3)">探测于 ' + esc(shortStamp(dk.updated_at)) + "</div>";
+        html += '<div style="color:var(--text-3)">检查于 ' + esc(shortStamp(dk.updated_at)) + "</div>";
       }
       if (dk.stale) {
-        html += '<div class="err">⚠ ' + esc(dk.note || "本地研究库缺验证日日线层") + "</div>";
+        html += '<div class="err">⚠ ' + esc(dk.note || "研究数据缺最近交易日") + "</div>";
         if (dk.fallback && dk.fallback.n) {
-          html += "<div>腾讯备源回填 " + (dk.fallback.ok || 0) + "/" + esc(dk.fallback.n) + " 只</div>";
+          html += "<div>备用源补回 " + (dk.fallback.ok || 0) + "/" + esc(dk.fallback.n) + " 只</div>";
         }
       } else {
-        html += '<div style="color:var(--text-3)">验证日日线层在库 ✓</div>';
+        html += '<div style="color:var(--text-3)">研究数据完整 ✓</div>';
       }
     }
     var now10 = localDate10(), now8 = localDate8();
     var rotStale = r.last_date !== now10, capStale = c.last_date !== now8;
-    if (rotStale) html += '<div><button data-f="rotation">↻ 重抓轮动分时</button></div>';
-    if (capStale) html += '<div><button data-f="recap">↻ 重抓复盘快照（约2-4分钟）</button></div>';
-    if (!rotStale && !capStale) html += '<div style="color:var(--text-3)">今日数据均已抓取 ✓</div>';
+    if (rotStale) html += '<div><button data-f="rotation">↻ 重新抓取轮动</button></div>';
+    if (capStale) html += '<div><button data-f="recap">↻ 重新抓取复盘（约 2-4 分钟）</button></div>';
+    if (!rotStale && !capStale) html += '<div style="color:var(--text-3)">今日数据已更新 ✓</div>';
     return html;
   }
 
@@ -117,10 +117,10 @@ function renderFreshness(slotId) {
         : (g1.c === "warn" || g2.c === "warn" || dkStale ? "warn" : "ok");
       slot.className = "fresh-pill " + worst;
       slot.innerHTML = '<span class="dot"></span>轮动 ' + esc(g1.t) + " · 复盘 " + esc(g2.t);
-      slot.title = "数据新鲜度（点击看明细）";
+      slot.title = "数据更新情况（点击查看）";
     }).catch(function () {
       slot.className = "fresh-pill warn";
-      slot.innerHTML = '<span class="dot"></span>服务状态未知';
+      slot.innerHTML = '<span class="dot"></span>暂时连不上服务';
     });
   }
   slot.addEventListener("click", function () {

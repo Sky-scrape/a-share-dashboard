@@ -11,6 +11,10 @@ const fmtW = v => {
   return v.toFixed(0);
 };
 const fmtNum = v => (v == null) ? "-" : Number(v).toLocaleString("zh-CN", {maximumFractionDigits: 2});
+/* 8 位日期 → 中文短日期（浏览器标签页/标题用） */
+const fmtDay8 = ds => String(ds || "").length === 8
+  ? (parseInt(ds.slice(4, 6), 10) + "月" + parseInt(ds.slice(6, 8), 10) + "日")
+  : String(ds || "");
 const fmtTime = t => {
   if (t == null || t === "") return "-";
   t = String(t).trim();
@@ -90,7 +94,7 @@ async function loadDates() {
   try {
     const j = await AK.getJson("/api/recap/dates");   // JSON 请求统一走 lib 包装（错误分支行为不变）
     const sel = $("dateSel");
-    if (j.dates.length === 0) { $("status").textContent = "data/ 下还没有快照，先跑 python backend/fetch_daily.py"; return; }
+    if (j.dates.length === 0) { $("status").textContent = "还没有复盘数据，点右上角「重新抓取」"; return; }
     if (!DATE_DP) {
       DATE_DP = AKDP.create({ mount: sel, dates: j.dates, value: j.dates[0], title: "选择复盘日期",
         onChange: v => { ladderExpand = {}; loadSnapshot(v); } });   // 切日期重置连板展开状态，避免残留
@@ -158,8 +162,8 @@ function render() {
     const fa = $("fetchAlert");
     if (fa) {
       if (errs.length) {
-        fa.textContent = "⚠ 本次采集 " + errs.length + " 个模块失败：" + errs.join("、")
-          + " ——相关数据可能不完整（抓取链已自动重试，仍失败；可稍后点「重新抓取」补抓）";
+        fa.textContent = "⚠ 本次有 " + errs.length + " 项数据抓取失败：" + errs.join("、")
+          + " ——数据可能不完整，可稍后点「重新抓取」补抓";
         fa.className = "show";
       } else {
         fa.className = "";
@@ -239,7 +243,10 @@ function moodLabel(ztCount, maxLb, promo) {
   // 前端按涨停家数 100/60/30 判档与后端指数口径可能打架；旧面板无该字段时回退本地规则
   const lv = SENT_LEVEL && MOOD_LEVELS[SENT_LEVEL];
   if (lv) {
-    label = lv.label; cls = lv.cls; reason = "情绪指数判定：" + SENT_LEVEL;
+    /* 胶囊本身已写明档位，右侧不再重复「情绪指数判定：冰点」，改给一句可执行的仓位提示 */
+    label = lv.label; cls = lv.cls;
+    reason = { "亢奋": "情绪最热，注意高位分歧", "发酵": "情绪向上，可正常参与",
+               "震荡": "涨跌分化，只做主线", "冰点": "涨停少、跌停多，仓位放轻" }[SENT_LEVEL] || "";
   }
   else if (z >= 100 && (pr == null || pr >= 40)) { label = "亢奋·高潮"; cls = "hot"; reason = "涨停潮 + 高晋级"; }
   else if (z >= 60) { label = "发酵·做多"; cls = "warm"; reason = "涨停充足，情绪向上"; }
@@ -294,15 +301,15 @@ function renderOverview() {
         <div class="ov-sub" style="margin-top:8px">
           沪 ${sh ? sign(sh.涨跌幅) + "%" : "-"} · 深 ${sz ? sign(sz.涨跌幅) + "%" : "-"}
           ${turn != null ? " · 两市 " + fmtW(turn)
-            + (turnDiff != null ? ` <span class="${cls(turnDiff)}">(较昨${turnDiff >= 0 ? "+" : ""}${fmtW(turnDiff)})</span>` : "") : ""}
+            + (turnDiff != null ? ` <span class="${cls(turnDiff)}">（较昨 ${turnDiff >= 0 ? "+" : ""}${fmtW(turnDiff)}）</span>` : "") : ""}
         </div>
       </div>
       <div class="ov-block">
         <h4>情绪</h4>
         <div class="ov-num">涨停 <b class="up">${ztCount == null ? "-" : ztCount}</b> · 跌停 <b class="down">${dtCount == null ? "-" : dtCount}</b></div>
         <div class="ov-sub">最高连板 <b>${maxLb == null ? "-" : maxLb}</b> 板 · 炸板 <b>${zhaban == null ? "-" : zhaban}</b></div>
-        ${promo.ok ? `<div class="ov-sub" style="margin-top:6px">昨日涨停 ${promo.prevCount} 只 → 今日 <b class="up">晋级 ${promo.lianban}</b>（${promo.lianbanRate}%）· 红盘 ${promo.red}（${promo.rate}%）</div>`
-          : `<div class="ov-sub" style="margin-top:6px">晋级率：暂无昨日数据（连续抓取后自动出现）</div>`}
+        ${promo.ok ? `<div class="ov-sub" style="margin-top:6px">昨日涨停 ${promo.prevCount} 只，今日晋级 <b class="up">${promo.lianban}</b> 只（${promo.lianbanRate}%）· 红盘 ${promo.red} 只（${promo.rate}%）</div>`
+          : `<div class="ov-sub" style="margin-top:6px">晋级率：需两天数据</div>`}
       </div>
       <div class="ov-block">
         <h4>主线</h4>
@@ -311,7 +318,7 @@ function renderOverview() {
         ${promo.ok && promo.prevMaxLb != null ? `<div class="ov-sub" style="margin-top:4px">昨日最高连板 ${promo.prevMaxLb} 板</div>` : ""}
       </div>
     </div>
-    ${errs.length ? `<div class="ov-warn">⚠ ${esc(errs.join("、"))} 模块本次抓取失败，数据可能不完整</div>` : ""}`;
+    ${errs.length ? `<div class="ov-warn">⚠ ${esc(errs.join("、"))} 项数据抓取失败，页面可能不完整</div>` : ""}`;
 }
 
 function renderIndices() {
@@ -421,7 +428,7 @@ function svgLine(hist) {
 function renderBoardDetail() {
   const data = modOk("boards");
   const box = $("boardDetail");
-  if (!selectedBoard) { box.innerHTML = `<div class="empty" style="padding:30px">点击左侧行业查看近5日走势；若当日有轮动分时，可叠加查看</div>`; return; }
+  if (!selectedBoard) { box.innerHTML = `<div class="empty" style="padding:30px">点击左侧行业查看近 5 日走势</div>`; return; }
   const board = (data || []).find(r => r.名称 === selectedBoard);
   if (!board || !board.history || !board.history.length) { box.innerHTML = `<div class="empty">暂无历史数据</div>`; return; }
   const h = board.history;
@@ -434,8 +441,8 @@ function renderBoardDetail() {
       ${h.map(p => `<tr><td class="l">${esc(p.日期)}</td><td>${fmtNum(p.收盘价)}</td><td class="${cls(p.涨跌幅)}">${p.涨跌幅 == null ? "-" : sign(p.涨跌幅) + "%"}</td></tr>`).join("")}
     </table>
     <div class="intraday-wrap">
-      <button class="tmpl-btn" id="btnIntraday">📈 叠加当日轮动分时</button>
-      <span class="note-hint" style="margin-left:8px">与日内轮动同源分时（同为同花顺一级行业口径，名称精确匹配）；仅当日有轮动采集可查</span>
+      <button class="tmpl-btn" id="btnIntraday">叠加当日分时</button>
+      <span class="note-hint" style="margin-left:8px">同日轮动分时，仅当日有采集时可看</span>
       <div id="intradayBox"></div>
     </div>`;
   $("btnIntraday").onclick = loadIntraday;
@@ -462,7 +469,7 @@ async function loadIntraday() {
       box.innerHTML = `<div class="empty" style="padding:8px">${d10} 的轮动分时里没有「${esc(selectedBoard)}」（当日该行业采集失败 ${((day.failed||[]).length)} 个板块也可能导致缺板）</div>`; return;
     }
     const s = day.series[hit.code];
-    const srcTag = day.src === "ths" ? "同花顺分时 · 与日内轮动同源" : "分时数据（旧东财口径归档）";
+    const srcTag = day.src === "ths" ? "同日轮动分时" : "分时数据（东财旧数据）";
     box.innerHTML = `<div style="font-weight:700;margin:6px 0 2px">${esc(s.name)}
       <span style="color:var(--muted);font-weight:400;font-size:12px">${srcTag} · ${day.times[0]}~${day.times[day.times.length - 1]}</span></div>`
       + svgIntraday(s.pcts);
@@ -568,7 +575,7 @@ function paintDt(q) {
     // 区分「真空无跌停」与「模块抓取失败」（zb/lhb 同口径，zt 显「无数据」）
     box.innerHTML = modOk("limit_down_pool")
       ? `<div class="empty">今日无跌停</div>`
-      : errHtml("limit_down_pool", modErr("limit_down_pool") || "模块缺失");
+      : errHtml("limit_down_pool", modErr("limit_down_pool") || "数据缺失");
     return;
   }
   let rows = dtRows.filter(r => !q || (r.代码 + r.名称 + (r.所属行业 || "")).includes(q));
@@ -833,8 +840,8 @@ function setNoteHint(msg) {
   const el = $("noteHint");
   if (!el) return;
   el.textContent = msg || (NOTE_OK
-    ? "自动保存到服务器 data/recap/notes/" + (SNAP ? SNAP.date : "") + ".md（跨浏览器/换机不丢），浏览器同时留备份。"
-    : "⚠ 服务器存储不可用，笔记暂存本浏览器 localStorage（清缓存会丢），恢复后请重新粘贴保存。");
+    ? "自动保存，换电脑也能看到；本机浏览器同时留一份。"
+    : "⚠ 服务暂时不可用，笔记先存在本浏览器（清缓存会丢），恢复后请重新保存。");
 }
 function saveNoteNow(expectDate) {
   if (!SNAP) return;
@@ -858,7 +865,7 @@ function saveNoteNow(expectDate) {
 }
 
 function errHtml(name, err) {
-  return `<div class="error-box">⚠ ${name} 模块获取失败：<span style="color:var(--muted)">${esc(err || "未知错误")}</span></div>`;
+  return `<div class="error-box" title="${esc(name)}">⚠ 这部分数据获取失败：<span style="color:var(--muted)">${esc(err || "未知错误")}</span></div>`;
 }
 /* ============================ ⑤ 投机分析 ============================
  * 数据源：快照模块 speculation（计算引擎 backend/recap/speculate.py）。
@@ -867,8 +874,7 @@ function errHtml(name, err) {
  */
 function specData() { return modOk("speculation"); }
 function specMissing(box, note) {
-  box.innerHTML = '<div class="sp-empty">' + (note || "该日期暂无投机分析数据。")
-    + '<br>2026-09-02 前的老快照不含本模块，可回填：<code>python backend/recap/speculate.py --recent 30</code></div>';
+  box.innerHTML = '<div class="sp-empty">' + (note || "该日期暂无投机分析数据。") + "</div>";
 }
 function specEnsure(box, metaId, wrapId) {
   // 渲染异常隔离可能整卡重写，这里确保两个静态容器存在（排序委托在 document 级，不受影响）
@@ -889,13 +895,13 @@ function renderSpecCycle() {
   let html = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px">'
     + '<span class="mood-pill ' + (MOOD_CLS[cy.phase] || "flat") + '">' + esc(cy.phase || "数据不足") + '</span>'
     + '<span class="sp-kv" style="margin:0">'
-    + '<span>涨停 <b>' + f1(ind.zt) + '</b> 家（前3日均 ' + f1(ind.zt_prev3) + '）</span>'
-    + '<span>最高连板 <b>' + f1(ind.max_lb) + '</b>（前3日均 ' + f1(ind.max_lb_prev3) + '）</span>'
-    + '<span>晋级率 <b>' + pc(ind.promo) + '</b>（前3日均 ' + pc(ind.promo_prev3) + '）</span>'
+    + '<span>涨停 <b>' + f1(ind.zt) + '</b> 家（前 3 日平均 ' + f1(ind.zt_prev3) + '）</span>'
+    + '<span>最高连板 <b>' + f1(ind.max_lb) + '</b>（前 3 日平均 ' + f1(ind.max_lb_prev3) + '）</span>'
+    + '<span>晋级率 <b>' + pc(ind.promo) + '</b>（前 3 日平均 ' + pc(ind.promo_prev3) + '）</span>'
     + '<span>情绪指数 <b>' + f1(ind.sentiment) + '</b></span>'
     + '</span></div>';
   html += '<div style="font-size:12px;color:var(--text-3);margin-bottom:10px">依据：'
-    + (cy.reasons || []).map(esc).join(" · ") + "</div>";
+    + (cy.reasons || []).map(s => esc(String(s).replace(/前3日均/g, "前 3 日平均"))).join(" · ") + "</div>";
   // 30 日序列图：柱=涨停家数（左轴），金线=最高连板（右轴），蓝虚线=晋级率（0–100% 独立刻度）
   const ser = cy.series || [];
   if (ser.length >= 2) {
@@ -955,12 +961,12 @@ function renderSpecThemes() {
   const nn = v => (v == null) ? "-" : v;
   let html = '<div class="sp-kv">'
     + "<span>题材 <b>" + nn(sum["题材数"]) + "</b> 组</span>"
-    + "<span>涨停 <b>" + nn(sum["涨停总数"]) + "</b> 只</span>"
+    + '<span>涨停 <b>' + nn(sum["涨停总数"]) + '</b> 只</span>'
     + "<span>最大题材 <b>" + esc(sum["最大题材"] || "-") + "</b>（" + nn(sum["最大题材家数"]) + " 只）</span>"
-    + "<span>前三题材覆盖 <b>" + nn(sum["前三题材覆盖"]) + "</b>（" + nn(sum["前三占比"]) + "%）</span>"
+    + "<span>前三题材占 <b>" + nn(sum["前三占比"]) + "%</b>（" + nn(sum["前三题材覆盖"]) + " 只）</span>"
     + '<span class="sp-badge ' + badge + '">' + esc(sum["定性"] || "") + "</span></div>";
   html += '<div class="tbl-wrap thin"><table><tr>'
-    + '<th class="l">题材</th><th>家数</th><th>高度</th><th>后排</th><th class="l">持续性</th><th class="l">核心</th><th class="l">成员</th></tr>';
+    + '<th class="l">题材</th><th>家数</th><th>高度</th><th>跟风</th><th class="l">持续性</th><th class="l">核心</th><th class="l">成员</th></tr>';
   for (const g of groups) {
     const c = g["核心"] || {};
     const members = g["成员"] || [];
@@ -970,7 +976,7 @@ function renderSpecThemes() {
       + (members.length > 12 ? '<span class="sp-chip">…+' + (members.length - 12) + "</span>" : "");
     html += '<tr><td class="l" style="font-weight:600;white-space:nowrap">' + esc(g["题材"]) + "</td>"
       + "<td>" + g["家数"] + "</td><td>" + g["高度"] + "板</td><td>" + g["后排"] + "</td>"
-      + '<td class="l" style="white-space:nowrap">' + esc(g["持续性"]) + "</td>"
+      + '<td class="l" style="white-space:nowrap">' + esc({ "独苗题材·无后排": "独苗（无跟风）", "有后排": "有跟风" }[g["持续性"]] || g["持续性"]) + "</td>"
       + '<td class="l" style="white-space:nowrap"><span class="sp-chip core">' + esc(c["名称"] || "") + " " + (c["连板"] || 1) + "板</span> "
       + '<span style="color:var(--muted);font-size:11px">' + fmtTime(c["封板时间"]) + " 封</span></td>"
       + '<td class="l">' + chips + "</td></tr>";
@@ -995,7 +1001,8 @@ function renderSpecDeviation() {
   };
   M.innerHTML = '<div class="sp-kv" style="margin-top:2px">' + gTxt("SH") + gTxt("SZ")
     + "<span>候选 <b>" + (dv.total != null ? dv.total : (dv.rows || []).length) + "</b> 只 · 展示前 " + (dv.rows || []).length + "</span></div>"
-    + '<div style="font-size:11px;color:var(--text-3);margin-bottom:8px">' + esc((sp.calc || {})["口径"] || "") + "</div>";
+    + '<details class="sp-method" style="font-size:11px;color:var(--text-3);margin-bottom:8px"><summary>判定规则</summary>'
+    + esc((sp.calc || {})["口径"] || "") + "</details>";
   const ST_META = {severe: ["sev", "触发严重"], near: ["near", "逼近严重"], normal: ["norm", "普通异动"], watch: ["watch", "观察"], bj: ["bj", "北交所"]};
   const rows = (dv.rows || []).map(r => ({
     "代码": r["代码"], "名称": r["名称"], "_src": r,
@@ -1012,13 +1019,13 @@ function renderSpecDeviation() {
     + '<th class="sortable" data-key="3日涨幅">3日涨' + arrow("spdev", "3日涨幅") + "</th>"
     + '<th class="sortable" data-key="10日涨幅">10日涨' + arrow("spdev", "10日涨幅") + "</th>"
     + '<th class="sortable" data-key="30日涨幅">30日涨' + arrow("spdev", "30日涨幅") + "</th>"
-    + '<th class="sortable" data-key="距触发空间">距严重线' + arrow("spdev", "距触发空间") + "</th>"
+    + '<th class="sortable" data-key="距触发空间">距严重线(百分点)' + arrow("spdev", "距触发空间") + "</th>"
     + "<th>状态</th></tr>";
   const fmtP = v => (v == null) ? "-" : '<span class="' + cls(v) + '">' + sign(v) + "%</span>";
   const body = sorted.map(x => {
     const r = x["_src"];
     const st = ST_META[x["状态"]] || ["watch", x["状态"]];
-    let tags = '<span class="sp-chip">' + esc(r.board || "") + "</span>";
+    let tags = '<span class="sp-chip">' + esc(String(r.board || "").replace("10cm", "10%").replace("20cm", "20%")) + "</span>";
     if (r["连板"]) tags += '<span class="sp-chip core">' + r["连板"] + "板</span>";
     if (r.in_zt) tags += '<span class="sp-chip core">涨停</span>';
     if (r.in_zb) tags += '<span class="sp-chip">炸板</span>';
@@ -1060,7 +1067,7 @@ function renderSpecFate() {
     html += '<div class="sp-fate-band"><b>' + s["板数"] + "板</b> ×" + s["家数"]
       + " · 晋级 <b>" + s["晋级"] + "</b>"
       + ' · 红盘率 <b>' + (s["红盘率"] == null ? "-" : s["红盘率"] + "%") + "</b>"
-      + ' · 均涨 <b class="' + cls(s["均涨"]) + '">' + sign(s["均涨"]) + "</b>"
+      + ' · 均涨 <b class="' + cls(s["均涨"]) + '">' + sign(s["均涨"]) + '%</b>'
       + (s["大跌"] ? ' · <span style="color:var(--down);font-weight:700">大跌 ' + s["大跌"] + "</span>" : "")
       + "</div>";
   }
@@ -1092,7 +1099,7 @@ function renderSpecEvents() {
   if (!rows.length) { box.innerHTML = '<div class="sp-empty">今日无异动榜单数据。</div>'; return; }
   let html = '<div class="sp-note" style="margin:0 0 8px">同花顺异动榜单（今日共 '
     + (an.total != null ? an.total : rows.length) + " 条 · 滚动展示前 " + rows.length
-    + " 条 · 摘要为 AI 整理，以上市公司公告为准）</div>"
+    + " 条 · 摘要由数据源提供，以上市公司公告为准）</div>"
     + '<div class="sp-scroll">';
   for (const r of rows) {
     html += '<div style="border:1px solid var(--line);border-radius:var(--r-md);padding:8px 12px;background:var(--bg-1)">'
@@ -1110,7 +1117,9 @@ function renderSpecRules() {
   const sp = specData();
   if (!sp) return specMissing(box);
   const ru = sp.rules || {};
-  let html = '<div style="font-size:12px;color:var(--text-2)">监管手段（从严到松）</div><div class="sp-ladder-steps">';
+  // 参考手册默认收起：这页是复盘看板，不是教材；需要时点开
+  let html = '<details class="sp-method"><summary>展开速查</summary>';
+  html += '<div style="font-size:12px;color:var(--text-2)">监管手段（从严到松）</div><div class="sp-ladder-steps">';
   (ru["监管阶梯"] || []).forEach((s, i) => { html += (i ? "<i>＞</i>" : "") + "<span>" + esc(s) + "</span>"; });
   html += "</div>";
   const kj = ru["异动口径"] || {};
@@ -1128,6 +1137,7 @@ function renderSpecRules() {
       + items.map(i => "<li>" + esc(i) + "</li>").join("") + "</ul></div>";
   }
   html += "</div>";
+  html += "</details>";
   box.innerHTML = html;
 }
 
@@ -1141,28 +1151,30 @@ function renderPool() {
   const p = sp.pool || {};
   if (!p.ok && p.stage === "pending") {
     let ph = '<div class="sp-empty" style="border:1px dashed var(--line);border-radius:var(--r-md);padding:14px">'
-      + '⏳ <b>备选池待隔夜确认</b>——' + esc(p.note || "隔夜美股场次未定")
-      + '。终版池在次日美股收盘后（北京时间约 04:30-05:30）由收盘链自动生成覆盖。</div>';
+      + '<b>备选池等隔夜美股确认</b>：' + esc(p.note || "隔夜美股场次未定")
+      + '。终版在次日美股收盘后（北京时间约 04:30-05:30）自动生成。</div>';
     if (p.validation) ph += '<div style="margin-top:8px;font-size:13px;color:var(--text-2)">昨日池验证：'
-      + (p.validation.ok ? '已记档（' + ((p.validation.picks || []).length) + ' 只）' : esc(p.validation.note || p.validation.error || "-")) + '</div>';
-    if (p.optimizer) ph += '<div style="font-size:13px;color:var(--text-2)">优化器：' + esc(p.optimizer.version || "-")
+      + (p.validation.ok ? '已记录（' + ((p.validation.picks || []).length) + ' 只）' : esc(p.validation.note || p.validation.error || "-")) + '</div>';
+    if (p.optimizer) ph += '<div style="font-size:13px;color:var(--text-2)">自动调参：' + esc(p.optimizer.version || "-")
       + ' · ' + esc(p.optimizer.note || p.optimizer.error || "") + '</div>';
     box.innerHTML = ph;
     return;
   }
-  if (!p.ok) { box.innerHTML = '<div class="sp-empty">' + esc(p.error || "暂无备选池数据（历史快照未含该模块，可运行回填）。") + "</div>"; return; }
+  if (!p.ok) { box.innerHTML = '<div class="sp-empty">' + esc(p.error || "暂无备选池数据。") + "</div>"; return; }
   const mk = p.market || {}, rk = p.risk || {}, cc = p.concl || {};
   const stars = n => "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
   const f1 = v => (v == null || !isFinite(v)) ? "-" : (v > 0 ? "+" : "") + (+v).toFixed(2) + "%";
-  let h = '<div class="sp-rules-grid" style="grid-template-columns:1fr">';
+  let h = '';
   const va = p.validation, op = p.optimizer;
   if (va || op) {
-    h += '<div class="sp-rule-card"><h4>〇、昨日备选池验证与自我优化</h4>';
+    h += '<details class="sp-rule-card sp-review-card"><summary><b>策略复盘与自检</b>'
+      + '<span class="sp-note">昨日备选池验证 / 自动调参 / 样本外，点开看</span></summary>'
+      + '<div class="sp-rules-grid" style="grid-template-columns:1fr">';
     if (va && va.ok && (va.picks || []).length) {
       const st = va.stats || {};
       const chip = (label, s) => s && s.valid ? ('<span class="sp-badge" style="margin-right:6px;color:' + (s.avg_close >= 0 ? "var(--up)" : "var(--down)") + '">'
-        + label + ' n=' + s.valid + ' 胜率' + s.win_rate + '% 均次日' + f1(s.avg_close)
-        + (s.strong_sector_rate != null ? ' · 强于板块' + s.strong_sector_rate + '%' : '') + '</span>') : "";
+        + label + ' · 样本 ' + s.valid + ' · 胜率 ' + s.win_rate + '% · 次日均 ' + f1(s.avg_close)
+        + (s.strong_sector_rate != null ? ' · 强于板块 ' + s.strong_sector_rate + '%' : '') + '</span>') : "";
       h += '<div style="margin:4px 0 8px;font-size:12px;color:var(--text-2)"><span style="font-family:var(--mono)">' + esc(va.date || "-") + '</span> 选出的标的今日表现：'
         + chip("涨停组", st.lu) + chip("低吸组", st.nlu)
         + (st.overall && st.overall.valid ? ('<span class="sp-badge">买点触发率 ' + st.overall.buy_trigger_rate + '%</span>') : "")
@@ -1173,53 +1185,53 @@ function renderPool() {
           if (!ok.length) return "";
           const iw = ok.filter(function (x) { return x.in_window; }).length;
           const hi = ok.filter(function (x) { return x.in_window === false && x.open > 0; }).length;
-          return '<span class="sp-badge" style="color:' + (iw ? "var(--text-2)" : "var(--gold)") + '">可成交 '
-            + iw + '/' + ok.length + (hi ? '（高开超窗 ' + hi + '）' : '') + '</span>';
+          return '<span class="sp-badge" style="color:' + (iw ? "var(--text-2)" : "var(--gold)") + '">能买到 '
+            + iw + '/' + ok.length + (hi ? '（高开超出买点范围 ' + hi + '）' : '') + '</span>';
         })() + '</div>';
       if (va.note) h += '<div style="margin:0 0 6px;font-size:12px;color:var(--gold)">⚠ ' + esc(va.note) + '</div>';
       const ex = st.exec;
       const exg = (k, lbl) => { const e = ex && ex[k];
         if (!e || !e.n_exec) return "";
-        return lbl + ' 可成交 ' + e.n_exec + ' · 均益 ' + (e.pnl_avg ?? "-") + '% · MFE +'
-          + (e.mfe_avg ?? "-") + '% / MAE ' + (e.mae_avg ?? "-") + '%'
-          + (e.stop_hit ? '（止损 ' + e.stop_hit + '，误触 ' + e.stop_whipsaw + '）' : '');
+        return lbl + ' 能买到 ' + e.n_exec + ' · 平均 ' + (e.pnl_avg ?? "-") + '% · 最大浮盈 +'
+          + (e.mfe_avg ?? "-") + '% / 最大浮亏 ' + (e.mae_avg ?? "-") + '%'
+          + (e.stop_hit ? '（止损 ' + e.stop_hit + ' 次，误触 ' + e.stop_whipsaw + ' 次）' : '');
       };
       const exLine = [exg("lu", "涨停组"), exg("nlu", "低吸组")].filter(Boolean).join('　');
       // 口径标注（2026-10-16 C15「修测量」）：本行沿用「T+1 当日止损」约定，
       // A 股当日买入不可卖 → 是乐观诊断代理，不是能拿到手的收益。
       if (exLine) h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">'
-        + esc((ex && ex._label) || '诊断代理·T+1 当日止损（不可执行）') + '：' + exLine + '</div>';
+        + esc((ex && ex._label) || '参考：T+1 当日止损（A股当天不能卖，做不到）') + '：' + exLine + '</div>';
       // 制度口径（可执行）：T+1 买 → T+2 卖 → 含费；近 20 个验证日滚动
       const t2 = st.exec_t2;
       if (t2 && t2.overall && t2.overall.n_exec) {
         const g = (k, lbl) => { const e = t2[k]; return (e && e.n_exec)
-          ? lbl + ' 可成交 ' + e.n_exec + ' 净均 ' + (e.pnl_avg ?? "-") + '% 收红 ' + (e.win_rate ?? "-") + '%' : ""; };
+          ? lbl + ' 能买到 ' + e.n_exec + ' · 平均净收益 ' + (e.pnl_avg ?? "-") + '% · 收红率 ' + (e.win_rate ?? "-") + '%' : ""; };
         const gl = [g("lu", "涨停组"), g("nlu", "低吸组")].filter(Boolean).join('　');
         const col = t2.overall.pnl_avg >= 0 ? "var(--up)" : "var(--down)";
         const rng = (t2.date_from && t2.date_to) ? (t2.date_from + '~' + t2.date_to + '，') : "";
         h += '<div style="margin:0 0 8px;font-size:12px;color:var(--text-2)">'
-          + esc(t2.label || '制度口径（T+1 买 → T+2 卖，含费）')
-          + '：' + rng + '已补算 ' + (t2.days ?? "-") + ' 日 <b style="color:' + col + '">净均 '
-          + (t2.overall.pnl_avg ?? "-") + '%</b>（收红 ' + (t2.overall.win_rate ?? "-")
-          + '%，可成交 ' + t2.overall.n_exec + '/' + t2.overall.n + '）'
-          + (gl ? '　' + gl : '') + '　<span style="color:var(--gold)">← 决策用这一行</span></div>';
+          + esc(t2.label || '按规则：T+1 买、T+2 卖（含费）')
+          + '：' + rng + '已补齐 ' + (t2.days ?? "-") + ' 日 <b style="color:' + col + '">平均净收益 '
+          + (t2.overall.pnl_avg ?? "-") + '%</b>（收红率 ' + (t2.overall.win_rate ?? "-")
+          + '%，能买到 ' + t2.overall.n_exec + '/' + t2.overall.n + '）'
+          + (gl ? '　' + gl : '') + '　<span style="color:var(--gold)">← 看这一行</span></div>';
       }
       (va.picks || []).forEach(x => {
         const done = x.close != null;
         h += '<div style="margin:4px 0;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-1);font-size:13px">'
-          + '<b>' + esc(x.name || x.code) + '</b> <span style="color:var(--text-2)">' + esc(x.code) + '·' + (x.group === "lu" ? "涨停板" : "低吸板") + '·入选分 ' + esc(x.pick_score ?? "-") + '</span>　'
+          + '<b>' + esc(x.name || x.code) + '</b> <span style="color:var(--text-2)">' + esc(x.code) + '·' + (x.group === "lu" ? "涨停板" : "低吸板") + '·评分 ' + esc(x.pick_score ?? "-") + '</span>　'
           + (done
             ? ('开盘 <b style="color:' + (x.open >= 0 ? "var(--up)" : "var(--down)") + '">' + f1(x.open) + '</b> → 收盘 <b style="color:' + (x.close >= 0 ? "var(--up)" : "var(--down)") + '">' + f1(x.close) + '</b>'
               + '（最高 ' + f1(x.high) + ' / 最低 ' + f1(x.low) + '）'
               + '　<span class="sp-badge" style="color:' + (x.buy_triggered ? "var(--up)" : "var(--gold)") + '">' + (x.buy_triggered ? "买点触发" : "买点未触发") + '</span>'
               + (x.risk_hit ? '<span class="sp-badge sev">触发风险位</span>' : '')
               + (x.ind_pct != null ? '　<span style="color:var(--text-2)">板块' + esc(x.industry || "-") + ' ' + f1(x.ind_pct) + '·' + (x.strong_sector ? "强于" : "弱于") + '板块</span>' : '')
-              + '　<span style="color:var(--text-2)">归因：' + esc(x.attribution || "-") + '</span>'
+              + '　<span style="color:var(--text-2)">原因：' + esc(x.attribution || "-") + '</span>'
               + (x.exec_t2 && x.exec_t2.net != null
-                ? '　<span class="sp-badge" style="color:' + (x.exec_t2.net >= 0 ? "var(--up)" : "var(--down)") + '">制度口径 T+2 净 ' + x.exec_t2.net + '%</span>'
+                ? '　<span class="sp-badge" style="color:' + (x.exec_t2.net >= 0 ? "var(--up)" : "var(--down)") + '">T+2 净收益 ' + x.exec_t2.net + '%</span>'
                   + (x.exec_t2.risk_low_hit ? '<span class="sp-badge sev">T+1 破风险位(不可卖)</span>' : '')
                 : '')
-              + (x.data_src === "em" ? '<span class="sp-badge" style="color:var(--gold)">东财备源</span>' : ''))
+              + (x.data_src === "em" ? '<span class="sp-badge" style="color:var(--gold)">东财补数</span>' : ''))
             : ('<span style="color:var(--text-2)">' + esc(x.attribution || "停牌/数据缺失") + '</span>'))
           + '</div>';
       });
@@ -1228,59 +1240,59 @@ function renderPool() {
     }
     if (op) {
       const np = Object.values(op.penalties || {}).reduce((a, m) => a + Object.keys(m || {}).length, 0);
-      h += '<div style="margin-top:6px;font-size:13px;color:var(--text-2)">🔄 自我优化器 <b style="color:var(--gold)">' + esc(op.version || "-") + '</b>'
-        + ' · 入选门槛 涨停 ' + esc((op.min_score || {}).lu ?? "-") + ' / 低吸 ' + esc((op.min_score || {}).nlu ?? "-")
-        + ' · 生效惩罚 ' + np + ' 项'
-        + ' · 滚动窗口 ' + esc(op.window_days ?? 45) + ' 日（成交样本 涨停 ' + esc((op.samples || {}).lu ?? 0) + ' / 低吸 ' + esc((op.samples || {}).nlu ?? 0)
+      h += '<div style="margin-top:6px;font-size:13px;color:var(--text-2)">策略自检 <b style="color:var(--gold)">' + esc(op.version || "-") + '</b>'
+        + ' · 入选分数门槛 涨停 ' + esc((op.min_score || {}).lu ?? "-") + ' / 低吸 ' + esc((op.min_score || {}).nlu ?? "-")
+        + ' · 参数惩罚 ' + np + ' 项'
+        + ' · 最近 ' + esc(op.window_days ?? 45) + ' 个交易日（成交样本 涨停 ' + esc((op.samples || {}).lu ?? 0) + ' / 低吸 ' + esc((op.samples || {}).nlu ?? 0)
         + ((op.n_cand && (op.n_cand.lu != null)) ? '，候选 ' + esc(op.n_cand.lu) + ' / ' + esc(op.n_cand.nlu) : '') + '）'
         + (op.exec_rate && op.exec_rate.lu != null ? ' · 成交率 涨停 ' + esc(op.exec_rate.lu) + '% / 低吸 ' + esc(op.exec_rate.nlu) + '%' : '')
-        + (op.learn_metric ? '<br>学习目标：' + esc(op.learn_metric) : '')
+        + (op.learn_metric ? '<br>优化目标：' + esc(op.learn_metric) : '')
         + '<br>' + esc(op.note || "") + (op.error ? ' <span class="sp-badge sev">' + esc(op.error) + '</span>' : '') + '</div>';
       // 样本外追踪（C7 固化后 rules=c7 验证闭环）+ 到期复审 + 观察项到期
       const oos = op.oos;
       if (oos) {
         const vd = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], empty: ["var(--text-2)", "待积累"] }[oos.verdict] || ["var(--text-2)", esc(oos.verdict)];
-        h += '<div style="margin-top:8px;font-size:13px">📡 <b>样本外追踪</b>'
-          + '（基线=调参区间 ' + esc(oos.baseline.win_rate) + '% / +' + (+oos.baseline.avg_close).toFixed(2) + '%）：<b style="color:' + vd[0] + '">' + vd[1] + '</b>';
+        h += '<div style="margin-top:8px;font-size:13px"><b>样本外追踪</b>'
+          + '（调参期基线 ' + esc(oos.baseline.win_rate) + '% / +' + (+oos.baseline.avg_close).toFixed(2) + '%）：<b style="color:' + vd[0] + '">' + vd[1] + '</b>';
         // 可成交口径（2026-11-03 修测量）：冻结口径的分母含开盘超窗、买不到的票，
         // 两段并列展示；账户实际发生的是这一段。
         const _ex = oos.exec;
         if (_ex && _ex.n) {
           const ev = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"], accumulating: ["var(--text-2)", "样本积累中"], empty: ["var(--text-2)", "无成交"] }[_ex.verdict] || ["var(--text-2)", esc(_ex.verdict)];
           const col = _ex.pnl_avg >= 0 ? "var(--up)" : "var(--down)";
-          h += '<div style="font-size:12px;margin-top:3px">💸 <b>可成交口径</b>（决策看这一行）：成交 <b>' + _ex.n + '</b>/' + _ex.n_all
-            + '（成交率 ' + esc(_ex.fill_rate) + '%）· 净均 <b style="color:' + col + '">' + f1(_ex.pnl_avg) + '</b>'
-            + ' · 收红 ' + esc(_ex.win_rate ?? "-") + '% · 判定 <b style="color:' + ev[0] + '">' + ev[1] + '</b>'
+          h += '<div style="font-size:12px;margin-top:3px"><b>能买到的单</b>（看这一行）：成交 <b>' + _ex.n + '</b>/' + _ex.n_all
+            + '（成交率 ' + esc(_ex.fill_rate) + '%）· 平均净收益 <b style="color:' + col + '">' + f1(_ex.pnl_avg) + '</b>'
+            + ' · 收红率 ' + esc(_ex.win_rate ?? "-") + '% · 判定 <b style="color:' + ev[0] + '">' + ev[1] + '</b>'
             + '<div style="color:var(--text-2)">　对比基线 +' + (+_ex.baseline.pnl_avg).toFixed(2) + '%（' + esc(_ex.baseline.source)
-            + '）；成交少于 ' + esc(_ex.min_n) + ' 笔不下结论</div></div>';
+            + '）；样本少于 ' + esc(_ex.min_n) + ' 笔不下结论</div></div>';
         } else if (_ex) {
-          h += '<div style="font-size:12px;margin-top:3px;color:var(--text-2)">💸 可成交口径：尚无成交样本（候选 ' + esc(_ex.n_all ?? 0) + ' 笔全部开盘超窗，或 T+2 未补算）</div>';
+          h += '<div style="font-size:12px;margin-top:3px;color:var(--text-2)">能买到的单：尚无成交样本（候选 ' + esc(_ex.n_all ?? 0) + ' 笔全部超出买点范围，或 T+2 未补齐）</div>';
         }
         const dr = oos.drift;
         if (dr && dr.level && dr.level !== "accumulating" && dr.n > 0) {
           const dl = { ok: ["var(--up)", "正常"], warn: ["var(--gold)", "回落"], severe: ["var(--down)", "严重衰减"] }[dr.level] || ["var(--text-2)", esc(dr.level)];
-          h += '<div style="font-size:12px;margin-top:2px">📉 <b>近端漂移</b>（最近 ' + esc(dr.window_days) + ' 个验证日 / ' + esc(dr.n) + ' 笔）：'
+          h += '<div style="font-size:12px;margin-top:2px"><b>近端漂移</b>（最近 ' + esc(dr.window_days) + ' 个交易日 / ' + esc(dr.n) + ' 笔）：'
             + '<b style="color:' + dl[0] + '">' + dl[1] + '</b>'
-            + ' · 胜率 ' + esc(dr.win_rate) + '%（较基线回落 ' + esc(dr.d_win ?? 0) + 'pct）'
-            + ' · 均次 ' + f1(dr.avg_close) + '%（差 ' + esc(dr.d_avg ?? 0) + 'pct）</div>';
+            + ' · 胜率 ' + esc(dr.win_rate) + '%（比基线低 ' + esc(dr.d_win ?? 0) + ' 个点）'
+            + ' · 平均 ' + f1(dr.avg_close) + '%（差 ' + esc(dr.d_avg ?? 0) + ' 个点）</div>';
         }
         if (oos.n > 0) {
-          h += ' 自 ' + esc(oos.since || "-") + ' 已积累 <b>' + oos.days + '</b> 个验证日 / ' + oos.n + ' 笔：'
-            + '胜率 <b>' + esc(oos.win_rate) + '%</b> · 均次 <b>' + f1(oos.avg_close) + '</b>'
+          h += ' 从 ' + esc(oos.since || "-") + ' 起已积累 <b>' + oos.days + '</b> 个交易日 / ' + oos.n + ' 笔：'
+            + '胜率 <b>' + esc(oos.win_rate) + '%</b> · 平均 <b>' + f1(oos.avg_close) + '</b>'
             + (oos.trigger_rate != null ? ' · 触发率 ' + oos.trigger_rate + '%' : '')
             + (oos.strong_concept_rate != null ? ' · 强于概念 ' + oos.strong_concept_rate + '%' : '')
-            + ' · 距下次复审 ' + (oos.next_review_in == null ? "-" : oos.next_review_in) + ' 个验证日';
+            + ' · 距下次复查 ' + (oos.next_review_in == null ? "-" : oos.next_review_in) + ' 个交易日';
           (oos.per_day || []).slice(-5).forEach(function (d) {
-            h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">' + esc(d.date) + '：n=' + d.valid
-              + (d.win_rate != null ? ' · 胜率 ' + d.win_rate + '% · 均次 ' + f1(d.avg_close) : '（无有效验证）') + '</div>';
+            h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">' + esc(d.date) + '：样本 ' + d.valid
+              + (d.win_rate != null ? ' · 胜率 ' + d.win_rate + '% · 平均 ' + f1(d.avg_close) : '（无有效验证）') + '</div>';
           });
         } else {
-          h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">样本外积累中——首笔 C7 备选池将于下一交易日验证后计入。</div>';
+          h += '<div style="font-size:12px;color:var(--text-2);margin-top:2px">样本外积累中，下一交易日起计入。</div>';
         }
         (oos.reviews || []).forEach(function (r) {
           const vc = r.verdict === "ok" ? "var(--up)" : (r.verdict === "warn" ? "var(--gold)" : "var(--down)");
-          h += '<div style="font-size:12px;margin-top:2px"><b style="color:' + vc + '">到期复审 ' + esc(r.date) + '</b>'
-            + '（' + esc(r.n_days) + ' 日 / ' + esc(r.n) + ' 笔，胜率 ' + esc(r.win_rate) + '% · 均次 ' + f1(r.avg_close) + '）：' + esc(r.note) + '</div>';
+          h += '<div style="font-size:12px;margin-top:2px"><b style="color:' + vc + '">定期复查 ' + esc(r.date) + '</b>'
+            + '（' + esc(r.n_days) + ' 日 / ' + esc(r.n) + ' 笔，胜率 ' + esc(r.win_rate) + '% · 平均 ' + f1(r.avg_close) + '）：' + esc(r.note) + '</div>';
         });
         h += '</div>';
       }
@@ -1288,22 +1300,29 @@ function renderPool() {
       if (ob) {
         const cc = ob.concept_cold || {}, sc = ob.strong_concept || {};
         const obTxt = function (o, escMsg, closedMsg) {
-          if (o.status === "escalate") return '<b style="color:var(--down)">到线升级</b>：' + escMsg;
-          if (o.status === "closed") return '<span style="color:var(--text-2)">销项</span>：' + closedMsg;
+          if (o.status === "escalate") return '<b style="color:var(--down)">已到线，需处理</b>：' + escMsg;
+          if (o.status === "closed") return '<span style="color:var(--text-2)">已结项</span>：' + closedMsg;
           return '观察中 ' + esc(o.n) + '/' + esc((o.thresholds || {}).n ?? "-");
         };
-        h += '<div style="margin-top:6px;font-size:12px;color:var(--text-2)">🔭 观察项到期：'
-          + '①概念温吞桶 n=' + esc(cc.n ?? 0) + (cc.avg_close != null ? ' 均次 ' + f1(cc.avg_close) : '') + ' → '
-          + obTxt(cc, '均次≤-0.4%，下轮迭代建议把概念家数<3 由降权升为硬排除', '负桶未证实（均次优于 -0.4% 阈），不再跟踪')
-          + '；②强于概念率 n=' + esc(sc.n ?? 0) + (sc.rate != null ? ' 率 ' + sc.rate + '%' : '') + ' → '
-          + obTxt(sc, '率低于阈值，概念因子有效性存疑，提示复审', '难跑赢但无反向证据，维持仅监控、不作门槛')
+        h += '<div style="margin-top:6px;font-size:12px;color:var(--text-2)">观察项到期：'
+          + '①概念弱、涨停家数少的票：样本 ' + esc(cc.n ?? 0) + (cc.avg_close != null ? ' · 平均 ' + f1(cc.avg_close) : '') + ' → '
+          + obTxt(cc, '平均≤-0.4%，下轮建议把“概念内涨停<3家”从降权改为直接排除', '没有变差（平均优于 -0.4%），不再跟踪')
+          + '；②强于概念率：样本 ' + esc(sc.n ?? 0) + (sc.rate != null ? ' · 比例 ' + sc.rate + '%' : '') + ' → '
+          + obTxt(sc, '比例低于门槛，概念因子的作用存疑，需要复查', '难跑赢但没有反向证据，只监控、不作门槛')
           + '</div>';
       }
     }
-    h += '</div>';
+    h += '</div></details>';
   }
+  // 后端判断串是规则引擎输出（「防守（震荡）·涨停30家·…」），加空格后才好读
+  const humanMarket = s => String(s || "-")
+    .replace(/·/g, " · ")
+    .replace(/([^\s\d])(\d+)日/g, "$1 $2 日")
+    .replace(/(\d+)家/g, "$1 家")
+    .replace(/(\d+)日/g, "$1 日")
+    .replace(/量能\s*/g, "量能 ");
   h += '<div class="sp-rule-card"><h4>一、明日市场判断</h4><ul>'
-    + '<li>情绪判断：' + esc(mk["情绪判断"] || "-") + '</li>'
+    + '<li>情绪判断：' + esc(humanMarket(mk["情绪判断"])) + '</li>'
     + '<li>主线方向：' + esc(mk["主线方向"] || "-") + '</li></ul></div>';
   // 注：原「操作策略」行已删——与「四、最终结论·明日最适合的策略」逐字相同
   // （market.操作策略 与 concl.策略 同源，全 174 份快照 100% 一致），保留在「四」。
@@ -1318,26 +1337,48 @@ function renderPool() {
       + '<span style="color:var(--gold);letter-spacing:2px">' + stars(x["入选强度"]) + '</span></div>'
       + '<ul style="margin:4px 0 0">'
       + '<li>所属板块：' + esc(x["所属板块"]) + (x["所属概念"] && x["所属概念"] !== "-" ? '（概念：<b style="color:var(--gold)">' + esc(x["所属概念"]) + '</b>）' : '')
-      + '（' + esc(x["角色"]) + (x["类型"] === "涨停板" ? ('·' + esc(x["连板"]) + '板') : '') + '·得分 ' + esc(x["得分"]) + '）</li>'
+      + '（' + esc(x["角色"]) + (x["类型"] === "涨停板" ? ('·' + esc(x["连板"]) + '板') : '') + '·评分 ' + esc(x["得分"]) + '）</li>'
       + '<li>核心逻辑：' + esc(x["核心逻辑"]) + '</li>'
       + '<li>明日触发条件：' + esc(x["明日触发条件"]) + '</li>'
       + '<li>参考关注区间：' + esc(x["参考关注区间"]) + '</li>'
       + '<li>风险点：' + esc(x["风险点"]) + '</li></ul></div>';
   });
-  if (!(p.picks || []).length) h += '<div class="sp-empty">当日无符合筛选原则的标的。</div>';
+  if (!(p.picks || []).length) h += '<div class="sp-empty">今天没有符合筛选条件的股票。</div>';
   h += '</div>';
-  h += '<div class="sp-rule-card"><h4>三、风险提醒</h4><ul>'
-    + '<li>放弃/降仓信号：' + (rk.abort || []).map(esc).join('；') + '</li>'
-    + '<li>需要规避的方向：' + (rk.avoid || []).map(esc).join('；') + '</li></ul></div>';
+  // 风险条目按「；」拆成多行，长句规则才扫得动
+  const splitRules = arr => (arr || []).reduce(function (acc, s) {
+    String(s).split(/[；;]/).forEach(function (x) { if (x.trim()) acc.push(x.trim()); });
+    return acc;
+  }, []);
+  h += '<div class="sp-rule-card"><h4>三、风险提醒</h4>'
+    + '<div class="sp-note" style="margin:0 0 4px">放弃 / 降仓条件</div><ul>'
+    + splitRules(rk.abort).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>'
+    + '<div class="sp-note" style="margin:8px 0 4px">不去碰的股票</div><ul>'
+    + splitRules(rk.avoid).map(x => '<li>' + esc(x.replace(/[,，]?\s*C_Final/g, "")) + '</li>').join('') + '</ul></div>';
+  // 后端结论串是规则引擎输出（「环境=防守·配额…（资金管理层 S1）」），转成可读句子
+  const humanStrategy = s => String(s || "-")
+    .replace(/环境=/g, "环境：")
+    .replace(/涨停(\d+)\s*\+\s*非涨停(\d+)/g, "涨停组 $1 只、非涨停组 $2 只")
+    .replace(/配额\s*/g, "最多买")
+    .replace(/纪律执行买点\s*\/\s*风险位/g, "按买点和风险位执行")
+    .replace(/（资金管理层\s*S\d+）/g, "")
+    .replace(/·/g, "；");
   h += '<div class="sp-rule-card"><h4>四、最终结论</h4><ul>'
-    + '<li>明日最适合的策略是：' + esc(cc["策略"] || "-") + '</li>'
+    + '<li>明日策略：' + esc(humanStrategy(cc["策略"])) + '</li>'
     // 「最优先关注」行：有票时即「二」的第 1 条（已在该条打「最优先关注」标记，
     // 不重复展示）；空仓日（后端 picks 为空 → cc.最优先关注="空仓观察"）无对应
     // 标的可引用，仍在此显式给出，避免「空仓」结论丢失（0915 实例）。
     + ((p.picks || []).length ? '' : '<li>最优先关注：' + esc(cc["最优先关注"] || "空仓观察") + '</li>')
-    + '<li>仅观察不急于买入：' + esc(cc["仅观察不急于买入"] || "-") + '</li></ul></div>';
+    + '<li>仅观察不急于买入：' + esc((cc["仅观察不急于买入"] || "").replace(/^-$/, "无") || "无") + '</li></ul></div>';
   h += '</div>';
-  if (p.note) h += '<div class="sp-note" style="margin-top:8px">' + esc(p.note) + '</div>';
+  /* 策略复盘 details 先拼后移：结论在前，自检收在后面（保持 DOM 只渲染一次） */
+  const _cut = h.indexOf('</details>');
+  if (_cut > 0 && h.trimStart().startsWith('<details')) {
+    const _end = _cut + '</details>'.length;
+    h = h.slice(_end) + h.slice(0, _end);
+  }
+  if (p.note) h += '<details class="sp-method" style="margin-top:8px"><summary>数据与规则说明</summary>'
+    + '<div class="sp-note">' + esc(p.note) + '</div></details>';
   box.innerHTML = h;
 }
 
@@ -1369,7 +1410,7 @@ async function loadBoardStrength() {
       <div class="bar-track"><div class="bar-fill" style="width:${(Math.abs(r.cum) / maxAbs * 100).toFixed(1)}%;background:${r.cum >= 0 ? "var(--up)" : "var(--down)"}"></div></div>
       <div class="bar-val ${cls(r.cum)}">${sign(r.cum)}%</div>
     </div>`;
-    box.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:6px">最近 ${win} 个交易日累计涨幅（截至 ${esc(iso || "-")}，轮动数据）</div>
+    box.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:6px">最近 ${win} 个交易日累计涨幅（截至 ${esc(iso || "-")}）</div>
       ${top.map(bar).join("")}
       ${losers.length ? `<div style="color:var(--muted);font-size:12px;margin:12px 0 6px">领跌</div>` + losers.map(bar).join("") : ""}`;
   } catch (e) {
@@ -1567,7 +1608,7 @@ async function renderSentiment(){
       + '<span id="sentRange"></span><span style="flex:1"></span>'
       + (n > WIN ? '<span>\u21c6 按住曲线左右拖动</span><button id="sentLatest" style="padding:3px 12px;font-size:11px">\u23e9 回到最新</button>' : '')
       + '</div>'
-      + '<div style="color:var(--text-3);font-size:12px;margin-top:2px">指数 = 涨停数/连板高度/晋级率/上涨占比/跌停 多因子加权（0-100）· 拖动曲线浏览历史 · 悬停查看当日</div>';
+      + '<div style="color:var(--text-3);font-size:12px;margin-top:2px">拖动查看历史 · 悬停看当日</div>';
 
     var tip = box.querySelector("#sentTip");
     var svg = box.querySelector("#sentSvg");
@@ -1581,7 +1622,7 @@ async function renderSentiment(){
         '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">'
         + '<span style="font-size:30px;font-weight:800;font-family:Consolas,monospace">' + cur.index + '</span>'
         + '<span class="mood-pill ' + moodClsOf(cur) + '">' + esc(cur.label) + '</span>'
-        + '<span style="color:var(--text-3);font-size:13px">' + cur.date + ' · ' + fmtInfo(cur) + '</span></div>';
+        + '<span style="color:var(--text-3);font-size:13px">' + fmtMD(cur.date) + ' · ' + fmtInfo(cur) + '</span></div>';
       // —— 窗口内曲线 ——
       var pts = [];
       for (var i = lo; i <= w0; i++) pts.push(sx(i).toFixed(1) + "," + sy(series[i].index).toFixed(1));
@@ -1741,9 +1782,9 @@ async function renderRotStats(){
       // days=在榜天数（非连续），cum=窗口累计涨幅，strong=强势日(≥2%)数
       var w = p.window || 10;
       var cum = (p.cum == null ? "-" : (p.cum >= 0 ? "+" : "") + p.cum + "%");
-      return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)"><span>' + esc(p.name) + '</span><span style="color:var(--up)">在榜' + p.days + '/' + w + '日 · 累计' + cum + '</span></div>';
+      return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--line)"><span>' + esc(p.name) + '</span><span style="color:var(--up)">在榜 ' + p.days + '/' + w + ' 天 · 累计 ' + cum + '</span></div>';
     }).join("");
-    if (!per) per = '<div style="color:var(--text-3);font-size:12px">暂无满足口径的板块</div>';
+    if (!per) per = '<div style="color:var(--text-3);font-size:12px">暂无</div>';
     var newC = (view.newcomers || []).map(function(x){
       var sgn = x.pct >= 0 ? "+" : "";
       return '<span class="chip">' + esc(x.name) + ' <b>' + sgn + x.pct + '%</b></span>';
@@ -1751,13 +1792,13 @@ async function renderRotStats(){
     if (!newC) newC = '<span style="color:var(--text-3);font-size:12px">无新晋</span>';
     // 「5 日领涨」列已删：与上方「板块强度榜 · 近N日累计」同口径重复，
     // 且数据路径不同（leaders_5d 只累计每日 Top10），两处数字对不上只会互相矛盾
-    box.innerHTML = '<div style="color:var(--text-3);font-size:12px;margin-bottom:8px">统计锚定 <b style="color:var(--text-1)">' + (anchor ? iso : (d.dates[d.dates.length-1] || "--")) + '</b>' + (anchor ? "" : '（该日无逐日统计，回退最新）') + '</div>'
+    box.innerHTML = '<div style="color:var(--text-3);font-size:12px;margin-bottom:8px">截至 <b style="color:var(--text-1)">' + (anchor ? iso : (d.dates[d.dates.length-1] || "--")) + '</b>' + (anchor ? "" : '（该日无统计，显示最新）') + '</div>'
       + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px">'
-      + '<div><div style="color:var(--text-3);font-size:12px;margin-bottom:6px;letter-spacing:.04em">轮动速度 · 5日主线口径</div>'
+      + '<div><div style="color:var(--text-3);font-size:12px;margin-bottom:6px;letter-spacing:.04em">轮动速度（近 5 日主线）</div>'
       + '<div style="font-size:26px;font-weight:800;font-family:Consolas,monospace">' + (lastSpeed ? (lastSpeed.speed * 100).toFixed(0) + "%" : "--") + '</div>'
       + '<div style="color:var(--text-3);font-size:12px;margin-top:4px">' + (speedHist || "--") + '</div>'
-      + '<div style="color:var(--text-3);font-size:11px;margin-top:4px">相邻两日「近5日累计Top10」主线差异 · 高=换主线快 低=主线稳</div></div>'
-      + '<div><div style="color:var(--text-3);font-size:12px;margin-bottom:6px;letter-spacing:.04em">持续强势 · 近10日在榜≥4日 且 累计≥5%</div>' + per + '</div>'
+      + '<div style="color:var(--text-3);font-size:11px;margin-top:4px">相邻两天主线重合度：数值越高，换主线越快</div></div>'
+      + '<div><div style="color:var(--text-3);font-size:12px;margin-bottom:6px;letter-spacing:.04em">持续强势（近 10 天至少 4 天进前 10）</div>' + per + '</div>'
       + '<div><div style="color:var(--text-3);font-size:12px;margin-bottom:6px;letter-spacing:.04em">新晋 Top10 · 今日新进</div><div style="display:flex;flex-wrap:wrap;gap:6px">' + newC + '</div></div>'
       + '</div>';
   }catch(e){
@@ -1892,7 +1933,7 @@ function recapPollTick() {
   const viewing = SNAP.date;
   loadSnapshot(viewing, true).then((changed) => {
     if (changed) {
-      document.title = "A股复盘 · " + viewing;
+      document.title = "A股复盘 · " + fmtDay8(viewing);
       toast("复盘数据已更新（" + (SNAP.fetched_at || "").slice(5, 16) + "）", "ok");
       return;
     }
@@ -1900,7 +1941,7 @@ function recapPollTick() {
       if (!latest || latest === viewing) return;
       const st = $("status");
       if (st && !st.textContent) {
-        st.textContent = "ℹ 已有更新一日的复盘快照（"
+        st.textContent = "有更新一日的复盘数据（"
           + AK.dates.fmtCn(latest.slice(0, 4) + "-" + latest.slice(4, 6) + "-" + latest.slice(6, 8))
           + "），点这里查看";
         st.style.cursor = "pointer";
@@ -1918,7 +1959,7 @@ async function init() {
     first = await loadDates();
     if (first) {
       await loadSnapshot(first);
-      document.title = "A股复盘 · " + first;
+      document.title = "A股复盘 · " + fmtDay8(first);
     }
     renderSentiment();
     renderRotStats();
@@ -1930,8 +1971,8 @@ async function init() {
     // 无日期/加载失败：骨架移除后各区块的「计算中…」会永远停留——给全页一个明确空态，而不是假加载
     const main = document.querySelector("main");
     if (main) main.innerHTML = '<div class="empty" style="padding:60px 20px;text-align:center;font-size:14px;line-height:2">' +
-      (first === null && !$("status").textContent ? "暂无复盘快照" : "复盘快照未能加载")
-      + "<br><span style='font-size:12px;color:var(--muted)'>先运行抓取（右上「重新抓取」），或检查 data/recap/ 目录后刷新本页</span></div>";
+      (first === null && !$("status").textContent ? "暂无复盘数据" : "复盘数据加载失败")
+      + "<br><span style='font-size:12px;color:var(--muted)'>点右上角「重新抓取」，或稍后刷新本页</span></div>";
     if (sk) sk.remove();
     return;
   }

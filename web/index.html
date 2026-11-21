@@ -36,7 +36,8 @@ header.appbar.appbar-stack .appbar-row { overflow: hidden; }
    从窗口顶贯到底部；头部两行与隔夜外围条吸顶常驻。行高(fr)基准不变。 */
 #viewRotation { overflow-y: auto; scrollbar-gutter: stable; }
 #viewRotation > header.appbar.appbar-stack { position: sticky; top: 0; z-index: 30; }
-#overnightBar { position: sticky; top: var(--head-h, 92px); z-index: 25; }
+#overnightBar { position: sticky; top: var(--head-h, 92px); z-index: 25; flex-wrap: wrap; }
+#overnightBar > * { white-space: nowrap; }
 header .hdr-player {
   display: flex; flex-direction: column; gap: 7px;
 }
@@ -188,6 +189,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
   header .sub { display: none; }
   header .player-row2 #speedStat { display: none; }
   header .player-row2 #boardStat { display: none; }
+  #overnightBar .ob-date { display: none; }
   /* 窄屏忽略布局预设：全部面板纵向堆叠 */
   main, main[data-layout] { display: flex !important; flex-direction: column; }
   /* 手机端（2026-09-03）：回放控制行允许换行；布局预设按钮在窄屏无效（上面已强制纵堆），隐藏省空间，
@@ -230,7 +232,6 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 <header class="appbar appbar-stack">
   <div class="appbar-row">
     <h1><span class="dot">●</span> 日内轮动</h1>
-    <span class="sub">板块热力 · 日内回放 · 自选盯盘</span>
     <span id="dateSel"></span>
     <button id="btnRefresh" title="重新加载当前页面">刷新</button>
     <button id="btnFetch" title="重新抓取当日板块分钟数据"><span class="b-full">重新抓取</span><span class="b-mini">重抓</span></button>
@@ -249,20 +250,19 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
         <button class="tabbtn laybtn" data-lay="watch">盯盘</button>
         <button class="tabbtn laybtn" data-lay="research">研究</button>
       </span>
-      <button id="btnSummary" title="生成今日轮动摘要（Markdown，自动复制+下载）">导出小结</button>
+      <button id="btnSummary" title="导出今日轮动小结（Markdown，自动复制并下载）">导出</button>
     </div>
     <div class="player-row2">
       <span id="modeBadge" class="badge">加载中…</span>
-      <button id="btnReset">⟲ 回到开盘</button>
-      <button id="btnLive" style="display:none">⏩ 回到实时</button>
-      <button id="btnNotify" title="板块放量异动时系统通知（需授权）">🔔 告警关</button>
-      <span id="notifyHint" style="display:none;font-size:11px;color:var(--text-2);background:var(--up-soft);border:1px solid var(--up-line);border-radius:5px;padding:2px 8px">首次使用？点这里可开启盘中告警：放量异动 / 尾盘拉升 / 排名突变会弹系统通知</span>
-      <span class="stat" id="speedStat">帧间隔 700ms</span>
-      <select id="playSpeedCtrl" title="播放速度（每帧停留时长）" style="font-size:11px;padding:3px 6px">
-        <option value="1000">慢 · 1秒/分钟</option>
-        <option value="700" selected>常 · 0.7秒/分钟</option>
-        <option value="450">快 · 0.45秒/分钟</option>
-        <option value="250">超快 · 0.25秒/分钟</option>
+      <button id="btnReset">回到开盘</button>
+      <button id="btnLive" style="display:none">回到实时</button>
+      <button id="btnNotify" title="放量异动、尾盘拉升、排名突变时弹系统通知">提醒·关</button>
+      <span id="notifyHint" style="display:none;font-size:11px;color:var(--text-2);background:var(--up-soft);border:1px solid var(--up-line);border-radius:5px;padding:2px 8px">点这里开启盘中提醒（放量 / 尾盘拉升 / 排名突变）</span>
+      <select id="playSpeedCtrl" title="回放速度" style="font-size:11px;padding:3px 6px">
+        <option value="1000">慢</option>
+        <option value="700" selected>正常</option>
+        <option value="450">快</option>
+        <option value="250">很快</option>
       </select>
       <span class="stat" id="boardStat"></span>
       <span class="stat" id="alertStat" style="display:none;color:var(--up)"></span>
@@ -274,8 +274,8 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 </header>
 
 <div id="alertPanel" style="display:none;padding:10px 18px;background:var(--bg-2);border-bottom:1px solid var(--line);font-size:13px;color:var(--text-2)">
-  <label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" id="cfgEnabled"> 启用提醒</label>
-  <label style="margin-right:16px">自选涨跌≥ <input type="number" id="cfgWatchPct" style="width:58px;background:var(--bg-3);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:2px 6px"> %</label>
+  <b style="margin-right:14px;color:var(--text-1)">盘中提醒</b>
+  <label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px"><input type="checkbox" id="cfgEnabled"> 启用提醒</label>  <label style="margin-right:16px">自选涨跌≥ <input type="number" id="cfgWatchPct" style="width:58px;background:var(--bg-3);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:2px 6px"> %</label>
   <label style="margin-right:16px;display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="cfgWatchZt"> 自选涨停提醒</label>
   <label style="margin-right:16px">板块涨跌≥ <input type="number" id="cfgBoardPct" style="width:58px;background:var(--bg-3);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:2px 6px"> %</label>
   <label style="margin-right:16px">放量≥ <input type="number" id="cfgBoardVol" style="width:58px;background:var(--bg-3);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:2px 6px"> 倍</label>
@@ -287,10 +287,10 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 <div id="overnightBar" style="display:none;padding:6px 18px;background:var(--bg-1);border-bottom:1px solid var(--line);font-size:12px;color:var(--text-2)"></div>
 <main>
   <div id="heatPanel" class="panel">
-    <div class="head"><b>板块热力图</b><span class="sub" id="heatSubNote">面积/排序=涨跌幅（领涨最大居前），颜色=涨跌幅（红涨绿跌）</span>
-      <span class="tabs" style="margin-left:auto" title="面积口径切换">
-        <button class="tabbtn areabtn active" data-a="pct">面积=涨跌幅</button>
-        <button class="tabbtn areabtn" data-a="amt">面积=成交额</button>
+    <div class="head"><b>板块热力图</b><span class="sub" id="heatSubNote">红涨绿跌，面积可切成交额</span>
+      <span class="tabs" style="margin-left:auto" title="面积与排序方式">
+        <button class="tabbtn areabtn active" data-a="pct">按涨跌幅</button>
+        <button class="tabbtn areabtn" data-a="amt">按成交额</button>
       </span>
     </div>
     <div class="body"><div id="heatmap"></div></div>
@@ -310,7 +310,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 
   <div id="watchPanel" class="panel">
     <div class="head">
-      <b>自选股</b><span class="sub">同花顺实时 · 点击行设成本</span>
+      <b>自选股</b><span class="sub">点击行设置成本价</span>
       <select id="watchFilter" style="font-size:12px;padding:4px 6px;margin-left:auto">
         <option value="all">全部</option>
         <option value="hold">持仓</option>
@@ -329,10 +329,10 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 
   <div id="curvePanel" class="panel">
     <div class="head">
-      <b>涨跌幅曲线</b><span class="sub">点击轮动图板块：钻取个股并高亮曲线；榜单行点击切换高亮</span>
+      <b>涨跌幅曲线</b><span class="sub">点板块看个股，点榜单切换曲线</span>
       <span class="legend" style="margin-left:auto">
         <span><i style="background:var(--accent)"></i>当前时刻</span>
-        <span>红=涨 绿=跌（A股习惯）</span>
+        <span>红涨绿跌</span>
       </span>
     </div>
     <div class="body"><div id="curves"></div></div>
@@ -340,7 +340,7 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 
   <div id="signalPanel" class="panel">
     <div class="head">
-      <b>今日信号</b><span class="sub">尾盘走强 / 持续上升 / 放量异动</span>
+      <b>今日信号</b>
       <button class="tabbtn" id="btnVp" style="margin-left:auto" title="切换到量价视图（分时成交额热力 + 放量拉升识别）">量价视图</button>
     </div>
     <div class="ranklist" id="signalList"></div>
@@ -349,16 +349,16 @@ header .stat { color: var(--text-3); font-size: 12px; cursor: default; white-spa
 
   <div id="matrixPanel" class="panel">
     <div class="head">
-      <b>研究 · 分时沉淀</b>
+      <b>研究</b>
       <span class="tabs">
         <button class="tabbtn mxbtn active" data-mx="matrix">强度矩阵</button>
         <button class="tabbtn mxbtn" data-mx="patterns">日内形态</button>
-        <button class="tabbtn mxbtn" data-mx="race">多日轮动动画</button>
+        <button class="tabbtn mxbtn" data-mx="race">多日回放</button>
       </span>
       <span id="raceCtrls" style="display:none;align-items:center;gap:6px;margin-left:8px">
-        <button class="tabbtn" id="racePlay" title="播放/停止多日轮动动画">▶ 播放</button>
-        <span class="tabs" style="margin-left:0" title="动画回看窗口">
-          <button class="tabbtn racewin" data-w="5">近5日</button>
+        <button class="tabbtn" id="racePlay" title="播放/停止多日轮动回放">▶ 播放</button>
+      <span class="tabs" style="margin-left:0" title="回看窗口">
+        <button class="tabbtn racewin" data-w="5">近5日</button>
           <button class="tabbtn racewin active" data-w="10">近10日</button>
           <button class="tabbtn racewin" data-w="20">近20日</button>
           <button class="tabbtn racewin" data-w="0">全部</button>

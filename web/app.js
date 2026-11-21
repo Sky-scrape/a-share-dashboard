@@ -61,8 +61,8 @@ async function loadDay(date){
     if (demoMode) return;   // 已在演示模式且仍未取到数据：保持现状，不每拍重绘演示页
     if (DATA) {
       const b = $('modeBadge');
-      if (b) { b.textContent = '加载失败：' + (e.message || e) + '（仍展示 ' + DATA.date + ' 真实数据）'; b.className = 'badge demo'; }
-      flashStat('行情加载失败（' + (e.message || e) + '），仍展示 ' + DATA.date + ' 的真实数据，恢复后自动刷新');
+      if (b) { b.textContent = '加载失败：' + (e.message || e) + '（仍显示 ' + DATA.date + ' 的数据）'; b.className = 'badge demo'; }
+      flashStat('行情加载失败（' + (e.message || e) + '），仍显示 ' + DATA.date + ' 的数据，恢复后自动刷新');
       return;
     }
     DATA = genDemo(); demoMode = true;
@@ -81,13 +81,9 @@ async function loadDates(){
       DATE_DP.setDates(DATE_LIST);
       DATE_DP.setValue(DATA.date);
     }
-    $('modeBadge').textContent = '真实数据 ' + AK.dates.fmtCn(DATA.date);
-    $('modeBadge').className = 'badge ok';
     const cov = coverageNote();
-    if (cov && cov.warn) {
-      $('modeBadge').textContent += cov.txt;
-      $('modeBadge').className = 'badge demo';
-    }
+    $('modeBadge').textContent = cov ? cov.txt.replace(/^ · /, '') : '收盘';
+    $('modeBadge').className = cov && cov.warn ? 'badge demo' : 'badge ok';
   }catch(e){}
 }
 /* 数据覆盖度：非完整收盘（盘中采集/交集裁剪）必须显式标注，不得静默当作收盘数据 */
@@ -97,8 +93,9 @@ function coverageNote(){
   const complete = DATA.coverage ? DATA.coverage.complete === true : (n >= 241 || last === '15:00');
   if (complete) return null;
   if (DATA.date === localToday() && isTradingTimeNow())
-    return { txt: ` · 盘中 ${n} 分钟（截至 ${last}）`, warn: false };
-  let txt = ` · ⚠ 未完整收盘：${n}/241 分钟（尾点 ${last}）`;
+    return { txt: ` · 盘中（截至 ${last}）`, warn: false };
+  const miss = Math.max(0, 241 - n);
+  let txt = ` · 分时缺 ${miss} 分钟（${n}/241）`;
   if (DATA.coverage && DATA.coverage.trimmed_note) txt += ` · ${DATA.coverage.trimmed_note}`;
   return { txt, warn: true };
 }
@@ -299,7 +296,7 @@ function drawMatrix(){
   if ((mxMode === 'matrix' || mxMode === 'patterns') && !(MX.boards || []).length) {
     $('mxSub').textContent = '暂无分时沉淀可展示';
     chartNote(matrixChart, '暂无完整的盘中采集日',
-      '本面板需单日 ≥30 个分钟点才开始沉淀；轮动已切同花顺逐分钟轮询口径，下一交易日收盘后自动回填');
+      '至少需要 30 个分钟数据；下一个交易日收盘后自动补齐');
     return;
   }
   if (mxMode === 'matrix'){
@@ -583,7 +580,7 @@ function updateCurves(){
     if (!curveNoted) {
       curveNoted = true;
       chartNote(curveChart, '当日分时仅 ' + (DATA.times || []).length + ' 个点，无法成线',
-        '同花顺口径下分时曲线由盘中逐分钟快照轮询累积（采集器 09:25 起跑）\n下一个交易日 09:30 后此图自动恢复');
+        '分时曲线由盘中每分钟采集累积，下一个交易日 09:30 后自动恢复');
     }
     return;
   }
@@ -645,14 +642,12 @@ function updateRanks(){
   /* 行点击走容器级委托（下方一次性绑定）：播放时每帧重建列表，逐行 addEventListener 既冗余又是 O(n) 开销 */
 }
 function updateBoardStat(){
-  // 轮动最剧烈 Top3 + 数据质量/失败/覆盖度提示
+  // 排名跨度 Top3（轮动剧烈程度）；数据质量警告单独标出，不再重复顶部分时缺口
   const top = spans.slice(0,3).map(s=>`${esc(s.name)}(${s.span}位)`).join('、');
   let extra = '';
   if (DATA.failed && DATA.failed.length) extra += ` · ⚠ ${DATA.failed.length} 个板块采集失败`;
   if (DATA.data_quality) extra += ` · ⚠ ${esc(DATA.data_quality)}`;
-  const cov = coverageNote();
-  if (cov) extra += ` · ${esc(cov.txt).replace(/^ · /, '')}`;
-  $('boardStat').textContent = '今日轮动最剧烈: ' + top + extra;
+  $('boardStat').textContent = '今日排名变化最大：' + top + extra;
   renderSignals();
 }
 
@@ -690,9 +685,9 @@ function renderSignals(){
     ? `<div style="padding:4px 10px 2px;font-size:11px;color:var(--dim);border-top:1px solid var(--line)">${title}</div>` + rows.map(fmt).join('')
     : '';
   $('signalList').innerHTML =
-    sec('🕐 尾盘走强（末30分钟涨跌幅）', s.tail, r => row(r, `<span class="pc up">${fmtPct(r.delta)}</span>`))
-    + sec('📈 持续上升（末30分钟排名↑）', s.rise, r => row(r, `<span class="pc">↑${r.up}位</span>`))
-    + sec('⚡ 放量异动（尾盘峰值/全天均值）', s.vol, r => row(r, `<span class="pc">${r.ratio.toFixed(1)}×</span>`));
+    sec('尾盘走强（最后30分钟涨跌幅）', s.tail, r => row(r, `<span class="pc up">${fmtPct(r.delta)}</span>`))
+    + sec('持续上升（最后30分钟排名上升）', s.rise, r => row(r, `<span class="pc">↑${r.up}位</span>`))
+    + sec('放量异动（尾盘峰值 ÷ 全天均值）', s.vol, r => row(r, `<span class="pc">${r.ratio.toFixed(1)}×</span>`));
 }
 
 /* ============ 自选股（分组/成本/盈亏） ============ */
@@ -716,7 +711,7 @@ function renderVp(){
   const amts0 = codes.map(c => DATA.series[c].amounts || []);
   const anyAmt = amts0.some(a => a.length && a.some(v => v > 0));
   if (!anyAmt) {
-    box.innerHTML = '<div class="sub" style="padding:10px">当日无分时成交额数据（演示模式或采集源未提供），量价视图不可用</div>';
+    box.innerHTML = '<div class="sub" style="padding:10px">当日无分时成交额数据，量价视图暂不可用</div>';
     return;
   }
   const times = DATA.times;
@@ -750,7 +745,7 @@ function renderVp(){
       + '</span><span class="sub">主力集中在 ' + slots[si] + '（占 ' + Math.round(r.sums[si]/(r.total||1)*100) + '%）</span>'
       + '<span class="pc ' + (r.pcts[r.pcts.length-1] >= 0 ? 'up' : 'down') + '">' + fmtPct(r.pcts[r.pcts.length-1]) + '</span></div>';
   });
-  let html = surge.length ? '<div style="padding:4px 10px 2px;font-size:11px;color:var(--dim)">⚡ 放量拉升识别</div>' + surge.join('') : '';
+  let html = surge.length ? '<div style="padding:4px 10px 2px;font-size:11px;color:var(--dim)">放量拉升</div>' + surge.join('') : '';
   html += '<div style="padding:4px 10px 2px;font-size:11px;color:var(--dim);border-top:1px solid var(--line)">成交额热力（成交额 TOP15 板块 × 时段，深色=占比高）</div>';
   html += '<div style="padding:2px 10px 8px">' + top.map(r => {
     const cells = r.sums.map((v,si) => {
@@ -872,6 +867,14 @@ function addWatch(){
 let autoTimer = null;
 let autoTimers = {};   // P2-4：startAutoRefresh 建的 interval/listener 引用集中持有，保证幂等清理
 let notifyOn = false;
+/* 已授权过的浏览器直接显示「开」，避免每次进来都像是关着的 */
+try {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    notifyOn = true;
+    const nb = $('btnNotify');
+    if (nb) nb.textContent = '提醒·开';
+  }
+} catch (e) {}
 let lastSigKey = '';
 /* localToday 单一来源 /lib/util.js（AK.dates.today10）。用函数声明（提升）而非
    const 绑定：本页初始化路径多处早于本节执行，const 会踩 TDZ。 */
@@ -888,7 +891,7 @@ function updateLiveBtn(){
   const b = $('btnLive');
   if (!b) return;
   b.style.display = followLive ? 'none' : 'inline-block';
-  b.textContent = '⏩ 回到实时';
+  b.textContent = '回到实时';
 }
 $('btnLive').onclick = () => {
   followLive = true;
@@ -955,7 +958,7 @@ function checkBoardAlert(sig){
         lastBoardAlert[v.c] = { pct: 0, t: now };
         const s = DATA.series[v.c];
         const pct = s && s.pcts && s.pcts.length ? Number(s.pcts[s.pcts.length - 1]) : null;
-        notify('⚡ 板块放量异动', v.name + ' 放量 ' + v.ratio.toFixed(1) + ' 倍 · 涨跌 ' + fmtPct(pct));
+        notify('板块放量异动', v.name + ' 放量 ' + v.ratio.toFixed(1) + ' 倍 · 涨跌 ' + fmtPct(pct));
       }
     }
   }
@@ -1283,7 +1286,7 @@ function boardIntraday(name){
 }
 function drillFallbackHtml(name){
   const bd = boardIntraday(name);
-  let html = '<div class="sub" style="padding:6px 0 2px">当日复盘快照未关联到该行业（快照缺失或早于分时日期），池内个股与近5日走势暂不可用；以下为该板块当日分时小结（同花顺一级行业口径）。</div>';
+  let html = '<div class="sub" style="padding:6px 0 2px">这个行业没有关联到当日复盘数据，个股和近 5 日走势暂不可用；以下是当日分时小结。</div>';
   if (!bd) return html + '<div class="sub" style="padding:4px 0">当日分时数据也不可用。</div>';
   const row = (k, v) => '<tr><td style="padding:3px 8px;color:var(--text-3)">' + k + '</td>'
     + '<td style="padding:3px 8px;text-align:right;font-weight:700">' + v + '</td></tr>';
@@ -1308,14 +1311,14 @@ async function openDrill(name){
   try {
     const r = await fetch('/api/board-members?name=' + encodeURIComponent(name));
     if (r.status === 404) {
-      $('drillSub').textContent = '接口不存在：服务端是旧版本，请重启服务（关闭 python 进程后重新运行 start.py）';
+      $('drillSub').textContent = '页面与后台版本不一致，重启服务后再试';
       return;
     }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     if (drillName !== name || drillSeq !== seq) return;   // 已切到别的板块/已收起：过期响应不写入
     $('drillSub').textContent = j.date ? (j.date.slice(0,4) + '-' + j.date.slice(4,6) + '-' + j.date.slice(6,8))
-      + (j.match === 'none' ? ' · 快照无该行业（同为同花顺口径，正常不应出现）' : '') : '';
+      + (j.match === 'none' ? ' · 复盘数据里没有这个行业' : '') : '';
     let html = '';
     if (j.members && j.members.length) {
       html += '<div style="font-size:12px;color:var(--text-2);margin:6px 0 4px">近 5 个交易日走势</div>';
@@ -1334,21 +1337,21 @@ async function openDrill(name){
     if (j.stocks && j.stocks.length) {
       const poolName = { zt: '涨停池', zb: '炸板池', dt: '跌停池' };
       const stocks = j.stocks.slice().sort((a, b) => (b.pct == null ? -999 : b.pct) - (a.pct == null ? -999 : a.pct));   // 涨跌幅降序
-      html += '<div style="font-size:12px;color:var(--text-2);margin:10px 0 4px">当日池内个股（按涨跌幅降序，点击行送入量化回测）</div>';
+      html += '<div style="font-size:12px;color:var(--text-2);margin:10px 0 4px">当日池内个股（按涨跌幅排序，点击行加入回测）</div>';
       html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr>'
         + '<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--line)">池</th>'
         + '<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--line)">代码</th>'
         + '<th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--line)">名称</th>'
         + '<th style="text-align:right;padding:3px 8px;border-bottom:1px solid var(--line)">涨跌幅</th></tr>';
       stocks.forEach(s => {
-        html += '<tr data-code="' + esc(s.code) + '" style="cursor:pointer" title="送入量化标的池">'
+        html += '<tr data-code="' + esc(s.code) + '" style="cursor:pointer" title="加入回测标的">'
           + '<td style="padding:3px 8px">' + (poolName[s.pool] || s.pool) + '</td>'
           + '<td style="padding:3px 8px;font-family:Consolas,monospace">' + esc(s.code) + '</td>'
           + '<td style="padding:3px 8px"><b>' + esc(s.name) + '</b></td>'
           + '<td style="padding:3px 8px;text-align:right" class="' + (s.pct == null ? '' : (s.pct >= 0 ? 'up' : 'down')) + '">' + fmtPct(s.pct) + '</td></tr>';
       });
       html += '</table>';
-      html += '<div style="margin-top:8px"><button id="drillToQuant">将以上 ' + stocks.length + ' 只全部送入量化回测</button></div>';
+      html += '<div style="margin-top:8px"><button id="drillToQuant">将以上 ' + stocks.length + ' 只全部加入回测</button></div>';
     }
     if (!html) html = drillFallbackHtml(drillName);
     $('drillBody').innerHTML = html;
@@ -1368,9 +1371,9 @@ function closeDrill(){
 }
 function sendToQuant(codesArr){
   const clean = AK.cleanCodes(codesArr);   // 清洗口径单一来源（strip 非 \D 版会把 600519.SH 这类带后缀代码整只丢掉）
-  if (!clean.length) { flashStat('无可送入的代码'); return; }
+  if (!clean.length) { flashStat('没有可加入回测的代码'); return; }
   try { localStorage.setItem('A_QUANT_POOL', clean.join(' ')); } catch(e){}
-  flashStat('已送入量化标的池（' + clean.length + ' 只），正在跳转…');
+  flashStat('已加入回测标的（' + clean.length + ' 只），正在跳转…');
   setTimeout(()=>{ location.href = '/quant'; }, 600);
 }
 $('drillClose').onclick = closeDrill;
@@ -1406,16 +1409,17 @@ async function renderOvernight(){
         stale = '<span style="color:var(--gold,#8C6D1F);font-weight:700">⚠ 数据陈旧（采集任务未运行？）</span>';
       }
     } catch(e){}
-    const tone = stale ? '外围数据未更新，以下预判仅供参考'
-      : avg >= 1 ? '高开概率较大，关注强势板块接力'
-      : avg >= 0.3 ? '小幅高开概率大，开盘观望量能'
-      : avg > -0.3 ? '平开附近，关注竞价资金方向'
-      : avg > -1 ? '小幅低开概率大，留意防守型板块'
-      : '低开风险较高，谨慎追高';
-    bar.innerHTML = '<b style="flex:none;white-space:nowrap">🛏 隔夜外围：</b>' + stale + esc(names)
+    const tone = stale ? '外围数据未更新，以下判断仅供参考'
+      : avg >= 1 ? '高开概率较大'
+      : avg >= 0.3 ? '小幅高开概率大'
+      : avg > -0.3 ? '平开附近'
+      : avg > -1 ? '小幅低开概率大'
+      : '低开风险较高';
+    bar.innerHTML = '<b style="flex:none;white-space:nowrap">隔夜美股：</b>' + stale + esc(names)
+      + '<span style="margin:0 4px;color:var(--text-3)">均值</span>'
       + '<span style="margin:0 10px;color:' + (pos ? 'var(--up)' : 'var(--down)') + ';font-weight:700">' + fmtPct(avg) + '</span>'
       + '<span>' + esc(tone) + '</span>'
-      + '<span style="margin-left:auto;color:var(--text-3)">' + esc((us[0].last_date || g.date || '').slice(5)) + ' 收盘</span>';
+      + '<span class="ob-date" style="margin-left:auto;color:var(--text-3)">' + esc((us[0].last_date || g.date || '').slice(5)) + ' 收盘</span>';
     bar.style.display = 'flex';
     bar.style.alignItems = 'center';
     bar.style.gap = '6px';
@@ -1432,8 +1436,8 @@ document.querySelectorAll('.areabtn').forEach(b=>{
     document.querySelectorAll('.areabtn').forEach(x=>x.classList.toggle('active', x===b));
     const note = $('heatSubNote');
     if (note) note.textContent = heatAreaBy === 'pct'
-      ? '面积/排序=涨跌幅（领涨最大居前），颜色=涨跌幅（红涨绿跌）'
-      : '面积=成交额，颜色=涨跌幅（红涨绿跌）';
+      ? '红涨绿跌 · 面积按涨跌幅'
+      : '红涨绿跌 · 面积按成交额';
     if (DATA) updateHeat();
   };
 });
@@ -1473,12 +1477,7 @@ $('btnPlay').onclick = ()=>{
 $('btnReset').onclick = ()=>{ followLive = false; curIdx = 0; updateAll(); updateLiveBtn(); };
 $('playSpeedCtrl').onchange = () => {
   playStepMs = +$('playSpeedCtrl').value;
-  updateSpeedStat();
 };
-function updateSpeedStat(){
-  const el = $('speedStat');
-  if (el) el.textContent = '帧间隔 ' + playStepMs + 'ms';
-}
 
 $('watchAdd').onclick = addWatch;
 $('watchFilter').onchange = () => { watchFilter = $('watchFilter').value; refreshWatch(); };
@@ -1503,7 +1502,7 @@ $('btnNotify').onclick = async ()=>{
   if (!notifyOn && 'Notification' in window) {
     try {
       const p = await Notification.requestPermission();
-      if (p === 'granted') { notifyOn = true; $('btnNotify').textContent = '🔔 告警开'; }
+      if (p === 'granted') { notifyOn = true; $('btnNotify').textContent = '提醒·开'; }
       else { flashStat('通知权限被拒绝'); }
     } catch(e){}
   }
@@ -1621,7 +1620,7 @@ try { renderFreshness('freshPillSlot'); } catch(e){}
 applyLayout((function(){ try { return localStorage.getItem('rotLayout') || 'all'; } catch(e){ return 'all'; } })());
 loadDay().then(()=>{
   if(demoMode){
-    $('modeBadge').textContent = '演示模式（暂无当日数据：盘中采集任务运行后自动出现，或点「重新抓取」）';
+    $('modeBadge').textContent = '演示数据（暂无当日数据：盘中采集后自动显示，或点「重新抓取」）';
     $('modeBadge').className = 'badge demo';
   }
   updateBoardStat();

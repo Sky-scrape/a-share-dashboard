@@ -134,7 +134,6 @@ footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display:
 <body>
 <header class="appbar">
   <h1><span class="dot">●</span> 全球总览</h1>
-  <span class="sub">五城时钟 · 环球指数地图 · 中美轮动雷达 · 市场热力图</span>
   <button id="btnRefresh" title="重新加载页面">刷新</button>
   <button id="btnFetch" title="后台重新抓取全球数据（约4-5分钟）"><span class="b-full">重新抓取</span><span class="b-mini">重抓</span></button>
   <div class="spacer"></div>
@@ -149,7 +148,7 @@ footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display:
   <section class="panel" id="mapPanel">
     <div class="ph">
       <h2>环球指数地图</h2>
-      <span class="note" id="mapNote">国家底色 = 代表性指数最新涨跌幅；圆点可点击看走势</span>
+      <span class="note" id="mapNote">颜色＝代表指数涨跌 · 点圆点看走势</span>
       <div class="spacer"></div>
       <span class="note" id="mapAsOf"></span>
     </div>
@@ -181,8 +180,8 @@ footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display:
 
   <section class="panel" id="radarPanel">
     <div class="ph">
-      <h2>轮动雷达 <span style="font-family:var(--mono);font-weight:400;font-size:11px;color:var(--text-3)">ROTATION RADAR · RS × MOM · 4W TRAIL</span></h2>
-      <span class="note">X 相对强度 · Y 动量（20日）· 轨迹=近4周 · 红涨绿跌；方块=A股 菱形=美股</span>
+      <h2>轮动雷达</h2>
+      <span class="note">横轴相对强度 · 纵轴 20 日动量 · 轨迹近 4 周 · 方块 A股 / 菱形 美股</span>
       <div class="spacer"></div>
       <div class="seg" id="radarMkt">
         <button data-m="all" class="on">全部</button><button data-m="us">美股</button><button data-m="cn">中国主题</button>
@@ -197,7 +196,7 @@ footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display:
   <section class="panel" id="heatPanel">
     <div class="ph">
       <h2>市场热力图</h2>
-      <span class="note">矩形大小 = 市值 / 成交额，颜色 = <span id="heatWinNote">当日</span>涨跌幅（缺失显灰）· 点击任意块放大其板块</span>
+      <span class="note">大小＝市值，颜色＝<span id="heatWinNote">当日</span>涨跌幅 · 点击看行业</span>
       <div class="spacer"></div>
       <span class="note" id="heatAsOf"></span>
     </div>
@@ -217,7 +216,7 @@ footer { padding: 6px 18px 10px; font-size: 11px; color: var(--text-3); display:
 </main>
 
 <footer>
-  <span>数据源：新浪/同花顺(hithink)，每日收盘后抓取，非实时</span>
+  <span>每日收盘后更新 · 非实时行情</span>
   <span id="footErr"></span>
   <span>本页面仅为信息呈现，不构成投资建议</span>
 </footer>

@@ -86,6 +86,7 @@ section.tab.on { display: flex; }
 #statGrid .kpi:first-child { border-left: none; }
 #statGrid .kpi .v { font-family: var(--mono); font-size: 17px; font-weight: 700; line-height: 1.1; }
 #statGrid .kpi .k { font-size: 10px; color: var(--text-3); letter-spacing: .08em; }
+#statGrid .kpi .v, #statGrid .kpi .k { display: block; }
 main#ovMain { flex: 1; display: grid; gap: 10px; padding: 10px;
   grid-template-columns: minmax(0, 1.5fr) minmax(360px, 1fr);
   grid-template-rows: minmax(330px, auto) minmax(280px, auto) minmax(240px, auto);
@@ -213,7 +214,6 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 
 <header class="appbar">
   <h1><span class="dot">●</span> 量化平台</h1>
-  <span class="sub">造策略 · 回测 · 选股 · 信号 · 研究（引擎内置）</span>
   <button id="btnRefresh" title="重新加载页面">刷新</button>
   <div class="spacer"></div>
   <div class="navgroup" id="navgroupSlot"></div>
@@ -221,43 +221,43 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 
 <nav class="tabsbar">
   <button class="tabbtn" id="tabBtnOv" data-tab="ov">概览</button>
-  <button class="tabbtn on" id="tabBtnBuild" data-tab="build">造策略 · 回测</button>
+  <button class="tabbtn on" id="tabBtnBuild" data-tab="build">回测</button>
   <button class="tabbtn" id="tabBtnStore" data-tab="store">策略库</button>
-  <button class="tabbtn" id="tabBtnScreen" data-tab="screen">选股台</button>
+  <button class="tabbtn" id="tabBtnScreen" data-tab="screen">选股</button>
   <button class="tabbtn" id="tabBtnSignal" data-tab="signal">今日信号</button>
-  <button class="tabbtn" id="tabBtnGrid" data-tab="grid">参数研究</button>
+  <button class="tabbtn" id="tabBtnGrid" data-tab="grid">参数网格</button>
   <span class="tsep"></span>
-  <span class="thint" id="engineHint">引擎加载中…</span>
+  <span class="thint" id="engineHint">数据加载中…</span>
 </nav>
 
 <!-- ================= 概览 ================= -->
 <section class="tab" id="tabOv">
   <div id="statusbar">
-    <span class="st-card">内置引擎 <b id="rootState">…</b></span>
-    <span class="st-card">行情缓存 <b id="freshState">…</b><span class="path-mono" id="freshN"></span> <button id="btnRefreshData" title="后台任务：全量重导本地缓存（引擎 export 为整文件重写）；个股走本地 hithink 库秒级，ETF 走远端较慢">刷新缓存</button></span>
+    <span class="st-card">引擎 <b id="rootState">…</b></span>
+    <span class="st-card">本地数据 <b id="freshState">…</b><span class="path-mono" id="freshN"></span> <button id="btnRefreshData" title="后台重新导出本地缓存：个股走本地库，ETF 走远端，较慢">刷新数据</button></span>
     <span id="statGrid">
-      <span class="kpi"><span class="v" id="kpiRuns">–</span><span class="k">回测流水</span></span>
+      <span class="kpi"><span class="v" id="kpiRuns">–</span><span class="k">回测记录</span></span>
       <span class="kpi"><span class="v" id="kpiReports">–</span><span class="k">研究报告</span></span>
       <span class="kpi"><span class="v" id="kpiStrats">–</span><span class="k">策略存档</span></span>
-      <span class="kpi"><span class="v" id="kpiResearch">–</span><span class="k">研究网格</span></span>
+      <span class="kpi"><span class="v" id="kpiResearch">–</span><span class="k">参数网格</span></span>
     </span>
   </div>
   <div id="focusBar">
-    <label class="hint" style="font-weight:700;letter-spacing:.08em">聚焦分析</label>
-    <select id="ovFocusSel" style="min-width:170px"><option value="">全部跑次（总览）</option></select>
+    <label class="hint" style="font-weight:700;letter-spacing:.08em">按策略看</label>
+    <select id="ovFocusSel" style="min-width:170px"><option value="">全部回测</option></select>
     <span id="ovFocusStats"></span>
     <span style="flex:1"></span>
-    <button id="btnFocusRun" style="display:none">载入复跑</button>
-    <button id="btnFocusSig" style="display:none">跑信号</button>
+    <button id="btnFocusRun" style="display:none">载入参数</button>
+    <button id="btnFocusSig" style="display:none">生成信号</button>
     <button id="btnFocusRep" style="display:none">完整报告↗</button>
   </div>
   <main id="ovMain">
     <section class="panel" id="logPanel">
-      <div class="ph"><h2>回测流水线</h2><div class="spacer"></div><span class="note" id="logNote"></span></div>
+      <div class="ph"><h2>回测记录</h2><div class="spacer"></div><span class="note" id="logNote"></span></div>
       <div class="body"><div class="tscroll"><table class="qt" id="btTable"></table></div></div>
     </section>
     <section class="panel" id="scPanel">
-      <div class="ph"><h2>流水散点 · 收益 × 夏普</h2><span class="note">一点一次回测，气泡＝成交笔数</span></div>
+      <div class="ph"><h2>回测散点 · 收益 × 夏普</h2><span class="note">一点一次回测，气泡＝成交笔数</span></div>
       <div class="body"><div id="scChart" class="chart"></div></div>
     </section>
     <section class="panel" id="repPanel">
@@ -265,25 +265,25 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
       <div class="body"><div class="tscroll"><table class="qt" id="repTable"></table></div></div>
     </section>
     <section class="panel" id="sidePanel">
-      <div class="ph"><h2>策略库 · 信号 · 研究</h2><span class="note">落盘产物</span></div>
+      <div class="ph"><h2>策略库 · 信号 · 研究</h2><span class="note">已保存的结果</span></div>
       <div class="body"><div class="slist" id="sideList"></div></div>
     </section>
     <section class="panel" id="entryPanel">
-      <div class="ph"><h2>快速入口</h2><span class="note">全部主流程原生；进阶可走 CLI 或直接 import 引擎</span></div>
+      <div class="ph"><h2>更多</h2></div>
       <div class="body" id="entryBody">
         <div class="entry-card">
-          <span class="t">🧭 CLI / Python 进阶入口</span>
-          <span class="d">信号、网格/WF 研究、选股、成交台账均有命令行入口（如 <span class="path-mono">python -m quant_sim.tools.signals run --name X</span>），可挂计划任务无人值守；写策略直接 import quant_sim。</span>
+          <span class="t">命令行</span>
+          <span class="d">信号、网格、选股也可用命令行批量跑，方便挂计划任务。写策略用 Python 直接调用引擎。</span>
         </div>
-        <div class="entry-card"><span class="t">📐 引擎纪律（规则诚实）</span><div class="disc" id="discChips"></div></div>
+        <div class="entry-card"><span class="t">回测规则</span><div class="disc" id="discChips"></div></div>
         <div class="entry-card">
-          <span class="t">🗂 引擎文档</span><span class="d" id="docList">…</span>
-          <span class="row"><span class="hint">架构 design.md · 演进 changelog.md</span></span>
+          <span class="t">文档</span><span class="d" id="docList">…</span>
+          <span class="row"><span class="hint">设计文档 · 更新记录</span></span>
         </div>
         <div class="entry-card">
-          <span class="t">📚 回归保底</span>
-          <span class="d">115 项规则/数据/研究/选股测试守护引擎语义；本页所有数字与 CLI 同引擎同口径。</span>
-          <span class="row"><button id="btnReload">重读本页数据</button></span>
+          <span class="t">自动检查</span>
+          <span class="d">115 项检查覆盖规则、数据和选股，页面数字与命令行使用同一个引擎。</span>
+          <span class="row"><button id="btnReload">重新读取</button></span>
         </div>
       </div>
     </section>
@@ -294,11 +294,11 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 <section class="tab on" id="tabBuild">
   <div id="buildMain">
     <div class="panel" id="buildForm">
-      <div class="ph"><h2>策略表单</h2><span class="note">策略主入口 · 配置后运行，报告在右侧</span><div class="spacer"></div>
-        <button id="btnResetForm" title="恢复默认：内置族双均线 · 默认标的池/窗口/成本">重置</button><button id="btnLoadFromStore" title="从策略库载入">载入</button></div>
+      <div class="ph"><h2>策略设置</h2><span class="note">设置好后点「运行回测」</span><div class="spacer"></div>
+        <span style="display:inline-flex;gap:6px"><button id="btnResetForm" title="恢复默认：内置策略双均线 · 默认标的/窗口/成本">重置</button><button id="btnLoadFromStore" title="从策略库载入">载入</button></span></div>
       <div class="fsec">
         <div class="fh">策略类型</div>
-        <div class="frow"><span class="seg" id="kindSeg"><button data-k="builtin" class="on">内置族</button><button data-k="rule">规则搭建</button></span></div>
+        <div class="frow"><span class="seg" id="kindSeg"><button data-k="builtin" class="on">内置策略</button><button data-k="rule">规则搭建</button></span></div>
         <div id="famWrap"></div>
         <div id="ruleWrap" style="display:none">
           <div class="rulecard" id="entryCard"><div class="rh">入场规则 <select id="entryMode"><option value="all">同时满足</option><option value="any">任一满足</option></select><span style="flex:1"></span><button class="addrow" data-rule="entry">＋条件</button></div><div id="entryRows"></div></div>
@@ -316,52 +316,52 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
         <datalist id="symList"></datalist>
         <div class="frow"><label>起</label><input type="date" id="inStart" value="2023-01-01"><label>止</label><input type="date" id="inEnd"></div>
         <div class="frow"><label>基准</label><select id="inBench"></select>
-          <label>数据</label><select id="inMode"><option value="local">仅本地缓存</option><option value="auto">自动取数(hithink)</option></select></div>
-        <div class="frow"><label>标题(入流水)</label><input type="text" id="inTitle" class="fill" placeholder="留空自动生成"></div>
+          <label>数据</label><select id="inMode"><option value="local">仅用本地数据</option><option value="auto">自动取数（同花顺）</option></select></div>
+        <div class="frow"><label>标题（记入回测列表）</label><input type="text" id="inTitle" class="fill" placeholder="留空自动生成"></div>
       </div>
       <div class="fsec">
-        <div class="fh">撮合与成本</div>
+        <div class="fh">成交与费用</div>
         <div class="frow"><label>初始资金</label><input type="number" id="inCash" value="1000000" step="100000" style="width:110px">
-          <label>成交口径</label><select id="inExec"></select></div>
+          <label>成交方式</label><select id="inExec"></select></div>
         <div class="frow"><label>佣金(万)</label><input type="number" id="inComm" value="2.5" step="0.5" min="0" style="width:60px">
           <label>最低佣</label><input type="number" id="inMinC" value="5" step="1" min="0" style="width:56px">
           <label>印花税(万)</label><input type="number" id="inStamp" value="5" step="0.5" min="0" style="width:60px"></div>
         <!-- 参与率单独一行：挤在佣金行末尾会在侧栏宽度下被 flex-wrap 拆成孤儿输入框（2026-09-18 实测） -->
-        <div class="frow"><label>参与率（大资金回测按成交额占比限流）</label><input type="number" id="inPart" value="0.05" step="0.01" min="0.01" max="1" style="width:64px"></div>
+        <div class="frow"><label>参与率（最多占成交额的比例）</label><input type="number" id="inPart" value="0.05" step="0.01" min="0.01" max="1" style="width:64px"></div>
         <!-- 回撤熔断同理：跟滑点同排会挤成孤儿 -->
         <div class="frow"><label>滑点</label><select id="inSlipM"></select><input type="number" id="inSlipV" value="0.0005" step="0.0001" style="width:84px"></div>
-        <div class="frow"><label>回撤熔断%（净值回撤超限停止开新仓）</label><input type="number" id="inHalt" value="0" min="0" max="90" style="width:56px"></div>
+        <div class="frow"><label>回撤熔断%（超过后停止开仓）</label><input type="number" id="inHalt" value="0" min="0" max="90" style="width:56px"></div>
         <div class="frow"><label><input type="checkbox" id="inBlock" checked> 涨跌停禁成交</label>
           <label><input type="checkbox" id="inLiq" checked> 期末平仓</label>
-          <label>预热bar</label><input type="number" id="inWarm" value="0" min="0" max="500" style="width:64px"></div>
+          <label>预热天数</label><input type="number" id="inWarm" value="0" min="0" max="500" style="width:64px"></div>
       </div>
       <div class="fsec">
         <div class="frow" style="margin:0">
           <button class="primary" id="btnRun" style="flex:1;padding:8px">▶ 运行回测</button>
-          <button id="btnSave">💾 存策略库</button>
+          <button id="btnSave">存入策略库</button>
         </div>
-        <div class="frow"><input type="text" id="inSaveName" class="fill" placeholder="存档名（存库 / 概览聚焦归集都靠它）"></div>
+        <div class="frow"><input type="text" id="inSaveName" class="fill" placeholder="存档名（用于存库和回测归集）"></div>
       </div>
     </div>
     <div id="buildRight">
       <div id="errBox"></div>
       <div class="panel" id="eqPanel">
-        <div class="ph"><h2>回测报告</h2><div class="spacer"></div><span class="note" id="eqNote">运行一次回测开始</span>
+        <div class="ph"><h2>回测报告</h2><div class="spacer"></div><span class="note" id="eqNote">运行后显示</span>
           <a class="note" id="lnkReport" href="#" target="_blank" style="display:none">完整报告↗</a>
           <button id="btnAddCmp" style="display:none">＋加入对比</button>
-          <label class="hint"><input type="checkbox" id="chkSaveRpt" title="归档并生成自包含 HTML"> 归档</label>
-          <label class="hint"><input type="checkbox" id="chkW"> 叠加仓位</label></div>
+          <label class="hint"><input type="checkbox" id="chkSaveRpt" title="保存一份独立报告"> 保存报告</label>
+          <label class="hint"><input type="checkbox" id="chkW"> 显示仓位</label></div>
         <div id="kpiRow"></div>
         <div class="body" style="min-height:360px">
-          <div id="eqEmpty" class="empty-hint">配置左侧策略与标的池后点「▶ 运行回测」——KPI 与净值/回撤/仓位图在此渲染；历史回测可在「概览」页回看。</div>
+          <div id="eqEmpty" class="empty-hint">设置好左侧策略和标的，点「运行回测」。历史回测在「概览」查看。</div>
           <div id="eqChart" class="chart"></div>
         </div>
       </div>
       <div class="panel" id="cmpPanel" style="display:none">
-        <div class="ph"><h2>策略对比</h2><span class="note">2~4 槽 · 归一净值（起点=100）· 不写研究流水</span>
+        <div class="ph"><h2>策略对比</h2><span class="note">最多 4 条 · 净值从 100 起</span>
           <div class="spacer"></div><button class="primary" id="btnCmpRun">▶ 对比回测</button><button id="btnCmpClear">清空</button></div>
         <div class="body" style="padding:8px 10px">
-          <div id="cmpSlots"><span class="hint">跑一次回测后点报告卡头的「＋加入对比」攒槽位。</span></div>
+          <div id="cmpSlots"><span class="hint">跑完一次回测后，点报告右上角的「＋加入对比」。</span></div>
           <div id="cmpChart" class="chart" style="height:280px;display:none"></div>
           <div style="overflow:auto"><table class="qt" id="cmpTable"></table></div>
         </div>
@@ -369,15 +369,15 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
       <div class="panel" id="tradesPanel">
         <div class="ph"><h2>成交明细</h2><div class="spacer"></div><span class="note" id="tradesNote"></span></div>
         <div style="max-height:330px;overflow:auto">
-          <div id="tradesEmpty" class="empty-hint">回测后在此列出逐笔成交（含 T+1 / 涨跌停 / 风控事件标记）。</div>
+          <div id="tradesEmpty" class="empty-hint">回测后在这里列出每笔成交（含 T+1、涨跌停、止损等标记）。</div>
           <table class="qt" id="tradesTable"></table>
         </div>
       </div>
       <div class="panel" id="advPanel" style="display:none">
         <div class="body" style="padding:10px 12px">
-          <details class="adv" id="advWarns"><summary>数据口径警告</summary><div class="hint" id="warnList"></div></details>
-          <details class="adv" id="advLogs"><summary>引擎日志 / 风控事件</summary><pre class="code" id="logBox"></pre></details>
-          <details class="adv" id="advRule" style="display:none"><summary>规则代码预览（等价 Python）</summary><div class="hint" id="ruleProblems"></div><pre class="code" id="ruleCode"></pre></details>
+          <details class="adv" id="advWarns"><summary>数据提醒</summary><div class="hint" id="warnList"></div></details>
+          <details class="adv" id="advLogs"><summary>日志 / 风控事件</summary><pre class="code" id="logBox"></pre></details>
+          <details class="adv" id="advRule" style="display:none"><summary>规则代码（等价 Python）</summary><div class="hint" id="ruleProblems"></div><pre class="code" id="ruleCode"></pre></details>
         </div>
       </div>
     </div>
@@ -388,12 +388,12 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 <section class="tab" id="tabStore">
   <div class="wide">
     <div class="panel">
-      <div class="ph"><h2>策略库</h2><span class="note">规则/内置/代码三类统一存档</span>
+      <div class="ph"><h2>策略库</h2><span class="note">规则、内置、代码三种存档</span>
         <div class="spacer"></div><button id="btnStoreNew">＋ 新建</button><button id="btnStoreReload">刷新</button></div>
       <div id="storeCards" class="scards"></div>
     </div>
     <div class="panel"><div class="ph"><h2>代码存档说明</h2></div>
-      <div class="body" style="padding:10px 12px"><div class="hint">⚠️ 代码类存档回放会重新执行存档源码（分享 JSON = 分享可执行代码）：引擎默认拒绝，只有显式勾选「允许执行代码存档」才运行。写代码策略请用 CLI / Python（quant_sim.strategies.sandbox）；本页可对 code 存档跑信号（需确认来源可信并勾选允许执行）。</div></div></div>
+      <div class="body" style="padding:10px 12px"><div class="hint">⚠ 代码类存档在回放时会执行存档里的代码（分享 JSON 等于分享可执行代码）。引擎默认拒绝，只有勾选「允许执行代码存档」才会运行。写代码策略请用命令行或 Python；本页可对可信来源的代码存档跑信号。</div></div></div>
   </div>
 </section>
 
@@ -401,21 +401,21 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 <section class="tab" id="tabScreen">
   <div class="wide">
     <div class="panel">
-      <div class="ph"><h2>条件选股（两段式）</h2><span class="note">本地全市场日线因子粗筛 → 可选远端估值精筛 · quant_sim.research.screener 同引擎</span></div>
+      <div class="ph"><h2>条件选股</h2><span class="note">先按日线因子粗筛，可再加估值精筛</span></div>
       <div class="body" style="padding:10px 12px">
-        <div class="frow"><label>配方</label><select id="scTemplate"><option value="">（不用配方，手工条件）</option></select>
+        <div class="frow"><label>模板</label><select id="scTemplate"><option value="">（自定义条件）</option></select>
           <label>股票池</label><select id="scUniverse"></select>
           <label>排序</label><select id="scSort"></select>
           <label><input type="checkbox" id="scAsc"> 升序</label>
           <label>取前</label><input type="number" id="scLimit" value="60" min="1" max="400" style="width:60px"></div>
         <div class="frow"><label>板块</label><span id="scBoards" class="hint"></span>
           <label>因子窗口(日)</label><input type="number" id="scDays" value="320" min="60" max="500" style="width:64px">
-          <label><input type="checkbox" id="scEnrich"> 估值精筛(远端,慢)</label>
-          <label><input type="checkbox" id="scRefresh"> 忽略因子缓存</label></div>
+          <label><input type="checkbox" id="scEnrich"> 估值精筛（较慢）</label>
+          <label><input type="checkbox" id="scRefresh"> 不用缓存</label></div>
         <div class="frow"><textarea id="scCustom" rows="2" placeholder="自定义股票池（粘贴代码，每行/空格一个；留空用上方股票池）"></textarea></div>
         <div id="scConditions" style="margin-top:4px"></div>
         <div class="frow" style="margin-top:6px">
-          <button class="primary" id="btnScreenRun">🔍 开始选股（后台任务）</button>
+          <button class="primary" id="btnScreenRun">开始选股</button>
           <span class="hint" id="screenStatus"></span>
         </div>
         <div class="hint" id="scTmplNote"></div>
@@ -423,7 +423,7 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
     </div>
     <div class="panel">
       <div class="ph"><h2>选股结果</h2><div class="spacer"></div><span class="note" id="screenSteps"></span>
-        <button id="btnScreenFill" disabled title="把结果前 20 只回填到造策略标的池">→ 回填标的池</button></div>
+        <button id="btnScreenFill" disabled title="把结果前 20 只填入回测标的">→ 回填标的</button></div>
       <div class="funnel" id="screenChips"></div>
             <div style="max-height:520px;overflow:auto"><table class="qt" id="screenTable"></table></div>
       <div class="jobbar"><span class="st" id="screenJobLog"></span></div>
@@ -435,14 +435,14 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 <section class="tab" id="tabSignal">
   <div class="wide">
     <div class="panel">
-      <div class="ph"><h2>今日信号（明日开盘执行清单）</h2><span class="note">存档策略 → 跑到最新交易日 → 输出调仓清单 · hithink 自动取数</span></div>
+      <div class="ph"><h2>今日信号</h2><span class="note">用存档策略生成明日开盘的调仓清单</span></div>
       <div class="body" style="padding:10px 12px">
         <div class="frow"><label>策略</label><select id="sigName" style="flex:1"></select>
           <label>起始</label><input type="date" id="sigStart" value="2021-09-01">
           <label>资金</label><input type="number" id="sigCash" value="1000000" step="100000" style="width:110px"></div>
         <div class="frow"><label><input type="checkbox" id="sigAllowExec"> 允许执行代码存档（仅可信来源）</label>
           <button class="primary" id="btnSigRun">▶ 生成信号（后台任务）</button><span class="hint" id="sigStatus"></span></div>
-        <div class="hint">数据陈旧时报告会自带黄/红时效警示；每次运行同时自动归档。</div>
+        <div class="hint">数据太旧时报告会标黄或标红；每次运行会自动保存。</div>
       </div>
     </div>
     <div class="panel"><div class="ph"><h2>信号报告</h2><div class="spacer"></div><button id="btnSigCopy" style="display:none">复制 Markdown</button></div>
@@ -454,26 +454,26 @@ pre.code { font-family: var(--mono); font-size: 11px; background: var(--bg-1); b
 <section class="tab" id="tabGrid">
   <div class="wide">
     <div class="panel">
-      <div class="ph"><h2>参数网格（后台批量回测）</h2><span class="note">解读纪律：第 1 名只是候选，邻域成片才是信号</span></div>
+      <div class="ph"><h2>参数网格</h2><span class="note">第 1 名不可靠，周围参数也好才是真的</span></div>
       <div class="body" style="padding:10px 12px">
-        <div class="frow"><label>策略族</label><select id="gFam"><option value="dual_ma">双均线 dual_ma</option><option value="momentum">动量轮动 momentum</option></select>
+        <div class="frow"><label>策略</label><select id="gFam"><option value="dual_ma">双均线 dual_ma</option><option value="momentum">动量轮动 momentum</option></select>
           <label>排名指标</label><select id="gRank"><option>夏普比率</option><option>累计收益率</option><option>卡玛比率</option><option>年化收益率</option></select>
-          <label>预热bar</label><input type="number" id="gWarm" value="60" min="0" max="500" style="width:64px"></div>
-        <div class="frow"><input type="text" id="gCodes" class="fill" placeholder="标的池（同造策略，本地缓存即可跑）" list="symList"></div>
+          <label>预热天数</label><input type="number" id="gWarm" value="60" min="0" max="500" style="width:64px"></div>
+        <div class="frow"><input type="text" id="gCodes" class="fill" placeholder="标的池（本地数据即可跑）" list="symList"></div>
         <div class="frow"><label>起</label><input type="date" id="gStart" value="2023-01-01"><label>止</label><input type="date" id="gEnd">
           <label>基准</label><input type="text" id="gBench" value="000300" style="width:80px"></div>
         <div class="frow" style="align-items:flex-start"><label style="flex:0 0 70px">网格<br><span class="hint">一行一个</span></label><textarea id="gGrid" rows="3" placeholder="fast=5,10,15,20&#10;slow=40,60,90,120">fast=10,20,30
 slow=60,90,120</textarea></div>
         <div class="frow"><button class="primary" id="btnGridRun">▶ 跑网格（≤240 组合）</button><span class="hint" id="gridStatus"></span>
-          <span style="flex:1"></span><label>WF 训练窗</label><input type="number" id="gTrain" value="244" min="120" max="1000" style="width:56px">
-          <label>验证</label><input type="number" id="gTest" value="63" min="21" max="250" style="width:52px">
-          <button id="btnWfRun" title="每折训练窗网格选参→紧邻验证窗出成绩，专治过拟合">▶ Walk-Forward（≤60 组合）</button><span class="hint" id="wfStatus"></span></div>
+          <span style="flex:1"></span><label>训练窗（天）</label><input type="number" id="gTrain" value="244" min="120" max="1000" style="width:56px">
+          <label>验证窗（天）</label><input type="number" id="gTest" value="63" min="21" max="250" style="width:52px">
+          <button id="btnWfRun" title="每折用训练窗选参数，紧接的验证窗看成绩，用来识别过拟合">▶ 样本外验证（≤60 组合）</button><span class="hint" id="wfStatus"></span></div>
       </div>
     </div>
     <div class="panel">
-      <div class="ph"><h2>网格结果</h2><div class="spacer"></div><span class="note" id="gridNote">点击行 → 把该组参数带入造策略</span></div>
+      <div class="ph"><h2>网格结果</h2><div class="spacer"></div><span class="note" id="gridNote">点击一行，把参数带回回测</span></div>
       <div id="heatWrap" style="display:none;padding:6px 10px 0">
-        <span class="hint">参数热力（平原=稳健 · 孤立尖峰=过拟合） 指标</span>
+        <span class="hint">参数热力（成片=稳，孤立亮点=过拟合） 指标</span>
         <select id="gHeatSel"><option>夏普比率</option><option>卡玛比率</option><option>累计收益率</option><option>年化收益率</option></select>
         <div id="gHeat" class="chart" style="height:300px"></div>
       </div>
@@ -481,13 +481,13 @@ slow=60,90,120</textarea></div>
       <div class="jobbar"><span class="st" id="gridJobLog"></span></div>
     </div>
     <div class="panel" id="wfPanel" style="display:none">
-      <div class="ph"><h2>Walk-Forward 样本外验证</h2><div class="spacer"></div><span id="wfVerdict"></span></div>
+      <div class="ph"><h2>样本外验证</h2><div class="spacer"></div><span id="wfVerdict"></span></div>
       <div class="body" style="padding:8px 10px">
         <div id="wfStats" class="hint"></div>
         <div id="wfChart" class="chart" style="height:240px"></div>
-        <details open><summary class="hint">逐折明细（IS 选参 → 紧邻 OOS 验证）</summary>
+        <details open><summary class="hint">逐折明细（训练窗选参数 → 紧接的验证窗看成绩）</summary>
           <div style="overflow:auto;max-height:300px"><table class="qt" id="wfFolds"></table></div></details>
-        <details><summary class="hint">最优参数跨折迁移（稳定=参数平原；乱跳=噪声拟合）</summary>
+        <details><summary class="hint">最优参数跨折变化（稳定=参数平原；乱跳=拟合噪声）</summary>
           <div style="overflow:auto"><table class="qt" id="wfStab"></table></div></details>
         <div class="jobbar"><span class="st" id="wfJobLog"></span></div>
       </div>

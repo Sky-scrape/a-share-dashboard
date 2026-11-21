@@ -559,8 +559,8 @@ function renderRadar() {
         return `<b>${esc(m.name)}</b>　${esc(m.market)}｜基准 ${esc(m.bench)}<br/>` +
           `当日 <span style="color:${pctColor(m.today)}">${shortPct(m.today)}</span>　` +
           `20日动量 <span style="color:${pctColor(m.mom)}">${shortPct(m.mom)}</span><br/>` +
-          `相对强度 RS <span style="color:${pctColor(m.rs)}">${shortPct(m.rs)}</span>` +
-          (tr.length > 1 ? `<br/><span style="color:${COL.text3}">轨迹 ${esc(fmtCn(tr[0].d))} → ${esc(fmtCn(tr[tr.length - 1].d))}（${tr.length}个周点）</span>` : '') +
+          `相对强度 <span style="color:${pctColor(m.rs)}">${shortPct(m.rs)}</span>` +
+          (tr.length > 1 ? `<br/><span style="color:${COL.text3}">轨迹 ${esc(fmtCn(tr[0].d))} → ${esc(fmtCn(tr[tr.length - 1].d))}（${tr.length} 周）</span>` : '') +
           `<br/><span style="color:${COL.text3};font-size:11px">成员：${esc((m.members || []).slice(0, 8).join('、'))}${(m.members || []).length > 8 ? '…' : ''}</span>`;
       } },
     xAxis: { type: 'value', min: axMin, max: axMax,
@@ -596,7 +596,7 @@ function renderRadarList(blocks) {
         `<span class="pc" style="color:${c}">${shortPct(t.today)}</span></div>`;
     });
   });
-  $('radarList').innerHTML = html || '<div class="tl-h">暂无数据，点右上角重抓</div>';
+  $('radarList').innerHTML = html || '<div class="tl-h">暂无数据，点右上角「重新抓取」</div>';
 }
 $('radarMkt').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -625,7 +625,7 @@ function renderHeatCrumbs(rootName) {
   const el = $('heatCrumbs');
   const themeOn = heatTheme && heatTheme.mkt === heatMode;
   if (!heatPath.length && !themeOn) { el.className = ''; el.innerHTML = ''; return; }
-  const chips = [{ label: '⟲ 回到全部', to: -1 },
+  const chips = [{ label: '回到全部', to: -1 },
     { label: themeOn ? '主题·' + heatTheme.theme : rootName, to: 0 }];
   heatPath.forEach((nm, i) => chips.push({ label: nm, to: i + 1 }));
   el.innerHTML = chips.map((c, i) => {
@@ -703,14 +703,14 @@ function renderHeat() {
   // 上游部分降级会产出 {} 无 sectors：与「整块缺失」同样诚实置空，不能让 sectors.map 抛 TypeError
   if (!has || !(has.sectors || []).length) {
     heatChart.clear();
-    $('heatAsOf').textContent = has ? '本块暂无板块数据' : '本块数据缺失';
+    $('heatAsOf').textContent = has ? '该区域暂无数据' : '数据缺失';
     const crumbs = $('heatCrumbs');
     crumbs.className = ''; crumbs.innerHTML = '';
     return;
   }
   // map_vintage=个股→行业映射的建库时点（旧数据无此字段）：与「截至」数据日是两件事，附属小字标注
   $('heatAsOf').textContent = '截至 ' + fmtCn(has.asof) + ' · ' + WIN_LABEL[heatWin]
-    + (heatMode === 'cn' && has.map_vintage ? '（行业映射 ' + fmtCn(has.map_vintage) + '）' : '');
+    + (heatMode === 'cn' && has.map_vintage ? ' · 行业分类 ' + fmtCn(has.map_vintage) : '');
   $('heatWinNote').textContent = WIN_LABEL[heatWin];
   renderHeatBar();
   const tree = heatBaseTree();
@@ -786,21 +786,21 @@ async function checkFresh() {
     const h = await AK.getJson('/api/health');   // JSON 请求统一走 lib 包装（catch 降级不变）
     const g = h.global || {};
     if (g.fetching) { setPill('warn', '全球数据抓取中…'); return 'fetching'; }
-    if (!g.last_date) { setPill('bad', '全球数据缺失'); return 'missing'; }
+    if (!g.last_date) { setPill('bad', '全球数据未更新'); return 'missing'; }
     const age = g.age_hours;
     const bad = age == null || age > (new Date().getDay() % 6 === 0 ? 120 : 60);
     const errs = (g.errors && g.errors.length) || 0;
     setPill(bad ? 'bad' : (errs ? 'warn' : 'ok'),
-      `${fmtCn(g.last_date)} · ${age == null ? '-' : age + 'h'}前` + (errs ? ` · ${errs}项降级` : ''));
+      `${fmtCn(g.last_date)} · ${age == null ? '-' : age + ' 小时前'}` + (errs ? ` · ${errs} 项数据缺失` : ''));
     return bad ? 'stale' : (errs ? 'degraded' : 'ok');
-  } catch (e) { setPill('bad', '服务不可达'); return 'unreachable'; }
+  } catch (e) { setPill('bad', '服务未启动'); return 'unreachable'; }
 }
 let fetchTimer = null;
 $('btnFetch').onclick = async function () {
   if (this.disabled) return;
   // 抓取要跑 4-5 分钟而按钮在 POST 返回后即解禁：重复点击会让 setInterval 覆盖旧引用，
   // 旧轮询永不清理 → 双份 15s 轮询并行、完成时 loadData/showMsg 各执行两遍
-  if (fetchTimer) { showMsg('已有重抓轮询在进行，等它完成即可'); return; }
+  if (fetchTimer) { showMsg('已经在重新抓取了，等它完成即可'); return; }
   this.disabled = true;
   try {
     const r = await fetch('/api/fetch-global', { method: 'POST' });
@@ -814,15 +814,15 @@ $('btnFetch').onclick = async function () {
         clearInterval(fetchTimer); fetchTimer = null;
         if (st === 'ok' || st === 'degraded') {
           try { await loadData(); } catch (e) { showMsg('数据已更新但页面加载失败：' + e); return; }
-          showMsg(st === 'degraded' ? '全球数据已更新，但存在数据降级（见状态胶囊与页脚）' : '全球数据已更新', true);
+          showMsg(st === 'degraded' ? '已更新，但部分数据缺失（见右上角和页脚）' : '全球数据已更新', true);
         } else if (st === 'missing') {
           // 不弹成功横幅：loadData 404 分支自带「尚无全球数据：点重新抓取」引导，别盖掉它
           try { await loadData(); } catch (e) { showMsg('数据加载失败：' + e); }
         } else {
           // 任务已结束但数据缺失/过期/服务不可达 = 失败终态（后端 health 无失败字段可判，
           // 不自动重试避免空转）：如实告知并引导手动重试
-          showMsg(st === 'stale' ? '抓取已结束但数据仍过期，重抓可能失败，点右上角「重新抓取」重试'
-                                 : '服务不可达，无法确认重抓结果；服务恢复后点右上角「重新抓取」重试');
+          showMsg(st === 'stale' ? '抓取结束了，但数据仍是旧的，可能失败了，点右上角「重新抓取」重试'
+                                 : '服务未启动，暂时确认不了抓取结果；服务恢复后点「重新抓取」重试');
         }
       }, 15000);
     } else {
@@ -861,7 +861,7 @@ AKTHEME.onRedraw(() => {
 async function loadData() {
   const r = await fetch('/api/global');
   if (r.status === 404) {
-    setPill('bad', '全球数据缺失');
+    setPill('bad', '全球数据未更新');
     showMsg('尚无全球数据：点击右上角「重新抓取」生成（约 4-5 分钟）');
     return;
   }
@@ -938,10 +938,10 @@ async function loadData() {
   if (!selIdx) selectIndex((G.indices || []).find(x => x.id === 'SPX') ? 'SPX' : (G.indices || [])[0]?.id);
   /* 雷达 / 热力 */
   if (G.radar) { renderRadar(); }
-  else { $('radarList').innerHTML = '<div class="tl-h">雷达数据缺失（点重抓）</div>'; }
+  else { $('radarList').innerHTML = '<div class="tl-h">雷达数据缺失（点「重新抓取」）</div>'; }
   renderHeat();
   const errs = Object.keys(G.errors || {});
-  $('footErr').textContent = errs.length ? `部分数据降级：${errs.join('、')}` : '';
+  $('footErr').textContent = errs.length ? `部分数据缺失：${errs.join('、')}` : '';
   checkFresh();
 }
 /* 拖拽窗口时 4 个图表连续 resize 很重：防抖 resize 统一走 lib AK.onResize（150ms，2026-09-10 收敛） */

@@ -149,7 +149,7 @@ var AK = {
     },
     fmtCn: function (d) {   // 中文日期：当年省略年份，如 2026-08-28 → 8月28日；跨年 → 2025年11月3日
       if (!d) return "";
-      var mt = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d));
+      var mt = String(d).match(/^(\d{4})-?(\d{2})-?(\d{2})/);   // 兼容 8 位（20261120）与 10 位日期
       if (!mt) return String(d);
       return (+mt[1] === new Date().getFullYear() ? "" : mt[1] + "年") + (+mt[2]) + "月" + (+mt[3]) + "日";
     },

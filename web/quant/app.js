@@ -6,6 +6,9 @@
    - 与 CLI 同引擎同口径（115 项回归守护）
    ============================================================ */
 var $ = function (id) { return document.getElementById(id); };
+/* 存档类型是内部值（builtin/rule/code），界面统一显示中文 */
+var KIND_CN = { builtin: "内置", rule: "规则", code: "代码" };
+function kindCn(k) { return KIND_CN[k] || k || ""; }
 /* COL 全部即时取值（getter）：canvas 图表不认 var()，且主题切换（晨报⇄夜台，lib/theme.js）
    重绘时必须拿到新值。panel/text1/text2/text4/green2/bg1 是图表配色补充的语义位。 */
 var COL = (function () {
@@ -93,7 +96,7 @@ function loadBoard(force) {
     if (d.error) { $("engineHint").textContent = d.error; return; }
     BOARD = d;
     var p = d.platform;
-    $("rootState").textContent = p.exists ? "内置" : "缺失";
+    $("rootState").textContent = p.exists ? "已就绪" : "缺失";
     $("kpiRuns").textContent = d.backtests.length;
     $("kpiReports").textContent = d.reports.length;
     $("kpiStrats").textContent = d.strategies.length;
@@ -105,11 +108,11 @@ function loadBoard(force) {
 $("discChips").innerHTML = ["T+1 解锁", "涨跌停禁成交", "整手(100股)", "佣金/印花税/过户费", "价差滑点", "参与率上限", "停牌跳过", "防未来函数(昨收信号)", "成本压测防自欺"].map(function (x) { return "<span class='chip'>" + x + "</span>"; }).join("");
 function renderBtTable(rows) {
   var t = $("btTable");
-  if (!rows.length) { t.innerHTML = '<tbody><tr><td class="tl dim" style="padding:16px">暂无回测流水 —— 去「造策略·回测」跑第一次。</td></tr></tbody>'; return; }
+  if (!rows.length) { t.innerHTML = '<tbody><tr><td class="tl dim" style="padding:16px">暂无回测记录 —— 去「回测」跑第一次。</td></tr></tbody>'; return; }
   var h = "<thead><tr><th class='tl'>时间</th><th class='tl'>标题</th><th class='tl'>策略</th><th class='tl'>池</th><th>区间</th><th>累计</th><th>年化</th><th>回撤</th><th>夏普</th><th>笔数</th></tr></thead><tbody>";
   for (var i = rows.length - 1; i >= 0; i--) { var r = rows[i];
     h += "<tr><td class='tl mono dim'>" + esc((r.time || "").slice(5, 16)) + "</td><td class='tl'>" + esc(r.title)
-      + (r.store ? " <span class='chip' title='已归集到存档「" + esc(r.store) + "」'>📌</span>" : "") + "</td><td class='tl dim'>" + esc(r.strategy) + "</td>"
+      + (r.store ? " <span class='chip' title='已归集到存档「" + esc(r.store) + "」'>存档</span>" : "") + "</td><td class='tl dim'>" + esc(r.strategy) + "</td>"
       + "<td class='tl dim mono' title='" + esc(r.symbols.join(" ")) + "'>" + r.symbols.length + " 只</td><td class='mono dim'>" + esc(r.window) + "</td>"
       + "<td class='mono " + cls(r.cum_ret) + "'>" + pct(r.cum_ret) + "</td><td class='mono " + cls(r.cagr) + "'>" + pct(r.cagr) + "</td>"
       + "<td class='mono dim'>" + (r.max_dd == null ? "–" : (r.max_dd * 100).toFixed(1) + "%") + "</td><td class='mono'>" + (r.sharpe == null ? "–" : r.sharpe.toFixed(2)) + "</td>"
@@ -136,22 +139,22 @@ function renderFocusBar(d) {
   var sel = $("ovFocusSel"), prev = sel.value || FOCS;
   var names = (d.strategies || []).map(function (x) { return x.name; });
   var fams = []; (d.backtests || []).forEach(function (r) { if (r.strategy && names.indexOf(r.strategy) < 0 && fams.indexOf(r.strategy) < 0) fams.push(r.strategy); });
-  var h = "<option value=''>全部跑次（总览）</option>";
-  names.forEach(function (n) { h += "<option value='store:" + esc(n) + "'>📌 " + esc(n) + "（存档策略）</option>"; });
-  fams.forEach(function (f) { h += "<option value='fam:" + esc(f) + "'>⚙ 类型 · " + esc(f) + "</option>"; });
+  var h = "<option value=''>全部回测</option>";
+  names.forEach(function (n) { h += "<option value='store:" + esc(n) + "'>" + esc(n) + "（存档策略）</option>"; });
+  fams.forEach(function (f) { h += "<option value='fam:" + esc(f) + "'>策略类型：" + esc(f) + "</option>"; });
   sel.innerHTML = h;
   sel.value = prev && (prev === "" || h.indexOf("value='" + prev + "'") >= 0) ? prev : "";
   FOCS = sel.value;
   var chip = function (k, v, c) { return "<span class='chip'>" + k + " <b class='" + (c || "") + "'>" + v + "</b></span>"; };
   var rows = focusRows(d.backtests), st;
-  if (!FOCS) st = chip("流水", d.backtests.length) + chip("报告", (d.reports || []).length) + chip("存档", names.length)
-    + "<span class='hint'>选一个存档策略或类型 → 下方流水/散点/报告只看它</span>";
-  else if (!rows.length) st = "<span class='hint'>该对象暂无关联跑次 —— 跑回测时填「存档名」即可自动归集到这里</span>";
+  if (!FOCS) st = chip("回测", d.backtests.length) + chip("报告", (d.reports || []).length) + chip("存档", names.length)
+    + "<span class='hint'>选一个策略或类型，下方只显示它</span>";
+  else if (!rows.length) st = "<span class='hint'>暂无关联回测 —— 跑回测时填「存档名」就会归到这里</span>";
   else {
     var cums = rows.map(function (r) { return r.cum_ret; }).filter(function (x) { return x != null; }).sort(function (a, b) { return a - b; });
     var shs = rows.map(function (r) { return r.sharpe; }).filter(function (x) { return x != null; });
     var best = cums[cums.length - 1], worst = cums[0], med = cums[Math.floor((cums.length - 1) / 2)];
-    st = chip("跑次", rows.length) + (cums.length ? chip("最好", pct(best), "up") + chip("中位", pct(med), cls(med)) + chip("最差", pct(worst), "down")
+    st = chip("回测", rows.length) + (cums.length ? chip("最好", pct(best), "up") + chip("中位", pct(med), cls(med)) + chip("最差", pct(worst), "down")
       + chip("正收益", cums.filter(function (x) { return x > 0; }).length + "/" + cums.length) : "")
       + chip("平均夏普", shs.length ? (+ (shs.reduce(function (a, b) { return a + b; }, 0) / shs.length).toFixed(2)) : "–")
       + "<span class='hint'>最近 " + esc((rows[rows.length - 1].time || "").slice(5, 16)) + "</span>";
@@ -205,10 +208,10 @@ function renderRepTable(rows) {
 function renderSide(d) {
   var html = "";
   html += "<h4>策略库</h4>";
-  html += d.strategies.length ? d.strategies.map(function (s) { return "<div class='sitem'><span class='nm'>" + esc(s.name) + "</span><span class='tag " + esc(s.kind) + "'>" + esc(s.kind) + "</span><span class='mt'>" + esc((s.updated_at || "").slice(5, 10)) + "</span></div>"; }).join("") : "<div class='empty'>还没有存档 —— 去「造策略·回测」跑完点「存策略库」。</div>";
-  html += "<h4>今日信号归档</h4>";
+  html += d.strategies.length ? d.strategies.map(function (s) { return "<div class='sitem'><span class='nm'>" + esc(s.name) + "</span><span class='tag " + esc(s.kind) + "'>" + esc(kindCn(s.kind)) + "</span><span class='mt'>" + esc((s.updated_at || "").slice(5, 10)) + "</span></div>"; }).join("") : "<div class='empty'>还没有存档 —— 去「回测」跑完点「存入策略库」。</div>";
+  html += "<h4>今日信号</h4>";
   html += d.signals.length ? d.signals.slice(0, 8).map(function (s) { return "<div class='sitem'><span class='nm'>" + esc(s.name) + "</span><span class='mt'>" + esc((s.mtime || "").slice(5, 10)) + "</span></div>"; }).join("") : "<div class='empty'>暂无 —— 去「今日信号」跑一次。</div>";
-  html += "<h4>参数研究</h4>";
+  html += "<h4>参数网格</h4>";
   html += d.research.length ? d.research.map(function (s) { return "<div class='sitem'><span class='nm mono'>" + esc(s.name) + "</span><span class='rv'>" + (s.rows == null ? "" : s.rows + " 行") + "</span></div>"; }).join("") : "<div class='empty'>暂无网格产出。</div>";
   html += "<h4>任务历史（点击查看结果）</h4>";
   var JK = { screener: "选股", signals: "信号", grid: "网格", wf: "前瞻", refresh: "数据" };
@@ -233,20 +236,20 @@ function viewJob(id) {
 function renderFresh(f) {
   var el = $("freshState"), n = $("freshN");
   if (!el) return;
-  if (!f || !f.latest) { el.textContent = "无缓存"; n.textContent = ""; return; }
+  if (!f || !f.latest) { el.textContent = "无本地数据"; n.textContent = ""; return; }
   el.textContent = f.latest;
   var lag = Math.round((Date.now() - new Date(f.latest + "T15:00:00").getTime()) / 864e5);
-  n.textContent = f.symbols + " 只 · 落后≈" + lag + "天";
+  n.textContent = f.symbols + " 只 · 最新数据距今 " + lag + " 天";
   el.style.color = lag > 4 ? "var(--flat,#8C6D1F)" : "";
-  el.title = (f.oldest && f.oldest.length) ? "更旧的序列：" + f.oldest.map(function (o) { return o.symbol + "@" + o.last; }).join("  ") : "全部序列齐平";
+  el.title = (f.oldest && f.oldest.length) ? "更旧的数据：" + f.oldest.map(function (o) { return o.symbol + "@" + o.last; }).join("  ") : "全部已更新";
 }
 $("btnRefreshData").onclick = function () {
   var btn = this;
   var baseHint = $("engineHint").textContent;   // engineHint 被借作任务状态条，完成后恢复常驻的缓存规模提示
   submitJob("refresh", {}, btn, $("engineHint"), function (r) {
-    $("engineHint").textContent = "缓存刷新完成：" + r.written + "/" + r.symbols_in + " 只 → " + (r.after || "?");
+    $("engineHint").textContent = "数据刷新完成：" + r.written + "/" + r.symbols_in + " 只 → " + (r.after || "?");
     setTimeout(function () {
-      $("engineHint").textContent = "引擎内置 · 本地缓存 " + (META ? META.local_symbols.length : "?") + " 只标的";
+      $("engineHint").textContent = "本地数据 " + (META ? META.local_symbols.length : "?") + " 只标的";
     }, 8000);
     getJson("/api/quant/meta?fresh=1").then(function (m) { if (m.data_freshness) renderFresh(m.data_freshness); });
   });
@@ -268,7 +271,7 @@ $("kindSeg").querySelectorAll("button").forEach(function (b) {
 });
 function renderFamWrap(family, params) {
   var f = META.families.filter(function (x) { return x.key === family; })[0] || META.families[0];
-  var h = "<div class=\"frow\"><label>策略族</label><select id=\"inFam\">";
+  var h = "<div class=\"frow\"><label>策略</label><select id=\"inFam\">";
   META.families.forEach(function (x) { h += "<option value='" + x.key + "'" + (x.key === f.key ? " selected" : "") + ">" + esc(x.label) + "</option>"; });
   h += "</select></div><div id=\"famParams\">";
   f.params.forEach(function (p) {
@@ -431,7 +434,7 @@ function scheduleRulePreview() {
       $("ruleCode").textContent = r.code || "";
       $("ruleProblems").innerHTML = (r.problems && r.problems.length)
         ? "<span class='hint err'>" + r.problems.map(esc).join("<br>") + "</span>"
-        : "<span class='hint'>spec 校验通过 ✓（代码由引擎同源生成，非手拼）</span>";
+        : "<span class='hint'>规则检查通过（代码由引擎生成）</span>";
     }).catch(function (e) { $("ruleProblems").textContent = "预览失败：" + e.message; });
   }, 500);
 }
@@ -466,7 +469,7 @@ $("btnRun").onclick = function () {
     if (d.error) return errBox(d.error);
     curResult = d; CUR_REQ = req;
     $("eqNote").textContent = "耗时 " + ((performance.now() - t0) / 1000).toFixed(1) + "s · "
-      + (req.strategy.kind === "builtin" ? req.strategy.family : "规则策略") + "（已入研究流水）";
+      + (req.strategy.kind === "builtin" ? req.strategy.family : "规则策略") + "（已记入回测记录）";
     renderResult(d);
   }).catch(function (e) { btn.disabled = false; btn.textContent = "▶ 运行回测"; errBox("回测失败：" + e.message); });
 };
@@ -568,7 +571,7 @@ function renderEqChart(d) {
 $("chkW").onchange = function () { if (curResult) renderEqChart(curResult); };
 function renderTrades(d, forceLiq) {
   var t = $("tradesTable"), rows = d.trades || [];
-  $("tradesNote").textContent = ((d.metrics["交易次数"] || 0) + " 笔（成交 " + d.fills_n + " 次） · " + (forceLiq ? "⚠️ 期末强制平仓" : ""));
+  $("tradesNote").textContent = ((d.metrics["交易次数"] || 0) + " 笔（成交 " + d.fills_n + " 次） · " + (forceLiq ? "⚠ 期末强制平仓" : ""));
   if (!rows.length) { t.innerHTML = '<tbody><tr><td class="tl dim" style="padding:12px">无成交。</td></tr></tbody>'; return; }
   var h = "<thead><tr><th class='tl'>标的</th><th class='tl'>买入</th><th class='tl'>卖出</th><th>买价</th><th>卖价</th><th>数量</th><th>净盈亏</th><th>收益率</th><th>持有天</th></tr></thead><tbody>";
   rows.forEach(function (r) {
@@ -591,7 +594,7 @@ function cmpLabel(req) {
 }
 function renderCmpSlots() {
   var box = $("cmpSlots");
-  if (!CMP.length) { box.innerHTML = "<span class='hint'>跑一次回测后点报告卡头的「＋加入对比」攒槽位（2~4 条）。</span>"; return; }
+  if (!CMP.length) { box.innerHTML = "<span class='hint'>跑一次回测后，点报告右上角的「＋加入对比」（最多 4 条）。</span>"; return; }
   box.innerHTML = CMP.map(function (c, i) {
     return "<span class='chip'>" + (i + 1) + ". " + esc(c.label) + " <b data-i='" + i + "' style='cursor:pointer' title='移除'>×</b></span>";
   }).join("");
@@ -601,13 +604,13 @@ function renderCmpSlots() {
 }
 $("btnAddCmp").onclick = function () {
   if (!CUR_REQ || !curResult) return errBox("先跑一次回测再加入对比");
-  if (CMP.length >= 4) return errBox("对比槽位最多 4 条：先移除一条");
+  if (CMP.length >= 4) return errBox("最多对比 4 条：先移除一条");
   CMP.push({ label: cmpLabel(CUR_REQ) + " @" + new Date().toTimeString().slice(0, 5), req: CUR_REQ });
   $("cmpPanel").style.display = ""; renderCmpSlots(); errBox("");
 };
 $("btnCmpClear").onclick = function () { CMP = []; renderCmpSlots(); $("cmpChart").style.display = "none"; $("cmpTable").innerHTML = ""; };
 $("btnCmpRun").onclick = function () {
-  if (CMP.length < 2) return errBox("对比至少需要 2 个槽位");
+  if (CMP.length < 2) return errBox("至少选 2 条才能对比");
   var btn = this; btn.disabled = true; btn.textContent = "对比回测中…";
   postJson("/api/quant/compare", { items: CMP }).then(function (d) {
     btn.disabled = false; btn.textContent = "▶ 对比回测";
@@ -701,7 +704,7 @@ function fillBuilderFrom(strat) {
     renderRuleRows(); scheduleRulePreview();
   } else {
     showTab("build");
-    errBox("代码存档请用 CLI / Python 编辑（quant_sim.strategies.sandbox）；可在「今日信号」对其跑信号。");
+    errBox("代码存档请在命令行或 Python 里编辑；可在「今日信号」对它生成信号。");
     return;
   }
   showTab("build");
@@ -716,10 +719,10 @@ function loadStrategies() {
     var box = $("storeCards");
     var badHtml = "";
     (d.bad_files || []).forEach(function (b) {
-      badHtml += "<div class='empty'>⚠️ 坏档已跳过：" + esc(b.file) + "（" + esc(b.error) + "）——请修复或删除该文件</div>";
+      badHtml += "<div class='empty'>⚠ 损坏的存档已跳过：" + esc(b.file) + "（" + esc(b.error) + "），请修复或删除该文件</div>";
     });
-    if (!STRATS.length && !badHtml) { box.innerHTML = "<div class='empty' style='padding:16px'>策略库为空 —— 去「造策略·回测」搭一个并存档。</div>"; return; }
-    if (!STRATS.length && badHtml) { box.innerHTML = badHtml + "<div class='empty' style='padding:16px'>策略库无可用存档（坏档见上）。</div>"; return; }
+    if (!STRATS.length && !badHtml) { box.innerHTML = "<div class='empty' style='padding:16px'>策略库为空 —— 去「回测」搭一个并保存。</div>"; return; }
+    if (!STRATS.length && badHtml) { box.innerHTML = badHtml + "<div class='empty' style='padding:16px'>策略库没有可用存档（损坏的见上）。</div>"; return; }
     box.innerHTML = badHtml + STRATS.map(function (st0, i) {
       var pl = st0.payload || {}, summ = "";
       if (st0.kind === "builtin") {
@@ -731,7 +734,7 @@ function loadStrategies() {
           + (pl.trailing_pct ? " · 移动 " + (pl.trailing_pct * 100).toFixed(0) + "%" : "");
       } else { summ = "用户代码策略（回放需显式允许执行）"; }
       var syms = (st0.data_symbols || pl.symbols || []);
-      return "<div class='scard'><div class='hd'><span class='nm'>" + esc(st0.name) + "</span><span class='tag " + esc(st0.kind) + "'>" + esc(st0.kind) + "</span><span style='flex:1'></span><span class='sm mono'>v" + esc(st0.version) + "</span></div>"
+      return "<div class='scard'><div class='hd'><span class='nm'>" + esc(st0.name) + "</span><span class='tag " + esc(st0.kind) + "'>" + esc(kindCn(st0.kind)) + "</span><span style='flex:1'></span><span class='sm mono'>v" + esc(st0.version) + "</span></div>"
         + "<div class='sm'>" + summ + "</div>"
         + (st0.note ? "<div class='sm'>" + esc(st0.note) + "</div>" : "")
         + "<div class='sm mono' title='" + esc(syms.join(" ")) + "'>" + (syms.length ? esc(syms.slice(0, 5).join(" ")) + (syms.length > 5 ? " 等 " + syms.length + " 只" : "") : "未绑定标的") + " · " + esc(st0.updated || "") + "</div>"
@@ -788,7 +791,7 @@ $("btnLoadFromStore").onclick = function () { showTab("store"); };
    ============================================================ */
 function renderScreenerForm() {
   var sc = META.screener;
-  $("scTemplate").innerHTML = "<option value=''>（不用配方，手工条件）</option>"
+  $("scTemplate").innerHTML = "<option value=''>（自定义条件）</option>"
     + Object.keys(sc.templates).map(function (k) { return "<option value='" + k + "'>" + k + "</option>"; }).join("");
   $("scUniverse").innerHTML = sc.universes.map(function (u) { return "<option>" + u + "</option>"; }).join("");
   var condKeys = Object.keys(sc.conditions);
@@ -817,7 +820,7 @@ function renderScreenerForm() {
       if (lo && t.ranges[k][0] != null) lo.value = t.ranges[k][0];
       if (hi && t.ranges[k][1] != null) hi.value = t.ranges[k][1];
     });
-    $("scTmplNote").textContent = "配方：" + (t.note || "");
+    $("scTmplNote").textContent = "模板：" + (t.note || "");
   };
 }
 function screenParams() {
@@ -845,7 +848,7 @@ $("btnScreenRun").onclick = function () {
 };
 function renderScreenResult(r) {
     lastScreenRows = r.table || [];
-    $("screenSteps").textContent = "漏斗：" + Object.keys(r.steps || {}).map(function (k) { return k + "=" + r.steps[k]; }).join(" → ");
+    $("screenSteps").textContent = "筛选：" + Object.keys(r.steps || {}).map(function (k) { return k + "=" + r.steps[k]; }).join(" → ");
     $("screenChips").innerHTML = (r.warnings || []).map(function (w) { return "<span class='chip' style='color:var(--flat)'>" + esc(w) + "</span>"; }).join("")
       + (r.asof ? "<span class='chip'>截面 " + esc(r.asof) + "</span>" : "");
     var cols = (r.columns || []).filter(function (c) { return (r.display_cols || {})[c]; });
@@ -947,8 +950,8 @@ $("btnGridRun").onclick = function () {
 };
 $("btnWfRun").onclick = function () {
   var p = gridReqBase();
-  if (!p.codes.length) return errBox("Walk-Forward 需要先填标的池");
-  if (!Object.keys(p.grids).length) return errBox("WF 每折都要跑网格，请先填候选值");
+  if (!p.codes.length) return errBox("样本外验证需要先填标的");
+  if (!Object.keys(p.grids).length) return errBox("每一折都要跑网格，请先填候选值");
   p.train_days = num("gTrain", 244); p.test_days = num("gTest", 63);
   submitJob("wf", p, $("btnWfRun"), $("wfStatus"), renderWfResult);
 };
@@ -966,7 +969,7 @@ function applyVariant(row) {
   setSelValue("inBench", gb);
   // 基准值不在本地列表时 select 会静默落回空——回测照跑但没了基准线，必须明说
   $("eqNote").textContent = "已带入网格参数，可复跑单组回测细看"
-    + (gb && $("inBench").value !== gb ? "（注意：基准 " + gb + " 不在本地缓存列表，回测将无基准线）" : "");
+    + (gb && $("inBench").value !== gb ? "（注意：基准 " + gb + " 不在本地数据里，回测将无基准线）" : "");
 }
 function fmtCell(c, v) {
   if (v == null) return "–";
@@ -975,7 +978,7 @@ function fmtCell(c, v) {
 }
 function renderGridResult(r) {
   lastGridR = r;
-  $("gridNote").textContent = (r.n_variants || (r.rows || []).length) + " 组合 · 按" + r.rank_by + "排名（点击行带入造策略）";
+  $("gridNote").textContent = (r.n_variants || (r.rows || []).length) + " 组合 · 按" + r.rank_by + "排名（点击行带回回测）";
   var t = $("gridTable");
   var show = ["累计收益率", "年化收益率", "最大回撤", "夏普比率", "卡玛比率", "交易次数", "胜率"];
   var cols = (r.columns || []).filter(function (c) { return (r.grid_keys || []).indexOf(c) >= 0 || show.indexOf(c) >= 0; });
@@ -1059,11 +1062,11 @@ function renderWfResult(r) {
   var okLv = /ok|good|stable|通过|稳定/i.test(lv);
   $("wfVerdict").innerHTML = lv ? "<span class='chip' style='color:" + (okLv ? "var(--up,#B4372C)" : "var(--accent,#8C6D1F)") + "'>判定 " + esc(lv) + (v.reason ? " · " + esc(v.reason) : "") + "</span>" : "";
   var om = r.oos_metrics || {};
-  var st = "<span class='chip'>IS/OOS 比 " + (r.overfit_ratio == null ? "–" : (+r.overfit_ratio).toFixed(2)) + "</span>"
+  var st = "<span class='chip'>训练/验证比 " + (r.overfit_ratio == null ? "–" : (+r.overfit_ratio).toFixed(2)) + "</span>"
     + "<span class='chip'>排名 " + esc(r.rank_by || "") + "</span>"
-    + "<span class='chip'>预热 " + (r.warmup_days || 0) + " bar</span>"
+    + "<span class='chip'>预热 " + (r.warmup_days || 0) + " 天</span>"
     + ["累计收益率", "年化收益率", "最大回撤", "夏普比率"].filter(function (k) { return om[k] != null; })
-      .map(function (k) { return "<span class='chip'>OOS " + k + " <b class='" + (k === "最大回撤" ? "down" : om[k] > 0 ? "up" : "down") + "'>" + (typeof om[k] !== "number" ? om[k] : k === "最大回撤" ? (Math.abs(om[k]) * 100).toFixed(1) + "%" : /收益/.test(k) ? pct(om[k]) : (+om[k]).toFixed(3)) + "</b></span>"; }).join("");
+      .map(function (k) { return "<span class='chip'>验证 " + k + " <b class='" + (k === "最大回撤" ? "down" : om[k] > 0 ? "up" : "down") + "'>" + (typeof om[k] !== "number" ? om[k] : k === "最大回撤" ? (Math.abs(om[k]) * 100).toFixed(1) + "%" : /收益/.test(k) ? pct(om[k]) : (+om[k]).toFixed(3)) + "</b></span>"; }).join("");
   $("wfStats").innerHTML = st;
   miniTable("wfFolds", r.folds, 12);
   miniTable("wfStab", r.param_stability, 8);
@@ -1077,8 +1080,8 @@ function renderWfResult(r) {
       tooltip: { trigger: "axis", confine: true, backgroundColor: COL.panel, borderColor: COL.line, textStyle: { color: COL.text1 } },
       grid: { left: 50, right: 16, top: 26, bottom: 30 },
       xAxis: { type: "category", data: oc.dates, axisLabel: { color: COL.txt3, fontSize: 10 } },
-      yAxis: { type: "value", scale: true, name: "OOS 净值(=100)", nameTextStyle: { color: COL.txt3, fontSize: 10 }, axisLabel: { color: COL.txt3 }, splitLine: { lineStyle: { color: COL.line } } },
-      series: [{ name: "拼接样本外净值", type: "line", showSymbol: false, lineStyle: { color: COL.up, width: 1.8 }, itemStyle: { color: COL.up }, areaStyle: { color: AKTHEME.alpha(COL.up, .06) }, data: oc.equity.map(function (x) { return x == null ? null : +(x / e0 * 100).toFixed(2); }) }],
+      yAxis: { type: "value", scale: true, name: "验证净值(=100)", nameTextStyle: { color: COL.txt3, fontSize: 10 }, axisLabel: { color: COL.txt3 }, splitLine: { lineStyle: { color: COL.line } } },
+      series: [{ name: "样本外净值", type: "line", showSymbol: false, lineStyle: { color: COL.up, width: 1.8 }, itemStyle: { color: COL.up }, areaStyle: { color: AKTHEME.alpha(COL.up, .06) }, data: oc.equity.map(function (x) { return x == null ? null : +(x / e0 * 100).toFixed(2); }) }],
     }, { replaceMerge: ["series"] });
     setTimeout(function () { try { charts.wf.resize(); } catch (e) {} }, 30);
   }
@@ -1110,7 +1113,7 @@ function submitJob(kind, params, btn, statusEl, onDone) {
           // 30 分钟无终态兜底：服务重启后任务状态可能停在 running，不能让按钮永久锁死
           if (secs > 30 * 60) {
             clearInterval(iv); btn.disabled = false;
-            statusEl.textContent = "轮询超时（30 分钟无终态，任务可能已被丢弃）；结果可稍后在右侧「任务历史」查看";
+            statusEl.textContent = "等待超时（30 分钟没有结果，任务可能已被丢弃）；可稍后在「任务历史」查看";
           }
         }
       }).catch(function () {
@@ -1131,10 +1134,10 @@ function boot() {
   getJson("/api/quant/meta").then(function (m) {
     if (m.error) { $("engineHint").textContent = m.error; return; }
     META = m;
-    $("engineHint").textContent = "引擎内置 · 本地缓存 " + m.local_symbols.length + " 只标的";
+    $("engineHint").textContent = "本地数据 " + m.local_symbols.length + " 只标的";
     $("symList").innerHTML = m.local_symbols.map(function (s) { return "<option value='" + esc(s) + "'>"; }).join("");
     $("inBench").innerHTML = "<option value=''>（无基准）</option>" + m.local_symbols.map(function (s) { return "<option" + (s === "000300" ? " selected" : "") + ">" + esc(s) + "</option>"; }).join("");
-    $("inExec").innerHTML = m.execution_opts.map(function (o) { return "<option value='" + o.v + "'>" + esc(o.label) + "</option>"; }).join("");
+    $("inExec").innerHTML = m.execution_opts.map(function (o) { return "<option value='" + o.v + "'>" + esc(String(o.label || "").replace("撮合", "成交")) + "</option>"; }).join("");
     $("inSlipM").innerHTML = m.slip_opts.map(function (o) { return "<option value='" + o.v + "'>" + esc(o.label) + "</option>"; }).join("");
     renderFresh(m.data_freshness);
     $("inEnd").value = AK.dates.today10(); $("gEnd").value = AK.dates.today10();   // 本地今天（AK.dates 单一来源）

@@ -115,7 +115,9 @@ def test_f6_dns_to_fakeip_range_allowed(monkeypatch):
 def test_g1_safe_get_no_redirect_and_ua(monkeypatch):
     """allow_redirects=False 是防线一部分（重定向到内网是经典绕过），参数固化。"""
     seen = {}
-    sentinel = object()
+    class _Resp:      # safe_get 2026-10-27 起会读 status_code 决定是否留现场
+        status_code = 200
+    sentinel = _Resp()
 
     def fake_get(url, **kwargs):
         seen.update(url=url, **kwargs)

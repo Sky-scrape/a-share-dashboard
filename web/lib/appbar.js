@@ -13,7 +13,7 @@
   var PAGES = [
     { id: "navAuction", path: "/auction", full: "实时竞价", mini: "竞价", title: "实时竞价" },
     { id: "navRot", path: "/", full: "日内轮动", mini: "轮动", title: "日内轮动" },
-    { id: "navRecap", path: "/recap", full: "盘后复盘", mini: "盘后", title: "盘后复盘" },
+    { id: "navRecap", path: "/recap", full: "盘后复盘", mini: "复盘", title: "盘后复盘" },
     { id: "navGlobal", path: "/global", full: "全球总览", mini: "全球", title: "全球总览" },
     { id: "navQuant", path: "/quant", full: "量化平台", mini: "量化", title: "量化平台" }
   ];
@@ -34,7 +34,8 @@
     var slot = opts.slot ? document.getElementById(opts.slot) : document.getElementById("navgroupSlot");
     if (!slot) return;
     var active = opts.active || "/";
-    var html = '<div class="navgroup"><span class="brand">A股看板<span class="dot">·</span></span>';
+    /* 品牌名不重复渲染：每页 h1 已经写明页面身份，顶栏导航只留页面切换，窄屏更省位 */
+    var html = '<div class="navgroup">';
     PAGES.forEach(function (p) {
       html += '<button id="' + p.id + '" class="navtab' + (p.path === active ? " active" : "")
         + '" title="' + esc(p.title) + '"><span class="b-full">' + esc(p.full)

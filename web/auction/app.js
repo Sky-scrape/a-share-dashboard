@@ -88,7 +88,7 @@ function phaseInfo() {
   var out;
   // 先按「数据是不是今天的」定性，再看时钟：避免周末/节假日/漏采时把旧数据说成「已开盘」
   if (!fr.hasAny) {
-    out = { key: "idle", text: "暂无竞价数据（交易日 09:14 计划任务自动采集，或点「立即补抓」）", noise: false };
+    out = { key: "idle", text: "暂无竞价数据（交易日 09:14 自动采集，或点「立即补抓」）", noise: false };
   } else if (fr.today === false) {
     out = { key: "idle", text: (isWeekend() ? "周末休市·无今日竞价" : "今日竞价未采集") +
       " · 展示 " + mdOf(fr.date8) + " 数据", noise: false };
@@ -100,18 +100,27 @@ function phaseInfo() {
     out = { key: "lock", text: "集合竞价 · 不可撤单", noise: false };
   } else if (m < hms2min(9, 30)) {
     out = { key: "final", text: fr.finalToday ? "已撮合 · 待开盘"
-                                          : "已撮合·今日无终态（定格在最后 live 轮）", noise: false };
+                                          : "已撮合 · 今日无定盘数据（停在最后一轮）", noise: false };
   } else {
-    out = { key: "final", text: fr.finalToday ? "已开盘（竞价定格）"
-                                          : "已开盘（今日缺终态，定格在最后 live 轮）", noise: false };
+    out = { key: "final", text: fr.finalToday ? "已开盘（竞价定盘）"
+                                          : "已开盘（缺定盘数据，停在最后一轮）", noise: false };
   }
   // 上游诚实口径：接口自身回报的阶段（盘后补抓常见 closed/final）
   var rnd = (live && live.round) || (fin && fin.round) || {};
   if ((rnd.phase === "closed" || rnd.data_status === "final") && (out.key === "live" || out.key === "lock")) {
-    out.text += "（上游:closed）";
+    out.text += "（数据源：已收盘）";
   }
-  if (fin && fin.provisional && out.key !== "idle") out.text += " · 终态未就绪";
+  if (fin && fin.provisional && out.key !== "idle") out.text += " · 定盘数据未就绪";
   return out;
+}
+
+/* 上游阶段代码 → 中文（no_cancel / closed 这类代码不给用户看） */
+function phaseCn(code) {
+  var m = {
+    live: "实时", lock: "不可撤单", final: "定盘", closed: "已收盘",
+    no_cancel: "不可撤单", cancel: "可撤单", pre_open: "盘前", not_ready: "未就绪"
+  };
+  return m[code] || code || "-";
 }
 
 /* ============ 轮询（/api/auction 带 ETag/304） ============ */
@@ -202,7 +211,7 @@ function renderCountdown() {
   }
   pill.className = cls;
   pill.innerHTML = '<span class="dot"></span>' + txt;
-  pill.title = fr.hasAny ? "数据所属竞价日: " + fr.date8 : "尚无竞价数据（交易日 09:14 计划任务，或点「立即补抓」）";
+  pill.title = fr.hasAny ? "数据日期：" + fr.date8 : "尚无竞价数据（交易日 09:14 自动采集，或点「立即补抓」）";
 }
 setInterval(renderCountdown, 1000);
 
@@ -227,10 +236,10 @@ function renderFresh(force, msg) {
   }
   pill.className = "fresh-pill " + cls;
   pill.innerHTML = '<span class="dot"></span>' + esc(txt);
-  pill.title = "数据日: " + (fr.date8 || "-") + " · 上次采集: " + (st.last_run || "-") +
-    " · 轮次 " + (st.rounds == null ? "-" : st.rounds) +
+  pill.title = "数据日期：" + (fr.date8 || "-") + " · 上次采集：" + (st.last_run || "-") +
+    " · 共 " + (st.rounds == null ? "-" : st.rounds) + " 轮" +
     (st.mode ? " · " + (st.mode === "manual" ? "手动补抓" : st.mode) : "") +
-    (st.note ? " · " + st.note : "") + "（完整时间看顶部状态条「更新」）";
+    (st.note ? " · " + st.note : "") + "（完整时间看顶部状态条的「更新」）";
 }
 
 function renderStats(d) {
@@ -242,11 +251,11 @@ function renderStats(d) {
   $("statCover").textContent = (rnd.count != null ? rnd.count + "/" + rnd.codes_total : "-") +
     (errs.length ? "（" + errs.length + " 批失败）" : "");
   $("statCover").title = errs.length ? errs.join("\n") : "本批观察池全部返回";
-  $("statPool").textContent = (d.config && d.config.max_codes ? "≤" + d.config.max_codes : "-") +
-    "（自选 " + (d.watchlist || []).length + "）";
+  $("statPool").textContent = (d.watchlist || []).length + " 只自选" +
+    (d.config && d.config.max_codes ? " / 上限 " + d.config.max_codes : "");
   $("statRounds").textContent = (d.status && d.status.rounds != null) ? d.status.rounds : "-";
   $("statUpdated").textContent = (((d.live && d.live.updated_at) || (d.final && d.final.fetched_at) || "-").slice(5, 19)) || "-";
-  $("statPhase").textContent = rnd.phase || rnd.data_status || "-";
+  $("statPhase").textContent = phaseCn(rnd.phase || rnd.data_status);
 }
 
 /* ============ 热榜 ============ */
@@ -305,8 +314,7 @@ function renderRank() {
     ind.textContent = state.rankSort === th.dataset.sort ? (state.rankDir === -1 ? "▼" : "▲") : "";
   });
   var src = (d.live && d.live.round) || (d.final && d.final.round) || {};
-  $("rankNote").textContent = "口径: " + (src.stage || "-") + (src.phase ? "/" + src.phase : "") +
-    " · 共 " + items.length + " 只 · 滚动查看 · 点行看曲线";
+  $("rankNote").textContent = "共 " + items.length + " 只 · 点行看竞价曲线";
 }
 $("rankBody").addEventListener("click", function (ev) {
   var tr = ev.target.closest("tr[data-code]"); if (!tr) return;
@@ -381,14 +389,14 @@ function renderSector() {
       .slice(0, 12)
       .map(function (r) { return { name: r.n, pct: r.open_pct, n: null, amt: null, last: r.last_pct, full: true }; })
       .reverse();
-    srcNote = "一级行业指数开盘缺口（全部成分股集合竞价撮合，共 " + sec.rows.length + " 个行业）"
+    srcNote = "全部 " + sec.rows.length + " 个行业 · 开盘涨跌"
       + (secDate !== today8() ? " · 数据日 " + mdOf(secDate) : "")
       + (rows.length ? "" : " · 当前无" + (state.sectorSide === "down" ? "低开" : "高开") + "行业");
   } else {
     // 回退：观察池聚合是偏样本（涨停池+热股为主），绝不能冒充「整个板块的强度」——
     // 标题必须显性降级，并给出恢复路径（采集器盘中静默死亡时 sector 会停在旧日期；
     // 服务端有自愈补抓，这里同时提示手动补救入口）
-    if (titleEl) titleEl.textContent = "板块竞价强度 · 观察池偏样本";
+    if (titleEl) titleEl.textContent = "板块竞价强度 · 仅观察池";
     var items = currentItems(d); if (!items.length) return;
     var wm = d.watchmap || {};
     var agg = {};
@@ -404,11 +412,11 @@ function renderSector() {
     }).filter(function (r) { return sgn * r.pct > 0; })
       .sort(function (x, y) { return sgn * (y.pct - x.pct); }).slice(0, 12).reverse();
     srcNote = (sec.date && sec.date !== today8()
-        ? "板块指数数据为 " + sec.date + " 旧数据（采集盘中中断？）"
-        : "今日板块指数未采集")
-      + " · 以下为观察池行业聚合，非全板块口径"
+        ? "板块数据是 " + sec.date + " 的（采集可能中断）"
+        : "今日板块数据未采集")
+      + " · 以下只统计观察池内的股票"
       + (rows.length ? "" : " · 当前无" + (state.sectorSide === "down" ? "低开" : "高开") + "行业")
-      + (d.fetching ? " · 后台补抓中…" : " · 点右上「立即补抓」恢复全成分口径");
+      + (d.fetching ? " · 后台补抓中…" : " · 点右上「立即补抓」恢复全部行业");
   }
   $("sectorNote").textContent = srcNote;
   var top = rows;
@@ -419,11 +427,11 @@ function renderSector() {
     if ((sec.rows || []).length && (secDate === today8() || secDate === dataFreshness().date8)) {
       var opp = sec.rows.filter(function (r) { return sgn * r.open_pct <= 0; });
       var ext = opp.length ? opp.reduce(function (a, b) { return (sgn * b.open_pct) < (sgn * a.open_pct) ? b : a; }) : null;
-      msg = (secDate !== today8() ? mdOf(secDate) + " " : "") + "全部 " + opp.length + " 个一级行业竞价" + side
+      msg = (secDate !== today8() ? mdOf(secDate) + " " : "") + "全部 " + opp.length + " 个行业竞价" + side
         + (ext ? "（" + (sgn < 0 ? "最强 " : "最深 ") + fmtPct(ext.open_pct) + " · " + esc(ext.n) + "）" : "")
         + "，无" + side + "行业" + (state.sectorSide === "down" ? "；点「涨」看高开" : "；点「跌」看低开");
     } else {
-      msg = "观察池内无" + side + "行业聚合（非全板块口径）";
+      msg = "观察池内没有" + side + "行业";
     }
     sectorChart.setOption({
       textStyle: { fontFamily: CHART_FONT },
@@ -533,26 +541,26 @@ function renderAlertList() {
     return '<li><span class="t">' + esc(a.t) + '</span><b>' + esc(a.name) + "</b> " + esc(a.msg) +
       (a.noise ? '<span class="tag-noise">可撤单期</span>' : "") + "</li>";
   }).join("") : '<li class="dim" style="border:none">等待数据…</li>';
-  $("alertNote").textContent = merged.length ? merged.length + " 条 · 相邻两轮环比突变" : "相邻两轮环比突变";
+  $("alertNote").textContent = merged.length ? merged.length + " 条 · 与上一轮相比" : "与上一轮相比";
 }
 
 /* ============ 09:25 定盘 ============ */
 function renderFinal(d) {
   var fin = d.final, rnd = fin && fin.round;
   if (!rnd || !rnd.items || !rnd.items.length) {
-    $("finalNote").textContent = !fin ? "9:25 撮合完成后冻结"
-      : (fin.date && fin.date !== today8() ? "今日无终态（文件里只有 " + mdOf(fin.date) + " 的）" : "终态为空");
+    $("finalNote").textContent = !fin ? "09:25 撮合后不再变化"
+      : (fin.date && fin.date !== today8() ? "今日无定盘数据（只有 " + mdOf(fin.date) + " 的）" : "定盘数据为空");
     state.finalItems = [];
     $("btnFinal2Quant").disabled = true;   // 无终态时禁用送量化（与候选面板按钮同口径）
     return;
   }
   var notes = [];
   if (fin.date && fin.date !== today8()) notes.push("数据日 " + mdOf(fin.date) + "（非今日）");
-  if (fin.pre_market) notes.push("盘前补抓，可能为上一交易日口径");
-  if (fin.provisional) notes.push("上游终态未就绪（" + (rnd.data_status || "?") + "），暂为盘中快照");
+  if (fin.pre_market) notes.push("盘前补抓，可能是上一交易日数据");
+  if (fin.provisional) notes.push("定盘数据未就绪（" + (rnd.data_status || "?") + "），暂用盘中数据");
   $("finalNote").textContent = notes.length ? "⚠ " + notes.join(" · ")
     : (fin.mode === "manual" ? "手动补抓 · " + String(fin.fetched_at || "").slice(5, 19)
-                              : "9:25 撮合完成后冻结");
+                              : "09:25 撮合后不再变化");
   var items = rnd.items;
   var hi = items.filter(function (r) { return r.auction_pct > 0.005; });
   var lo = items.filter(function (r) { return r.auction_pct < -0.005; });
@@ -583,9 +591,9 @@ $("btnFinal2Quant").addEventListener("click", function () {
 /* ============ 送入量化（代码清洗口径单一来源在 lib/util.js AK.cleanCodes） ============ */
 function goQuant(codes) {
   var clean = AK.cleanCodes(codes);
-  if (!clean.length) { toast("无可送入的代码", "err"); return; }
+  if (!clean.length) { toast("没有可加入的代码", "err"); return; }
   try { localStorage.setItem("A_QUANT_POOL", clean.join(" ")); } catch (e) {}
-  toast("已送入量化标的池（" + clean.length + " 只）", "ok");
+  toast("已加入回测标的（" + clean.length + " 只）", "ok");
   setTimeout(function () { location.href = "/quant"; }, 500);
 }
 
@@ -605,9 +613,9 @@ function renderBench(d) {
    四个面板全部只读 payload 里已有字段（items + watchmap + rounds_meta + status），
    不新增任何上游接口调用。 */
 var CAND_RULES = {
-  loose:  { pct: 1, ratio: 1.5, imb: 0.05, amt: 2e6, txt: "高开≥1% · 量比昨≥1.5 · 剩/匹≥5%" },
-  std:    { pct: 2, ratio: 2,   imb: 0.15, amt: 3e6, txt: "高开≥2% · 量比昨≥2 · 剩/匹≥15%" },
-  strict: { pct: 3, ratio: 3,   imb: 0.30, amt: 5e6, txt: "高开≥3% · 量比昨≥3 · 剩/匹≥30%" }
+  loose:  { pct: 1, ratio: 1.5, imb: 0.05, amt: 2e6, txt: "高开≥1% · 量比≥1.5 · 承接≥5%" },
+  std:    { pct: 2, ratio: 2,   imb: 0.15, amt: 3e6, txt: "高开≥2% · 量比≥2 · 承接≥15%" },
+  strict: { pct: 3, ratio: 3,   imb: 0.30, amt: 5e6, txt: "高开≥3% · 量比≥3 · 承接≥30%" }
 };
 /* ---- 强势候选：高开 + 放量 + 买方承接（门槛 + 承接强度 + 强度分排序） ----
    2026-09-04 优化：旧规则对承接只看「委买剩余>0」这个方向条件——剩余 311 手
@@ -646,16 +654,16 @@ function renderCand() {
   state.candCodes = hit.map(function (x) { return x.ticker || x.thscode; });
   var fr = dataFreshness();
   var noteEl = $("candNote");
-  var vrTail = nNoVr ? " · 量比缺" + nNoVr + "只未评" : "";
+  var vrTail = nNoVr ? " · " + nNoVr + " 只缺量比" : "";
   noteEl.textContent = items.length
-    ? (hit.length ? rule.txt + " → " + hit.length + " 只 · 按强度分排序" + vrTail + staleTail(fr)
-                  : "无标的通过筛选（可切「宽」）" + vrTail + staleTail(fr))
+    ? (hit.length ? rule.txt + " → " + hit.length + " 只 · 按强度排序" + vrTail + staleTail(fr)
+                  : "当前无符合的股票（可切「宽」）" + vrTail + staleTail(fr))
     : "暂无数据";
   noteEl.className = "note" + (fr.today === false && hit.length ? " warn-txt" : "");
   $("btnCand2Quant").disabled = !hit.length;
   if (!hit.length) {
     $("candBody").innerHTML = '<tr><td colspan="4" class="dim" style="text-align:center;padding:16px">' +
-      (items.length ? "无标的命中" : "暂无数据") + "</td></tr>";
+      (items.length ? "当前无符合的股票" : "暂无数据") + "</td></tr>";
     return;
   }
   $("candBody").innerHTML = hit.slice(0, 20).map(function (x) {
@@ -678,7 +686,7 @@ function renderCand() {
       '<td class="mono">' + fmtVol(x.auction_unmatched) +
       '<span class="sub-ind">' + (imbOf(x) * 100).toFixed(0) + "%</span></td></tr>";
   }).join("") + (hit.length > 20
-    ? '<tr><td colspan="4" class="dim" style="font-size:11px;padding:6px">余 ' + (hit.length - 20) + " 只未列出（送量化仍含全部）</td></tr>" : "");
+    ? '<tr><td colspan="4" class="dim" style="font-size:11px;padding:6px">还有 ' + (hit.length - 20) + " 只未列出（加入回测时包含全部）</td></tr>" : "");
 }
 function hms2sec(hms) {
   var a = String(hms || "").split(":");
@@ -738,14 +746,14 @@ function renderRelay() {
   var el = $("relayStats"), note = $("relayNote");
   if (!items.length) { el.innerHTML = '<div class="k">暂无数据</div>'; return; }
   if (!items.some(function (x) { return srcOf(wm, x.thscode); })) {
-    el.innerHTML = '<div class="k">观察池来源未标注</div><div class="v dim">重跑一次采集后可见</div>';
-    note.textContent = "需新版采集器写 watchmap.s";
+    el.innerHTML = '<div class="k">观察池来源暂无</div><div class="v dim">重新采集后显示</div>';
+    note.textContent = "重新采集后可见";
     return;
   }
   var isL = function (x) { return srcOf(wm, x.thscode).indexOf("L") >= 0; };
   var L = items.filter(isL), rest = items.filter(function (x) { return !isL(x); });
   if (!L.length) {
-    el.innerHTML = '<div class="k">池内无上一交易日涨停股</div><div class="v dim">看「观察池」构成</div>';
+    el.innerHTML = '<div class="k">池内无昨日涨停股</div><div class="v dim">看「观察池」构成</div>';
     return;
   }
   var red = L.filter(function (x) { return (x.auction_pct || 0) > 0; }).length;
@@ -754,14 +762,14 @@ function renderRelay() {
   var avgR = avgOf(rest, function (x) { return x.auction_pct; });
   var gap = (avgL != null && avgR != null) ? avgL - avgR : null;
   el.innerHTML = kvRows([
-    ["入池涨停股", L.length + " 只", ""],
+    ["昨日涨停股", L.length + " 只", ""],
     ["红盘率", (red / L.length * 100).toFixed(0) + "%", red / L.length >= 0.5 ? "up" : "down"],
     ["平均竞价涨幅", fmtPct(avgL), pctClass(avgL)],
-    ["池内其余均值", avgR == null ? "-" : fmtPct(avgR), pctClass(avgR)],
-    ["接力差值", gap == null ? "-" : (gap >= 0 ? "+" : "") + gap.toFixed(2) + "pct", gap == null ? "dim" : (gap >= 0 ? "up" : "down")],
+    ["其他股票均值", avgR == null ? "-" : fmtPct(avgR), pctClass(avgR)],
+    ["接力差值", gap == null ? "-" : (gap >= 0 ? "+" : "") + gap.toFixed(2) + " 个点", gap == null ? "dim" : (gap >= 0 ? "up" : "down")],
     ["涨停价开盘", zt + " 只", zt ? "up" : "dim"]
   ]);
-  note.textContent = "上一交易日涨停池 → 今日竞价 · 个股见强势候选「接」标" + staleTail(fr);
+  note.textContent = "昨日涨停股今日竞价 · 个股见「强势候选」的「接」标" + staleTail(fr);
   note.className = "note" + (fr.today === false ? " warn-txt" : "");
 }
 
@@ -773,7 +781,7 @@ function renderRealize() {
   if (!items.length) { el.innerHTML = '<div class="k">暂无数据</div>'; return; }
   if (ph.key === "live" || ph.key === "lock") {
     el.innerHTML = '<div class="k">竞价未结束</div><div class="v dim">09:30 后可算</div>';
-    note.textContent = "定盘 → 开盘 → 现价（开盘后生效）";
+    note.textContent = "定盘 → 现价（开盘后生效）";
     return;
   }
   var hi = items.filter(function (x) { return (x.auction_pct || 0) > 0; });
@@ -782,7 +790,7 @@ function renderRealize() {
     return x.last_price != null && x.auction_price && x.pre_close_price;
   });
   if (!wOpen.length && !withLast.length) {
-    el.innerHTML = '<div class="k">尚无开盘/现价</div><div class="v dim">上游未返回或尚未开盘</div>';
+    el.innerHTML = '<div class="k">尚无现价</div><div class="v dim">数据源未返回或尚未开盘</div>';
     return;
   }
   var kept = wOpen.filter(function (x) { return x.open_price >= x.pre_close_price; }).length;
@@ -792,13 +800,13 @@ function renderRealize() {
   var rnd = (p.live && p.live.round) || (p.final && p.final.round) || {};
   // 高开只数行已删：与本面板顶部定盘统计卡（定盘口径）重复，现价轮口径差异只会造成困惑
   el.innerHTML = kvRows([
-    ["开盘守住昨收", wOpen.length ? kept + " 只（" + (kept / wOpen.length * 100).toFixed(0) + "%）" : "-",
+    ["开盘不低于昨收", wOpen.length ? kept + " 只（" + (kept / wOpen.length * 100).toFixed(0) + "%）" : "-",
       wOpen.length && kept / wOpen.length >= 0.5 ? "up" : "down"],
-    ["定盘→现价 中位", med == null ? "-" : fmtPct(med), pctClass(med)],
+    ["定盘到现在（中位）", med == null ? "-" : fmtPct(med), pctClass(med)],
     ["现价高于定盘", withLast.length ? above + " 只（" + (above / withLast.length * 100).toFixed(0) + "%）" : "-",
       above >= withLast.length / 2 ? "up" : "flat"]
   ]);
-  note.textContent = (rnd.ts ? "现价取自 " + String(rnd.ts).slice(11, 19) + " 那轮（非实时）" : "定盘 → 开盘 → 现价") +
+  note.textContent = (rnd.ts ? "现价取自 " + String(rnd.ts).slice(11, 16) + " 那一轮（非实时）" : "定盘 → 现价") +
     staleTail(dataFreshness());
   note.className = "note" + (dataFreshness().today === false ? " warn-txt" : "");
 }
@@ -829,7 +837,7 @@ function renderFlip() {
   rounds.sort(function (a, b) { return String(a.ts || "").localeCompare(String(b.ts || "")); });
   if ((state.series || {}).date !== today8()) {
     var oldSd = (state.series || {}).date;
-    empty("等待今日逐轮竞价数据" + (oldSd ? "（当前是 " + oldSd + " 的旧轨迹）" : ""));
+    empty("今日暂无逐轮数据" + (oldSd ? "（显示 " + mdOf(oldSd) + " 数据）" : ""));
     return;
   }
   /* 终点可信门：final 轮只有「当日 + 09:26 前抓取」才是 09:25 撮合值。
@@ -841,7 +849,7 @@ function renderFlip() {
     fin.date === (state.series || {}).date && finT && finT <= "09:26:00";
   var frames = rounds.map(function (r) { return { ts: r.ts, t: String(r.ts || "").slice(11, 19), items: r.items, fin: false }; });
   if (finOK) frames.push({ ts: fin.round.ts, t: String(fin.round.ts || "").slice(11, 19), items: fin.round.items, fin: true });
-  if (frames.length < 2) { empty("窗口内仅 " + frames.length + " 帧，连不成轨迹（需≥ 2 帧，由 09:14 任务自动采）"); return; }
+  if (frames.length < 2) { empty("数据点不足（" + frames.length + " 个），无法画轨迹"); return; }
   frames.sort(function (a, b) { return String(a.ts || "").localeCompare(String(b.ts || "")); });
   /* 起点：优先 09:20 后该股首个有效轮（不可撤单窗口）；
      09:15 首轮上游常为 not_ready，历史上锁第一轮曾把整个面板转空（09-03 实测 75 只全跳过）。 */
@@ -864,7 +872,7 @@ function renderFlip() {
       });
     });
   }
-  if (startMin == null) { empty("窗口内无有效匹配涨幅（各轮均 not_ready）"); return; }
+  if (startMin == null) { empty("没有有效的竞价涨幅"); return; }
   /* 每股轨迹（从其起点帧起）与终点帧 */
   var traj = {}, endI = {};
   frames.forEach(function (r, ri) {
@@ -891,10 +899,10 @@ function renderFlip() {
   });
   rows.sort(function (x, y) { return k === "w2s" ? y.fl - x.fl : x.fl - y.fl; });
   if (note) note.textContent = "起点 " + String(startMin || "").slice(11, 19) +
-    (startAnchor ? "（09:20锁点）" : "（未覆盖09:20后）") + " → 终点 " +
-    String(lastFrame.ts || "").slice(11, 19) + (finOK ? "（定盘）" : "") + " · 变化≥" + FLIP_DELTA + "点";
+    (startAnchor ? "（09:20 起点）" : "（未覆盖09:20后）") + " → 终点 " +
+    String(lastFrame.ts || "").slice(11, 19) + (finOK ? "（定盘）" : "") + " · 变化≥" + FLIP_DELTA + " 个点";
   if (!rows.length) { el.innerHTML = '<tr><td colspan="4" class="dim" style="text-align:center;padding:16px">今日无「' +
-    (k === "w2s" ? "弱转强" : "强转弱") + "」标的</td></tr>"; return; }
+    (k === "w2s" ? "弱转强" : "强转弱") + "」股票</td></tr>"; return; }
   el.innerHTML = rows.map(function (r) {
     var badges = srcOf(wm, r.tc).indexOf("L") >= 0
       ? '<span class="relay-badge" title="上一交易日涨停股">接</span>' : "";
@@ -927,8 +935,11 @@ function renderPoolExec() {
   var p = state.payload || {}, pe = p.pool_exec || {};
   var el = $("pexBody"), note = $("pexNote"), sig = $("pexSig");
   if (!pe.ok) {
+    var peNote = (pe.note || "暂无备选池数据")
+      .replace("上一交易日无备选池标的（冰点/缺快照）", "昨日没有备选池股票（冰点或数据缺失）")
+      .replace("上一交易日快照无备选池标的（冰点或模块缺失）", "昨日没有备选池股票（冰点或数据缺失）");
     el.innerHTML = '<tr><td colspan="3" class="dim" style="text-align:center;padding:16px">' +
-      esc(pe.note || "暂无备选池数据") + "</td></tr>";
+      esc(peNote) + "</td></tr>";
     if (sig) { sig.textContent = ""; sig.className = "note"; }
     return;
   }
@@ -953,19 +964,19 @@ function renderPoolExec() {
   if (sig) {
     var s = pe.signal;
     if (!s) {
-      sig.textContent = "情绪前瞻：池内无昨涨停股或暂无竞价轮次";
+      sig.textContent = "情绪参考：池内无昨日涨停股或暂无竞价数据";
       sig.className = "note";
     } else if (!s.lu_n && s.stale) {
       // L 标注来自回看补池的旧快照（非上一交易日涨停池）：不给占比数字，只明示标注过期
-      sig.textContent = "情绪前瞻：涨停池标注来自 " + (s.stale_date ? mdOf(s.stale_date) : "更早") +
-        " 快照（非上一交易日涨停池），旧样本不计入 · " + (s.study || "");
+      sig.textContent = "情绪参考：涨停池来自 " + (s.stale_date ? mdOf(s.stale_date) : "更早") +
+        " 的数据（不是昨日），不计入 · " + (s.study || "");
       sig.className = "note warn-txt";
     } else {
-      sig.textContent = "情绪前瞻：昨涨停池低开 " + (s.open_down * 100).toFixed(0) + "%（深低开≤-2% 占 " +
-        (s.open_deep * 100).toFixed(0) + "%，n=" + s.lu_n + "）" +
-        (s.stale ? " · 另有 " + s.stale + " 只 L 标注来自 " +
-          (s.stale_date ? mdOf(s.stale_date) : "更早") + " 旧快照未计入" : "") +
-        (s.warn ? " ⚠ 已过 50% 警戒（回验：该桶当日备选池均益 -1.08%）" : "") + " · " + s.study;
+      sig.textContent = "情绪参考：昨日涨停股低开 " + (s.open_down * 100).toFixed(0) + "%（低开≤-2% 占 " +
+        (s.open_deep * 100).toFixed(0) + "%，样本 " + s.lu_n + "）" +
+        (s.stale ? " · 另有 " + s.stale + " 只来自 " +
+          (s.stale_date ? mdOf(s.stale_date) : "更早") + " 的旧数据，未计入" : "") +
+        (s.warn ? " ⚠ 已过 50% 警戒（这类日子备选池平均收益 -1.08%）" : "") + " · " + s.study;
       sig.className = "note" + (s.warn ? " warn-txt" : "");
     }
   }
@@ -1010,11 +1021,11 @@ function renderCheck() {
     var ok = covered(sl);
     if (ok) hitN++;
     var cls = ok ? (sl.kind === "final" ? "cov fin" : "cov hit") : "cov";
-    return '<i class="' + cls + '" title="' + hhmmss(sl.sec) + (sl.kind === "final" ? " 定盘" : " live 轮") +
-      (ok ? " 已采" : " 缺轮") + '"></i>';
+    return '<i class="' + cls + '" title="' + hhmmss(sl.sec) + (sl.kind === "final" ? " 定盘" : " 采集轮") +
+      (ok ? " 已采" : " 漏采") + '"></i>';
   }).join("") + (snaps.length
     ? '<i class="cov snap" title="窗口外补抓 ' + String(snaps[snaps.length - 1].ts || "").slice(11, 19) +
-      "（只有定盘冻结值）\"></i>" : "");
+      "（只有定盘值）\"></i>" : "");
   var nLim = 0, nHot = 0;
   Object.keys(wm).forEach(function (k) {
     var s = srcOf(wm, k);
@@ -1031,26 +1042,26 @@ function renderCheck() {
   var indHit = itemsC.filter(function (x) { return (wm[x.thscode] || {}).i; }).length;
   var finToday = fr.finalToday;
   var rows = [
-    ["窗口内逐轮", hitN + " / " + slots.length + " 格",
+    ["采集轮次", hitN + " / " + slots.length + " 轮",
       hitN === slots.length ? "up" : (inWin.length ? "warn-txt" : "bad-txt")],
-    ["时序数据日", metaToday ? (rm.date ? "今日" : "暂无轮次记录") : "旧数据 " + rm.date + "，不计入覆盖",
+    ["轮次日期", metaToday ? (rm.date ? "今日" : "暂无轮次记录") : rm.date + " 的旧数据，不计入",
       metaToday ? "dim" : "warn-txt"],
-    ["盘外补抓", snaps.length ? String(snaps[snaps.length - 1].ts || "").slice(11, 19) + "（只当定格快照）" : "无",
+    ["补抓", snaps.length ? String(snaps[snaps.length - 1].ts || "").slice(11, 19) + "（只作定盘值）" : "无",
       snaps.length && !inWin.length ? "warn-txt" : "dim"],
-    ["观察池", "自选 " + wl.length + " · 涨停池 " + nLim + " · 热股 " + nHot + " = " + nPool +
-      " / 封顶 " + (cfg.max_codes || 300), ""],
+    ["观察池", "自选 " + wl.length + " · 涨停股 " + nLim + " · 热股 " + nHot + " = " + nPool +
+      " / 上限 " + (cfg.max_codes || 300), ""],
     ["行业覆盖", itemsC.length ? indHit + " / " + itemsC.length : "—",
       itemsC.length && indHit === itemsC.length ? "up" : "warn-txt"],
-    ["批次失败", errs ? errs + " 批" : "0", errs ? "warn-txt" : "dim"],
-    ["终态", fr.hasAny ? (finToday ? "今日已取" : "今日缺终态") : "无", finToday ? "up" : "warn-txt"],
-    ["数据日", fr.hasAny ? fr.date8 + (fr.today === false ? "（隔日）" : "") : "—",
+    ["抓取失败", errs ? errs + " 批" : "0", errs ? "warn-txt" : "dim"],
+    ["定盘数据", fr.hasAny ? (finToday ? "今日已取" : "今日缺定盘") : "无", finToday ? "up" : "warn-txt"],
+    ["数据日期", fr.hasAny ? mdOf(fr.date8) + (fr.today === false ? "（隔日）" : "") : "—",
       fr.today === false ? "warn-txt" : "dim"],
     ["上次采集", st.last_run || "—", "dim"]
   ];
-  if (st.note) rows.push(["任务提示", esc(st.note), "warn-txt"]);
-  if (!(wl.length || nLim || nHot)) rows.push(["来源标注", "未记录（旧数据）", "dim"]);
+  if (st.note) rows.push(["采集提示", esc(st.note), "warn-txt"]);
+  if (!(wl.length || nLim || nHot)) rows.push(["来源", "未记录（旧数据）", "dim"]);
   $("checkStats").innerHTML = kvRows(rows);
-  $("checkNote").textContent = "深灰=采到 · 金=定盘 · 空=缺轮 · 浅灰=盘外补抓";
+  $("checkNote").textContent = "深灰=已采 · 金色=定盘 · 空心=漏采 · 浅灰=补抓";
 }
 
 /* ============ 个股竞价曲线弹窗 ============ */
@@ -1116,7 +1127,7 @@ function renderCurve() {
   var liveAuc = ph.key === "live" || ph.key === "lock";   // 正在竞价：价都还是暂定值，不能叫「定盘」
   var cur = currentItems(state.payload).find(function (x) { return x.thscode === code; });
   var nm = cur ? (cur.name || code) : (((state.payload.watchmap || {})[code] || {}).n || code);
-  $("curveTitle").textContent = nm + (onlySnap ? " · 竞价定盘（补抓快照）"
+  $("curveTitle").textContent = nm + (onlySnap ? " · 竞价定盘（补抓）"
                                  : liveAuc ? " · 竞价曲线（进行中）" : " · 竞价曲线");
   var meta = cur ? (
     (liveAuc ? "匹配价" : "定盘价") + " <b class='mono'>" + (cur.auction_price != null ? cur.auction_price : "-") + "</b> · " +
@@ -1138,16 +1149,16 @@ function renderCurve() {
       "）：黄点 09:15–09:20 可撤单（可能含虚假申报），红点 09:20–09:25 不可撤单。";
     if (snap) note += " 另有 " + (snap.ts || "").slice(11, 16) + " 盘后补抓一轮，与定盘全等，不计入曲线。";
   } else if (onlySnap) {
-    note = "当日没有竞价时段逐轮：" + (snap.ts || "").slice(11, 19) + " 的补抓只能拿到 09:25 定盘冻结值"
+    note = "当日没有逐轮数据：" + (snap.ts || "").slice(11, 16) + " 的补抓只有 09:25 定盘值"
       + "（竞价结束后数值不再变化），只是一个点，画不出竞价过程。"
-      + "要看逐轮曲线，需交易日 09:14 采集任务在 09:15 前跑起来。";
+      + "要看逐轮曲线，需交易日 09:14 的采集任务在 09:15 前跑起来。";
   } else {
-    note = "当日尚无时序轮次（live 采集 09:15 开始；手动补抓只落定盘快照）";
+    note = "当日尚无逐轮数据（09:15 开始采集；手动补抓只有定盘值）";
   }
   if (s.date && fr.date8 && s.date !== fr.date8) {
-    note += " 注意：时序数据日 " + s.date + " 与当前面板 " + fr.date8 + " 不同。";
+    note += " 注意：数据日期 " + s.date + " 与当前页面 " + fr.date8 + " 不同。";
   }
-  if (!liveAuc) note += " 现价为抓取时点盘中价，不是竞价口径。";
+  if (!liveAuc) note += " 现价是抓取时的盘中价，不是竞价价格。";
   $("curveNote").textContent = note;
   curveChart.setOption({
     textStyle: { fontFamily: CHART_FONT },
