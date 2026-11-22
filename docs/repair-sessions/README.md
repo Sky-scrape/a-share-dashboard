@@ -31,6 +31,16 @@
 | `repair_boards_history.py` | 修复 `providers.boards` 的 `.TI.TI` 双后缀导致 20260910~20260918 行业 5 日线只剩 1 天 | 否（只写 data/） | 是（脚本头记录实扫 174 份快照后回填） | 用 `.bak` 快照回退；重跑脚本前先备份 |
 | `repair_pool_payload.py` | 修复 20260914~17 等快照内嵌的备选池验证/优化器旧载荷 | 否（只写 data/） | 是（脚本头记录实扫后定位） | 用 `pool_track.json.bak-*` 与对应快照 `.bak` 回退 |
 
+## 2026-11-22 一键入口（双击即可）
+
+| 文件 | 用途 |
+| --- | --- |
+| `配置推送-notify.bat` | 打开 `.status/notify.json`；填一个渠道、保存关闭后自动 `--send` 自检。 |
+| `以管理员运行修复-20261122空闲任务.bat` | 双击 → UAC → `20261122_fix-task-idle.ps1`；只修 rotation/usclose 的 `StopOnIdleEnd`。 |
+| `跑global探针.bat` | 交易日 17:10 双击；追加到 `.status/logs/probe-global.log`。 |
+| `跑影子账本.bat` | 收盘后双击；写 `shadow_0_2/ledger.csv` 并打开；填 6 个手工列。 |
+| `跑全门禁.bat` | 双击跑 pytest+smoke+outbound+task-entries+ruff+node。 |
+
 ## 证据文件
 
 - `evts.ps1`：只读导出任务计划程序 Operational 日志中 `rotation-intraday` 事件。

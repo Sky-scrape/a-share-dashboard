@@ -62,6 +62,10 @@ Thumbs.db
 # ---- 本地临时副本（不入库）----
 /Microsoft/
 /_tmp_*.py
+# 2026-11-22 工作区清理：本批之前的临时抓取/备份产物（保留在磁盘，不入库）
+/news_fetch.py
+/news_out.txt
+/strategy-iter/runs/c15_oos_review_backup_20261019/
 
 # 量化引擎在后端目录下的运行时数据缓存（cn_a 本地行情库，运行生成不入库）
 /backend/quant/data/
