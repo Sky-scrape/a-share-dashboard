@@ -30,8 +30,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 sys.path.insert(0, os.path.join(ROOT, "backend", "recap"))
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# 本目录也要在 path 上：以文件路径加载本模块时（importlib / spec_from_file_location，
+# 见 tests/test_units.py 的 _load_fetch_global）没有包路径，同目录的 window_status 找不到。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import window_status  # noqa: E402  热力图窗口状态（0/N 不得伪装 ok）
+
+# 无 buffer 的宿主（pytest 捕获等）跳过重绑定：运行行为不变，只为可离线 import。
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 import lockutil  # noqa: E402
@@ -403,11 +414,11 @@ def _add_windows_us(sectors):
     with ThreadPoolExecutor(max_workers=3) as ex:
         list(ex.map(one, stocks))
     n_ok = sum(1 for x in stocks if x["pct5"] is not None)
-    LOG.info(f"  [us windows] 个股 {n_ok}/{len(stocks)}")
     for s in sectors:
         for k in ("pct5", "pct20"):
             vals = [x[k] for x in s["stocks"] if x.get(k) is not None]
             s[k] = round(sum(vals) / len(vals), 2) if vals else None
+    return window_status.summary("us", n_ok, len(stocks))
 
 
 def fetch_heat_us():
@@ -450,11 +461,13 @@ def fetch_heat_us():
     if not sectors:
         raise RuntimeError("美股实时行情解析为空")
     asof = max((q["asof"] for q in quotes.values()), default="")
+    win = None
     try:
-        _add_windows_us(sectors)
+        win = _add_windows_us(sectors)
     except Exception as e:  # noqa: BLE001  窗口缺失不连坐主数据
         LOG.info(f"[warn] us 窗口计算失败: {type(e).__name__}: {str(e)[:120]}")
-    return {"asof": asof, "sectors": sectors}
+        win = window_status.summary("us", 0, 0)
+    return {"asof": asof, "sectors": sectors, "windows": win}
 
 
 def _latest_industry_map():
@@ -537,7 +550,7 @@ def _add_windows_cn(sectors, board_daily=None):
         for x in stocks:
             x.pop("_wfail", None)
     n_ok = sum(1 for x in stocks if x["pct5"] is not None)
-    LOG.info(f"  [cn windows] 个股 {n_ok}/{len(stocks)}")
+    return window_status.summary("cn", n_ok, len(stocks))
 
 
 class NoSessionData(RuntimeError):
@@ -618,11 +631,14 @@ def fetch_heat_cn(board_daily=None):
     map_vintage = ""
     if ind_date and len(ind_date) == 8:
         map_vintage = f"{ind_date[:4]}-{ind_date[4:6]}-{ind_date[6:]}"
+    win = None
     try:
-        _add_windows_cn(out, board_daily)
+        win = _add_windows_cn(out, board_daily)
     except Exception as e:  # noqa: BLE001  窗口缺失不连坐主数据
         LOG.info(f"[warn] cn 窗口计算失败: {type(e).__name__}: {str(e)[:120]}")
-    return {"asof": asof, "map_vintage": map_vintage, "sectors": out}
+        win = window_status.summary("cn", 0, 0)
+    return {"asof": asof, "map_vintage": map_vintage, "sectors": out,
+            "windows": win}
 
 
 # ---------------- 4. 日内分时 ----------------
@@ -658,6 +674,16 @@ def fetch_intraday():
 
 
 # ---------------- 主流程 ----------------
+
+def _log_windows(label, win):
+    """按窗口状态分级日志：只有 ok 才写 [ok]，partial/unknown 一律 [warn]。"""
+    status = (win or {}).get("status", window_status.UNKNOWN)
+    line = window_status.log_line(label, win or {})
+    if status == window_status.OK:
+        LOG.info(f"[ok] {line}")
+    else:
+        LOG.warning(f"[warn] {line}")
+
 
 def main():
     # 跨进程锁：手动重抓与计划任务不并发（与 server.py /api/fetch-global 共用）
@@ -722,16 +748,18 @@ def _run():
         _keep("radar")
 
     try:
-        payload["heatmap_us"] = fetch_heat_us()
-        LOG.info("[ok] heatmap_us")
+        hm_us = fetch_heat_us()
+        payload["heatmap_us"] = hm_us
+        _log_windows("heatmap_us", hm_us.get("windows"))
     except Exception as e:  # noqa: BLE001
         errors["heatmap_us"] = f"{type(e).__name__}: {str(e)[:150]}"
         LOG.info(f"[fail] heatmap_us: {errors['heatmap_us']}")
         _keep("heatmap_us")
 
     try:
-        payload["heatmap_cn"] = fetch_heat_cn(board_daily)
-        LOG.info("[ok] heatmap_cn")
+        hm_cn = fetch_heat_cn(board_daily)
+        payload["heatmap_cn"] = hm_cn
+        _log_windows("heatmap_cn", hm_cn.get("windows"))
     except NoSessionData as e:
         # 盘前/非交易日：实时快照本就没有当日成交数据——属预期，沿用上一份收盘副本，
         # 不计入 errors（否则看板每个盘前都报「N 项降级」，把正常状态显示成故障）。

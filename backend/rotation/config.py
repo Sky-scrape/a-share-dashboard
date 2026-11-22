@@ -21,9 +21,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(BASE_DIR))
 _BACKEND = os.path.join(PROJECT_ROOT, "backend")
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
-import fsutil   # noqa: E402  原子写盘单一来源（boards.json 与 ths_collect 双写方同口径）
+import fsutil   # noqa: E402  原子写盘单一来源（boards_legacy.json 与 ths_collect 的 boards.json 同盘同写法）
 DATA_DIR = os.path.join(PROJECT_ROOT, "data", "rotation")
-BOARDS_FILE = os.path.join(DATA_DIR, "boards.json")
+# LEGACY 东财清单；现行同花顺板块池是 ths_collect.py 的 boards.json
+BOARDS_FILE = os.path.join(DATA_DIR, "boards_legacy.json")
 
 HOSTS = ["push2his.eastmoney.com", "push2delay.eastmoney.com", "push2.eastmoney.com"]
 # 禁用系统代理：直连东财接口（坏代理会导致请求挂起/随机断连，与 fetch_day 同口径）
@@ -94,7 +95,8 @@ def _clist_all(fs, max_pages=8):
 
 
 def fetch_boards(industry_count=len(SW_L1_NAMES), concept_count=0, refresh=False):
-    """拉取板块清单并缓存。行业=申万一级白名单过滤；返回 {"industry": [...], "concept": [...]}"""
+    """拉取东财板块清单并缓存到 boards_legacy.json（归档侧）。
+    行业=申万一级白名单过滤；返回 {"industry": [...], "concept": [...]}"""
     if not refresh and os.path.exists(BOARDS_FILE):
         return json.load(open(BOARDS_FILE, encoding="utf-8"))
 
@@ -118,18 +120,31 @@ def fetch_boards(industry_count=len(SW_L1_NAMES), concept_count=0, refresh=False
             boards["concept"] = con[:concept_count]
 
     os.makedirs(DATA_DIR, exist_ok=True)
+    # 只写归档清单 boards_legacy.json，不触碰同花顺现行 boards.json
     fsutil.save_json_atomic(BOARDS_FILE, boards)
     return boards
 
 
 def load_boards():
-    """读取缓存清单；不存在则拉取。"""
+    """读取归档清单 boards_legacy.json；不存在则拉取（LEGACY 专用）。"""
     if os.path.exists(BOARDS_FILE):
         return json.load(open(BOARDS_FILE, encoding="utf-8"))
     return fetch_boards()
 
 
+def _require_legacy(argv):
+    """LEGACY 显式开关：与 fetch_day/backfill_rotation 同口径；不带 --legacy 不写任何文件。"""
+    if "--legacy" in argv:
+        print("LEGACY 东财口径：已带 --legacy，输出写 data/rotation/boards_legacy.json（归档侧）。")
+        return True
+    print("LEGACY 东财口径：运行必须显式加 --legacy；未加时只打印本行并以退出码 2 结束，"
+          "不写任何文件。")
+    return False
+
+
 if __name__ == "__main__":
+    if not _require_legacy(sys.argv[1:]):
+        sys.exit(2)
     b = fetch_boards(refresh=True)
     print(f"行业板块 {len(b['industry'])} 个, 概念板块 {len(b.get('concept', []))} 个 -> {BOARDS_FILE}")
     for x in b["industry"][:5]:

@@ -9,7 +9,10 @@
   份快照被 validate_prev_pool / providers.speculation / server 反复解析，此处
   收口后只读一次盘。返回对象为缓存共享，调用方不得原地修改（retrofill 这类
   要改写快照的调用方自行 deepcopy）；文件被原子写覆盖后 mtime 变化自动失效；
-- save / 归档写统一走 backend/fsutil.py 原子写（写盘纪律：临时文件 + replace）。
+- save / 归档写统一走 backend/fsutil.py 原子写（写盘纪律：临时文件 + replace）；
+- 日期键纪律：snap_path/load/save 入口统一走 normalize_date8——只认 8 位数字
+  （YYYYMMDD），"YYYY-MM-DD" 归一化为 8 位并记 warning，其它形状抛 ValueError；
+  不做日历合法性校验（先兼容再收紧）。
 """
 import gzip
 import json
@@ -33,14 +36,34 @@ LOG = get_logger("ak.snapio")
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RECAP_DATA = os.path.join(ROOT, "data", "recap")
 SNAP_RE = re.compile(r"\d{8}")
+_ISO_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
 # 进程内已解析快照缓存：fp -> (mtime, size, doc)。FIFO 上限 8 份，防长驻进程无界膨胀
 _LOAD_CACHE = {}
 _LOAD_CACHE_MAX = 8
 
 
+def normalize_date8(date8):
+    """快照日期键归一化为 8 位数字（YYYYMMDD）。
+
+    合法 8 位原样返回；"YYYY-MM-DD" 归一化并记 warning（含原值与结果）；
+    其它形状（None/int/""/"2026/10/20"...）抛 ValueError，响亮失败不静默 None。
+    """
+    if isinstance(date8, str):
+        s = date8.strip()
+        if SNAP_RE.fullmatch(s):
+            return s
+        m = _ISO_RE.fullmatch(s)
+        if m:
+            out = "".join(m.groups())
+            LOG.warning("快照日期键 ISO 归一化：%r -> %s", date8, out)
+            return out
+    raise ValueError(f"快照日期键必须为 8 位数字（YYYYMMDD）：{date8!r}")
+
+
 def snap_path(recap_dir, date8):
     """返回存在的快照路径（.json 优先，其次 .json.gz），都不存在返回 .json 名义路径。"""
+    date8 = normalize_date8(date8)
     p = os.path.join(recap_dir, date8 + ".json")
     if os.path.isfile(p):
         return p
@@ -68,6 +91,7 @@ def load(date8, recap_dir=None):
     异常记 warning 日志（含路径与异常类型）后返回 None——保持调用方「None 即
     无数据」的降级语义，但日志里可辨「缺」与「坏」。
     """
+    date8 = normalize_date8(date8)
     fp = snap_path(recap_dir or RECAP_DATA, date8)
     if not os.path.isfile(fp):
         return None
@@ -99,5 +123,6 @@ def load(date8, recap_dir=None):
 
 def save(date8, obj, recap_dir=None):
     """原子写明文快照（backend/fsutil.save_json_atomic，临时文件 + replace）。"""
+    date8 = normalize_date8(date8)
     d = recap_dir or RECAP_DATA
     return fsutil.save_json_atomic(os.path.join(d, date8 + ".json"), obj, indent=2)

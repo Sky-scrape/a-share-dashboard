@@ -45,9 +45,18 @@ data/rotation/
 
 ## LEGACY（东财旧口径，2026-09-01 退役）
 
-`fetch_day.py` / `collect.py` / `config.py` 为旧东财口径脚本，**仅供归档数据回溯参考，
-不再接任何计划任务与链路**；`daily_legacy_eastmoney/` 为旧口径归档数据。
-`backfill_rotation.py` 维持该归档的近期连续性（依赖 config.fetch_boards）。
+`fetch_day.py` / `collect.py` / `config.py` / `backfill_rotation.py` 为旧东财口径脚本，
+**仅供归档数据回溯参考，不再接任何计划任务与链路**。`fetch_day.py` / `backfill_rotation.py` /
+`config.py` 必须显式加 `--legacy`，否则只打印横幅并以退出码 2 结束，不写任何文件；
+`collect.py` 固定给 `fetch_day.py` 子进程传 `--legacy`，自身只接受 `--interval`。输出全部落在归档侧，三条路径：
+
+- `data/rotation/daily_legacy_eastmoney/YYYY-MM-DD.json` —— 分时归档（`fetch_day.py`；`backfill_rotation.py` 回补）
+- `data/rotation/boards_legacy.json` —— 东财板块清单（`config.fetch_boards`；*不是*同花顺的 `boards.json`）
+- `.status/rotation_legacy.json` —— LEGACY 任务状态（`fetch_day.py`）
+
+现行的 `data/rotation/daily/` 与 `.status/rotation.json` 只属于同花顺口径（`ths_collect.py`），
+LEGACY 脚本不再写它们。归档清理是 opt-in：默认运行绝不删除任何文件，
+只有 `python backend/rotation/fetch_day.py --legacy --prune` 才按 `--keep-days`（默认 120）清理旧归档。
 
 ## API（server.py 路由表）
 

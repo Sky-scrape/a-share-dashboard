@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 备选池口径版本（retrofill 守卫的当前值）：改池口径时必须同步更新这里——
 # 旧快照 pool.note 首段记的就是历史口径版本（"C_Final 主板概念口径…"、
 # "M_Final 主板口径…"），与本值不一致的历史快照拒绝重算（见 retrofill）。
+# 口径真值在 strategy-iter/engine/rules.py 的 C7（600-606），对拍见 tests/test_c7_parity.py。
 RULES_VERSION = "C7"
 
 
@@ -61,6 +62,7 @@ _MF_QUOTA = {"aggressive": (2, 0), "normal": (2, 2), "defensive": (2, 1), "freez
 _MF_ENV_CN = {"aggressive": "进攻", "normal": "正常", "defensive": "防守", "freeze": "冰点"}
 # C6 隔夜美股闸门（strategy-iter us_round1_C4→us_round3_C6 三轮完整迭代收敛）：
 # 纳指综合/标普500(SPY) 隔夜跌幅 ≤-2.0% 强制 defensive。与 engine rules.C6 同口径。
+# 口径真值在 strategy-iter/engine/rules.py 的 C7（600-606），对拍见 tests/test_c7_parity.py。
 _MF_US_GATE = (-2.0, -2.0)
 
 
@@ -85,6 +87,7 @@ _ROT_DAILY = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                           "data", "rotation", "daily")
 
 # C7 非涨停组市场量能闸门（expC 实验：缩量日 NLU -0.24% n=47 / 放量日 +2.13% n=41）
+# 口径真值在 strategy-iter/engine/rules.py 的 C7（600-606），对拍见 tests/test_c7_parity.py。
 _NLU_AMT_RATIO_MIN = 0.9
 
 

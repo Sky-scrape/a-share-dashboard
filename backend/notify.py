@@ -13,8 +13,9 @@
 - 节流去重：同一 key 默认 6 小时内只推一次（.status/notify_state.json 记录
   上次推送时刻），防止监控线程每 10 分钟重扫把同一故障刷成轰炸。
 - 渠道配置在 .status/notify.json（gitignored，含密钥不入库），模板见
-  backend/notify.example.json；未配置任何渠道时 send() 静默跳过（status()
-  如实回报 configured=False，健康面板可见）。
+  backend/notify.example.json；未配置任何渠道时 send() 返回 code=not-configured
+  并以 ERROR 级记日志（同 code 1 小时内去重），status() 回报 configured=False、
+  degraded=True，健康面板与 /api/health 可见。
 - HTTP 口径（Mimosa 门禁 / SSRF 三重边界）：目标主机限定白名单
   （sctapi.ftqq.com / qyapi.weixin.qq.com / api.telegram.org），强制 https，
   解析 IP 必须 is_global（阻私网/环回/链路本地/元数据端点；本地代理 fake-IP 段
@@ -24,6 +25,7 @@
 """
 import ipaddress
 import json
+import logging
 import os
 import socket
 import time
@@ -52,14 +54,17 @@ DEFAULT_MIN_INTERVAL_H = 6.0   # 同一告警 key 的默认节流窗口
 _TIMEOUT = 8                   # 单渠道推送超时（秒）：告警是尽力而为，不占主链路
 
 
-def _log(msg):
+def _log(msg, level="info"):
     """告警日志：stdout + 追加 .status/logs/notify.log（logutil 统一出口）。
 
     notify 被 server 巡检线程 / fetch_task / us_close_task / watchdog 多进程共用，
     notify.log 是跨进程聚合出口，故用 get_file_logger 复合 logger——notify 被
     哪个进程拉起、推没推成，一个文件看全（2026-09-27 并入 logutil，方案 O-2，
-    此前为手写 open/append，时间戳格式与 stdout 双轨）。"""
-    logutil.get_file_logger("ak.notify", LOG_PATH).info(msg)
+    此前为手写 open/append，时间戳格式与 stdout 双轨）。
+    level：info/error 等 logging 级别名（未配置/全渠道失败走 error，面板与日志
+    同权可见——告警通道本身坏掉也要出声）。"""
+    logutil.get_file_logger("ak.notify", LOG_PATH).log(
+        getattr(logging, level.upper(), logging.INFO), msg)
 
 
 def _safe_float(v, default):
@@ -118,7 +123,12 @@ def load_config():
 
 
 def status():
-    """健康面板可见的推送配置摘要（不含任何密钥明文）。"""
+    """健康面板可见的推送配置摘要（不含任何密钥明文）。
+
+    degraded：告警通道自身是否需要用户介入——未配置任何渠道，或最近一次
+    真实发送全渠道失败且此后没有成功送达，置 True（/api/health 直调）。
+    last_send：最近一次发送终态（含 code/reason/ts），供面板展示。
+    """
     cfg = load_config() or {}
     ch = cfg.get("channels") or {}
     channels = []
@@ -130,11 +140,22 @@ def status():
                   "telegram": c.get("bot_token") and c.get("chat_id")}.get(name)
         if filled:
             channels.append(name)
-    return {"configured": bool(channels), "channels": channels,
+    try:
+        last = _state().get("last") or None
+    except Exception:  # noqa: BLE001 - 状态文件损坏不影响健康摘要
+        last = None
+    if not isinstance(last, dict):
+        last = None
+    configured = bool(channels)
+    degraded = (not configured) or (
+        bool(last) and last.get("sent") is False and last.get("code") == "all-failed")
+    return {"configured": configured, "channels": channels,
             "min_interval_hours": _safe_float(
                 cfg.get("min_interval_hours") or DEFAULT_MIN_INTERVAL_H,
                 DEFAULT_MIN_INTERVAL_H),
-            "config_path": CONFIG_PATH}
+            "config_path": CONFIG_PATH,
+            "degraded": degraded,
+            "last_send": last}
 
 
 def _state():
@@ -168,6 +189,36 @@ def _mark(key):
         save_json_atomic(STATE_PATH, st)
     except Exception as e:  # noqa: BLE001 - 状态写失败只影响节流精度
         _log(f"[warn] state save failed: {type(e).__name__}: {str(e)[:120]}")
+
+
+def _record_receipt(title, key, sent, code, reason):
+    """记录最近一次发送终态，返回 "wrote" / "suppressed" / "error"。
+
+    同一 code 在 1 小时内重复出现 → "suppressed"：不写盘也不额外刷日志，
+    防止 watchdog 每 15 分钟巡检把「未配置/全渠道失败」刷成同一行轰炸。
+    sent=False 的商业告警也一样去重；只有真送达才由 send() 走 _mark 记 key。
+    保留 st["keys"]：先读 _state() 再只改 st["last"]，不覆盖节流记忆。
+    """
+    try:
+        st = _state()
+        if not isinstance(st, dict):
+            st = {}
+        prev = st.get("last") or {}
+        if not isinstance(prev, dict):
+            prev = {}
+        if prev.get("code") == code and \
+                time.time() - _safe_float(prev.get("ts") or 0, 0.0) < 3600:
+            return "suppressed"
+        st["last"] = {"at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                      "ts": time.time(), "title": str(title)[:60],
+                      "key": key or "", "sent": bool(sent), "code": code,
+                      "reason": str(reason or "")[:200]}
+        os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
+        from fsutil import save_json_atomic
+        save_json_atomic(STATE_PATH, st)
+        return "wrote"
+    except Exception:  # noqa: BLE001 - 状态写失败只影响可见性，不影响发送结果
+        return "error"
 
 
 # ---------------------------------------------------------------- 渠道实现
@@ -213,19 +264,23 @@ def _send_telegram(bot_token, chat_id, title, text):
 
 
 def send(title, text="", key=None, min_interval_hours=None):
-    """推送告警到全部已配置渠道。返回 {"sent": bool, ...}；本函数绝不抛错。
+    """推送告警到全部已配置渠道。返回 {"sent": bool, "code": str, ...}；绝不抛错。
 
     key：节流指纹（如 "health:duckdb"）；同一 key 在节流窗口内只推一次。
     min_interval_hours：覆盖配置里的默认窗口（如复审类告警传 24）。
-    未配置渠道 / 同 key 节流中 / 全部渠道失败 → sent=False，原因随返回值。
+    code：ok=至少一个渠道真送达；not-configured=未配置渠道（ERROR 日志 + 1h 去重）；
+    throttled=同 key 节流中（不写 last，不覆盖上次真实结果）；all-failed=全渠道失败。
     """
     st = status()
     if not st["configured"]:
-        return {"sent": False,
-                "reason": "未配置推送渠道（.status/notify.json，模板 backend/notify.example.json）"}
+        reason = "未配置推送渠道（.status/notify.json，模板 backend/notify.example.json）"
+        if _record_receipt(title, key, False, "not-configured", reason) != "suppressed":
+            _log(f"[error] send skipped key={key or '-'} code=not-configured：{reason}",
+                 level="error")
+        return {"sent": False, "code": "not-configured", "reason": reason}
     if _throttled(key, _safe_float(min_interval_hours or st["min_interval_hours"],
                                    st["min_interval_hours"])):
-        return {"sent": False, "reason": "throttled"}
+        return {"sent": False, "code": "throttled", "reason": "throttled"}
     text = text or ""
     results = {}
     ch = (load_config() or {}).get("channels") or {}
@@ -245,11 +300,15 @@ def send(title, text="", key=None, min_interval_hours=None):
             ok, info = False, f"{type(e).__name__}: {str(e)[:120]}"
         results[name] = {"ok": ok, "info": info}
         any_ok = any_ok or ok
-    _log(f"send key={key or '-'} ok={any_ok} "
-         + " ".join(f"{k}={v['info']}" for k, v in results.items()))
+    summary = " ".join(f"{k}={v['info']}" for k, v in results.items())
+    code = "ok" if any_ok else "all-failed"
+    rec = _record_receipt(title, key, any_ok, code, "" if any_ok else summary)
     if any_ok:
+        _log(f"send key={key or '-'} ok=True " + summary)
         _mark(key)
-    return {"sent": any_ok, "channels": results}
+    elif rec != "suppressed":   # 同 code 1 小时内已报过：不再刷 ERROR 日志
+        _log(f"send key={key or '-'} ok=False " + summary, level="error")
+    return {"sent": any_ok, "code": code, "channels": results}
 
 
 # ---------------------------------------------------------------- 自检入口
@@ -263,7 +322,8 @@ if __name__ == "__main__":
     st = status()
     print("推送配置：", json.dumps(st, ensure_ascii=False))
     if not st["configured"]:
-        print("\n未配置任何渠道 → 所有告警静默跳过。请在 "
+        print("\n未配置任何渠道 → send() 返回 sent=False 并记 ERROR"
+              "（同 code 1h 去重），真实推送无法送达。请在 "
               f"{st['config_path']} 里填任意一个：")
         print("  channels.serverchan.sendkey   Server酱 sendkey（sctapi.ftqq.com，微信推送）")
         print("  channels.wecom.webhook        企业微信群机器人完整 webhook 地址")

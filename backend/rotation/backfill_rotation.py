@@ -5,10 +5,10 @@
 保留约两周历史。本脚本拉取板块 5 分钟 K，按天切片合成与 fetch_day.py 相同
 结构的轮动 JSON（时间点粒度 5 分钟，每日 48 点）。
 
-用法：
-    python backend/rotation/backfill_rotation.py            # 自动补缺口
-    python backend/rotation/backfill_rotation.py --from 2026-08-24
-    python backend/rotation/backfill_rotation.py --force 2026-08-26
+用法（LEGACY 口径，必须显式 --legacy；输出落归档目录，不写现行 daily/）：
+    python backend/rotation/backfill_rotation.py --legacy            # 自动补缺口
+    python backend/rotation/backfill_rotation.py --legacy --from 2026-08-24
+    python backend/rotation/backfill_rotation.py --legacy --force 2026-08-26
 """
 import argparse
 import datetime
@@ -39,7 +39,8 @@ BASE_SLEEP = 1.5
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
-DAILY_DIR = os.path.join(config.DATA_DIR, "daily")
+# LEGACY 归档目录：现行 data/rotation/daily 归同花顺链（ths_collect.py / derive.py），本脚本不写
+DAILY_DIR = os.path.join(config.DATA_DIR, "daily_legacy_eastmoney")
 
 
 def em_kline(secid, klt, lmt):
@@ -72,12 +73,31 @@ def trading_dates_calendar():
     return out
 
 
+def _require_legacy(argv=None) -> bool:
+    """LEGACY 显式开关：命中 --legacy 打横幅返回 True；否则打提示返回 False。
+
+    退役脚本默认不执行（调用方拿到 False 后 sys.exit(2)），避免无人察觉地跑旧口径。
+    """
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--legacy" in argv:
+        print(f"【LEGACY · 东财口径】--legacy 已确认：回补写入归档 {DAILY_DIR}（现行 daily/ 不受影响）")
+        return True
+    print(f"【LEGACY · 东财口径】本脚本已退役，回补只进归档目录；"
+          f"确需运行请显式加 --legacy（归档目录：{DAILY_DIR}）。本次不执行、不写任何文件。")
+    return False
+
+
 def main():
-    ap = argparse.ArgumentParser(description="轮动分时历史回补（5分钟K合成）")
+    ap = argparse.ArgumentParser(description="轮动分时历史回补（5分钟K合成，LEGACY 东财口径）")
+    ap.add_argument("--legacy", action="store_true",
+                    help="确认以 LEGACY 东财口径运行（写归档目录，必需；否则退出码 2）")
     ap.add_argument("--from", dest="date_from", default=None)
     ap.add_argument("--force", dest="force_date", default=None,
                     help="强制重抓某日期 YYYY-MM-DD")
     args = ap.parse_args()
+
+    if not _require_legacy(["--legacy"] if args.legacy else []):
+        sys.exit(2)
 
     boards = config.fetch_boards()
     pool = [("industry", b["f12"], b.get("f14") or "", b.get("f20") or 0)

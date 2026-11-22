@@ -100,7 +100,10 @@ A/
 ├── start.py               一键启动（端口检测 + 按 landing 开浏览器，子进程固定 --no-open 不双开）
 ├── CHANGELOG.md           版本变更记录（Keep a Changelog；版本号单一来源 backend/version.py）
 ├── tools/
-│   └── check_outbound.py  CI 出站调用点守卫（backend 裸 requests 必须走 http_retry/netguard，方案 O-1）
+│   ├── check.py           本地门禁一键入口（钉 .venv-ci；pytest quant/tests tests + smoke + outbound + task-entries）
+│   ├── check_outbound.py  CI 出站调用点守卫（backend 裸 requests 必须走 http_retry/netguard，方案 O-1）
+│   ├── check_task_entries.py  任务入口守卫（bat CRLF/无 BOM/编码 + 引用脚本存在且已跟踪）
+│   └── probe_global_cn.py 全球 A 股热力图人工只读探针（--limit 50，不调度/不写 data/）
 ├── backend/
 │   ├── derive.py          派生层：情绪指数/晋级率/轮动统计/强度矩阵/多日轮动动画 → data/*/panel/（带版本号，单日特征缓存增量计算）
 │   ├── landing.py         启动落点单一口径（竞价窗口→/auction，其余→/；server 与 start 共用，可 `python backend/landing.py` 自测）
@@ -126,7 +129,7 @@ A/
 │   │   └── fetch_task.bat 定时任务入口（日志→.status/logs/，尾步骤含 derive+archive）
 │   ├── rotation/          板块日内轮动采集（同花顺一级行业 90 口径）
 │   │   ├── ths_collect.py 轮动采集器：盘中每 60s 批量轮询 881xxx 指数 index snapshot 累积分时（早启等开盘/午间定格续跑/收盘定格退出，盘外补抓只留终态点不造假分钟序列；锁+状态+数据保留）
-│   │   ├── config.py / fetch_day.py / collect.py  旧东财口径脚本（LEGACY 退役，仅供归档数据回溯参考，不再接任务）
+│   │   ├── config.py / fetch_day.py / collect.py / backfill_rotation.py  旧东财口径脚本（LEGACY 退役；fetch_day/backfill/config 必须 --legacy，collect 固定给子进程传 --legacy；输出 daily_legacy_eastmoney/ + boards_legacy.json，默认不清理，--prune 才清；不再接任务）
 │   │   ├── fetch_day_task.bat  定时任务入口（现跑 ths_collect 循环 + derive）
 │   │   └── backfill_ths_daily.py  历史日K回填器（index.history 十年日线→daily_only 两点点位文件，盘中真实日永不覆盖）
 │   ├── global/            全球总览抓取
@@ -144,13 +147,13 @@ A/
 │       └── auction_task.bat 定时任务入口（建议交易日 09:14，日志→.status/logs/fetch-auction.log）
 ├── quant/                 ★ 内置量化引擎（原独立项目整体迁入）
 │   ├── quant_sim/           引擎包：core事件撮合（T+1/涨跌停/整手/成本/滑点/参与率）/ data / strategies / metrics / report / research / tools
-│   ├── tests/               115 项引擎回归测试：python -m pytest quant/tests -q（数目用 pytest quant/tests --collect-only 复核）
+│   ├── tests/               157 项引擎回归测试：python -m pytest quant/tests -q（数目用 pytest quant/tests --collect-only 复核）
 │   ├── data/ results/ strategies_store/   行情缓存 / 研究产物 / 策略存档（引擎自管）
 │   └── docs/                design.md 架构全文 + changelog.md 演进记录
 ├── strategy-iter/         ★ 策略自迭代（C7 固化口径：入选门槛 70 + 非涨停组市场量能闸门，全窗口重跑 61.88%/+2.47%）
 │   ├── engine/              数据/预计算/规则/选股/验证/出轮 引擎（概念与行业双口径单一来源）
-│   ├── scripts/             15 个脚本 + common.py（hithink 抓取公共库）：fetch_symbols 全市场标的表 / fetch_pools 涨停池+龙虎榜 / fetch_industries 行业指数成分与日线 / fetch_concepts 概念指数日线 / export_local 本地 DuckDB→parquet 日线导出 / analyze_round 轮末分析 / backtest_capital 资金曲线回测 / gap_ahead_study 竞价缺口前瞻回验 / exp_c6_variants C7 单变量变体实验 / exp_hold_sizing 持有期与资金管理实验 / c8_candidate_study C8 候选全窗口验证 / c8_factor_ablation C7 逐因素消融审计 / c9_exit_study C9 离场口径逐日推演 / c9_tp_study C9 止盈族否证研究 / c10_seal_study C10 封板日续持（右尾获取）研究
-│   ├── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》；runs 为 git 跟踪的审计证据链，保留规则见 strategy-iter/README.md
+│   ├── scripts/             76 个脚本 + common.py（hithink 抓取公共库）：C6~C20 的抓取/回测/消融/换手与离场实验、影子账本 shadow_0_2_ledger；核心口径抽成纯函数供 tests 引用
+│   ├── runs/ reports/       各轮产物（stats/picks/validation/资金曲线）与《最终筛选方案》；runs 为 git 跟踪的审计证据链，含 runs/shadow_0_2/ 影子账本（date=验证日），保留规则见 strategy-iter/README.md
 │   └── 自动选股与策略自迭代系统.md   系统总文档（验证区间以 engine/data.py 的 SEL_START/SEL_END 为唯一日期源）
 ├── data/
 │   ├── auction/           竞价产出：live.json 最新轮 + final.json 定盘 + series.json 当日轮次全量 + rounds_meta.json 逐轮元数据 + benchmark.json 基准 + sector.json 一级行业指数开盘缺口 + industry_map.json 个股→一级行业全量映射 + watchmap.json（行业/名称/来源）+ watchlist.txt（自选清单）
@@ -160,7 +163,7 @@ A/
 ├── web/                 五个页面（顶栏顺序 = 盯盘节奏：竞价 → 轮动 → 复盘 → 全球 → 量化）
 │   ├── auction/index.html 实时竞价（/auction）：阶段状态条 + 竞价热榜（全量渲染/排序/行业标注）+ 高开低开分布 + 板块竞价强度 + 09:25 定盘 + 强势候选/涨停接力/高开兑现/强弱转换 + 异动提醒 + 采集体检 + 单股竞价曲线弹窗 + 观察池编辑（脚本在 app.js）
 │   ├── index.html         日内轮动（/，根路径入口）：热力图/回放/榜单/自选/研究面板/板块钻取/双日对比/量价视图/导出小结 + 布局预设 + 新鲜度胶囊；页内 iframe 切复盘（脚本在 app.js）
-│   ├── recap/index.html   盘后复盘（/recap）：5 叙事组可折叠 + 情绪指数曲线/涨停池/龙虎榜 + 备选池验证与自我优化卡 + 笔记存服务器 + 投机分析（脚本独立为 app.js，路由 /recap/app.js）
+│   ├── recap/index.html   盘后复盘（/recap）：6 叙事组可折叠（市场温度/主线结构/资金与个股/风险与复盘/投机分析/明日备选池）+ 情绪指数曲线/涨停池/龙虎榜 + 备选池验证与自我优化卡 + 笔记存服务器 + 投机分析（脚本独立为 app.js，路由 /recap/app.js）
 │   ├── global/index.html  全球总览（/global）：五城时钟 + 世界地图 + 中美轮动雷达 + 美/A 热力图 + 走势图三形态（日内分时/折线/日线K线）（脚本在 app.js）
 │   ├── quant/index.html   量化平台（/quant）：六页签工作台—概览/造策略·回测/策略库/选股台/今日信号/参数研究；多策略对比、自包含报告归档直链、行情缓存新鲜度胶囊（脚本在 app.js）
 │   └── lib/
@@ -171,12 +174,14 @@ A/
 │       ├── echarts.min.js 图表库（v5.5.0 本地化）
 │       └── map/world.json 世界地图 GeoJSON
 ├── tests/
-│   ├── smoke.py           冒烟测试：起临时 server 断言 API 契约 + 前端结构（改完跑这个）
-│   └── test_units.py      纯函数单测（环境分档/因子分桶/执行层/日历/重试等）
+│   ├── smoke.py           冒烟测试：起临时 server 断言 API 契约 + 前端结构（会写 .status/）
+│   ├── test_units.py      纯函数单测（环境分档/因子分桶/执行层/日历/重试等）
+│   └── 其余 test_*.py     聚焦回归与对拍（C7 生产常量 vs 引擎、snapio 日期、任务入口、影子账本等）
 ├── assets/                图标与 README 用图（docs/poster-*.jpg 双主题海报、roadmap.jpg 三层总览）
 ├── docs/                  架构总览（ARCHITECTURE.md）+ 各板块文档（README-recap / README-rotation）+ 评审方案；开发日志 PROGRESS.md 仅本地保留，不入库
-│   └── legacy/            合并前的旧版服务与脚本 + 一次性修复脚本归档（仅留痕，不再使用）
-└── .github/               CI：量化引擎回归测试（python -m pytest quant/tests tests；smoke.py 文件名不入 pytest 收集，需本地起服务跑；data/、.status/、.context/ 为本地运行数据与个人笔记，不入库）
+│   ├── repair-sessions/   事故修复脚本与证据（索引与保留规则见该目录 README）
+│   └── legacy/            合并前的旧版服务与脚本（仅留痕，不再维护）
+└── .github/               CI：pytest quant/tests tests + smoke + 出站守卫 + 任务入口守卫 + ruff/mypy/node；data/、.status/、.context/ 为本地运行数据与个人笔记，不入库
 ```
 
 ## 自动任务（Windows 计划任务）
@@ -196,7 +201,7 @@ A/
 
 > **开机自启**不走计划任务（LogonTrigger 需管理员注册），走「启动文件夹」快捷方式：`backend/autostart_task.bat`（最小化 `python start.py --no-browser`）已放入 `shell:startup`，登录后服务自动拉起，不弹浏览器。
 
-> **告警推送（2026-09-15）**：三类事件会主动推到手机——①数据链告警（server 内置 health 巡检线程每 10 分钟扫一次：轮动断流/研究库日线层缺失备源启用/美股因子过期/备份异常/竞价未启动/17:05 采集缺失，key 级 6h 节流）；②任务失败（17:05 采集失败明细、凌晨完成链步骤失败）；③样本外漂移/到期复审（warn/severe）。渠道三选一或同配：复制 `backend/notify.example.json` 为 `.status/notify.json` 填入 Server酱/企业微信/Telegram 凭据即可（.status/ 不入库，密钥安全）；未配置时一切照旧，健康面板 notify 段显示 configured=false。**远程暴露安全**：若经内网穿透等把看板暴露到公网，设环境变量 `AK_READ_TOKEN` 后非本机访问全部 /api、/data 接口须携带 X-AK-Token 头或 ?token=。
+> **告警推送（2026-09-15）**：三类事件会主动推到手机——①数据链告警（server 内置 health 巡检线程每 10 分钟扫一次：轮动断流/研究库日线层缺失备源启用/美股因子过期/备份异常/竞价未启动/17:05 采集缺失，key 级 6h 节流）；②任务失败（17:05 采集失败明细、凌晨完成链步骤失败）；③样本外漂移/到期复审（warn/severe）。渠道三选一或同配：复制 `backend/notify.example.json` 为 `.status/notify.json` 填入 Server酱/企业微信/Telegram 凭据即可（.status/ 不入库，密钥安全）；未配置时 send() 不再静默：记 ERROR 日志并返回 sent=False（code=not-configured，同 code 1 小时去重），健康面板 notify 段显示 configured=false、degraded=true，last_send 记录最近终态；watchdog 的复盘缺口告警只在 sent=True 时写当天已告警（recap_alert_date），未送达则记 recap_alert_last 且同 (date, code) 只留一行、下一轮巡检重试。配好渠道后用 `python backend/notify.py --send` 实发一条验证（未配置时该命令退出码 2）。**远程暴露安全**：若经内网穿透等把看板暴露到公网，设环境变量 `AK_READ_TOKEN` 后非本机访问全部 /api、/data 接口须携带 X-AK-Token 头或 ?token=。
 
 采集链路的真实节奏（示意）：
 
@@ -219,8 +224,8 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 
 1. **npm 包的 .cmd shim 在 bat 里必须 `call` 调用**：`hithink-finance` 实为 npm 生成的 `.cmd`，直接写命令名会被它接管，**父 bat 从此行往后所有步骤静默断掉**。bat 内调子脚本/shim 一律加 `call`，关键步骤退出码用 `set RC_x=%ERRORLEVEL%` 隔离，末尾按主链路显式 `exit /b`。
 2. **电源策略会杀任务**：新建任务默认「电池模式不启动/拔电中止」，笔记本电池供电时实挂秒死（LastTaskResult=255，日志一行不写）。所有任务应改为**不看电池 + StartWhenAvailable 补跑 + 执行时限**；用 `schtasks /Create` 重建会丢这套配置，必须重新补。
-3. **bat 里不要写中文**：cmd 按 GBK 解析 UTF-8 多字节注释会吞行尾换行、把下一行并入注释（实测导致任务 255 早退且首行 echo 都不落盘），bat 应为纯 ASCII；需要中文说明时写在本 README 里。同类教训：PowerShell 5.1 读无 BOM 的 UTF-8 `.ps1` 也按 GBK 解，修复脚本一律纯 ASCII 或 UTF-8 带 BOM。
-4. **空闲条件杀盘中采集任务（最隐蔽）**：任务 XML 里 `<IdleSettings>` 意味着“机器空闲满 10 分钟才启动、用户回来就杀”。盘中时段用户在盯盘＝永不空闲→全天一次不跑、日志零输出。修复：导出 XML 移除 IdleSettings（StopOnIdleEnd=false）后 `schtasks /Create /XML /F` 覆盖；S4U 登录类型需管理员执行。新建任务务必检查「条件」页：不勾「仅当计算机空闲时才启动任务」。
+3. **bat 编码纪律**：bat 必须是 **CRLF + 无 BOM**；首个非 ASCII 字符前必须先 `chcp 65001`（cmd 按 ANSI 解释 bat，乱码会吞行尾换行、把下一行并入注释，实测导致任务 255 早退且首行 echo 都不落盘）。现行约定：能纯 ASCII 就纯 ASCII；确需中文时只放在 `rem`/`::` 注释、`title`、`echo` 文案里，不要放进命令/路径/变量（检查器只要求 chcp 在前，不强制中文只出现在注释），入口引用的 `.py` / `.vbs` 必须存在且 **git 已跟踪**（换机/重装常见坑：任务指向未入库脚本）。以上由 `python tools/check_task_entries.py` 静态检查（CI 与 `tools/check.py` 都会跑）。同类教训：PowerShell 5.1 读无 BOM 的 UTF-8 `.ps1` 也按 GBK 解，修复脚本一律纯 ASCII 或 UTF-8 带 BOM。
+4. **空闲条件杀盘中采集任务（最隐蔽）**：任务 XML 里 `<IdleSettings>` 意味着“机器空闲满 10 分钟才启动、用户回来就杀”。盘中时段用户在盯盘＝永不空闲→全天一次不跑、日志零输出。修复：导出 XML 把 `StopOnIdleEnd` 设为 `false`（缺失 `<IdleSettings>` 则补一个），再 `Register-ScheduledTask -Xml -Force` 覆盖；现成脚本 `docs/repair-sessions/20261122_fix-task-idle.ps1`（需管理员，幂等、先备份 XML、回读校验），新建任务用 `docs/repair-sessions/rebuild-intraday-task.ps1`（已带 `-DontStopOnIdleEnd`）。S4U 登录类型需管理员执行。新建任务务必检查「条件」页：不勾「仅当计算机空闲时才启动任务」。
 
 另：hithink 本地 DuckDB sync 的内存上限默认 `min(1GiB, 总内存×25%)`，库变大后 commit 会报 failed to pin block；fetch_task.bat 已 `set HITHINK_FINANCE_DUCKDB_MEMORY_LIMIT=4GiB`（官方环境变量入口），重建或换机时记得同样带上。
 
@@ -247,15 +252,16 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 
 ## 开发约定
 
-- **改完必跑**：`python tests/smoke.py`（API 契约 + 前端结构断言，含量化接线与竞价 API）；引擎级回归另跑 `python -m pytest quant/tests -q`（115 项）。
+- **改完必跑**：`python tools/check.py`（一条命令，内部优先钉 `.venv-ci` 解释器并清掉裸 `python` 可能带入的 `PYTHONHOME`/`PYTHONPATH`，打印实际使用的解释器；依次跑 `pytest quant/tests tests -q`、`tests/smoke.py`、`tools/check_outbound.py`、`tools/check_task_entries.py`，任一失败返回 1）。smoke 会起临时服务并写 `.status/`；CI 也跑这些步骤（出站守卫等条件步骤仅在 Linux 腿，`data/` 为空时数据相关断言 SKIP）。
 - **交易日历日期一律 8 位**（`20260901`）：`market.calendar` 返回的就是 8 位，所有消费方均按 8 位比较；拿 `"%Y-%m-%d"` 去比不会报错，只会**静默把每个交易日判成休市**。日历探测「不确定」要返回 None（继续采集）而不是 False。
 - **顶栏板块顺序**：只改 `web/lib/appbar.js` 的 `PAGES`（全站单一来源），server.py 路由文档与启动横幅、README 需同步同序；顺序不等于路由映射。
 - **启动落点**：只改 `backend/landing.py`（server.py 与 start.py 都 import 它）；不要把时间判断拷回两个入口。
 - **竞价能力只加采集器不改 HTTP 层**：观察池合并、时间线、批大小均在 `backend/auction/`，server 只读 `data/auction/` 产出并做序列化。
 - **量化能力只加 API 不加 HTTP 层逻辑**：引擎语义（成本/撮合/信号）一律在 quant/quant_sim 内（与 CLI 同口径同测试），server 只做参数校验与序列化；分钟级任务走 run_job.py 子进程（同步回测限 30 标的）。
-- **新增/删模块**：只改 `backend/recap/modules.py` registry，其它处自动对齐。
+- **新增/删模块**：改 `backend/recap/modules.py` 的 `MODULE_REGISTRY` 只是第一步——`providers.fetch_all()` 按 registry 用 `getattr(providers, name)()` 取函数（`backend/recap/providers/__init__.py:110-112`），所以还必须在 `providers/__init__.py`（或其子模块 re-export）提供同名函数，否则抓取时 AttributeError；同时补 `backend/recap/check_snapshot.py` 的 `_check_fields` 字段校验与 `web/recap/` 的渲染，否则新模块只在快照里“存在”但没人校验/展示。
 - **情绪指数权重**：在 `backend/derive.py` 的 `W`/`WEIGHTS_VERSION`，改公式必须递增版本号，历史面板可回溯。
-- **快照只走 `snapio`**，不直接 glob/open（gzip 归档兼容）。
+- **快照只走 `snapio`**，不直接 glob/open（gzip 归档兼容）。日期键只认 8 位 `YYYYMMDD`：`snap_path/load/save` 会把 `"YYYY-MM-DD"` 自动归一化为 8 位并记 warning，其它形状（None/int/空串/斜杠/多一位或少一位/带时间）抛 `ValueError`（首尾空白会先 strip 再判断）；不做日历合法性校验。
+- **C7 生产常量对拍**：生产侧 `backend/recap/spec_pool.py` 的 C7 版本、隔夜美股闸门、NLU 量能闸门与 lu/nlu 门槛，由 `tests/test_c7_parity.py` 与 `strategy-iter/engine/rules.py` 对拍；改任一侧口径必须同步，否则测试变红。
 - **复盘笔记**存 `data/recap/notes/YYYYMMDD.md`（API 读写），浏览器 localStorage 仅作写失败兜底与迁移来源。
 
 ## 数据源
@@ -266,7 +272,7 @@ schtasks /Create /TN areauction-live-fetch /SC DAILY /ST 09:14 ^
 - **竞价**：同花顺 hithink-finance CLI（`market auction-snapshot --stage live|final` 分批 ≤90 只 + `market auction-benchmark` 短期基准 + `market calendar` 交易日校验）；接口为 today-only，当日历史由本站采集器自存 series.json；观察池 = 自选 txt + 最近复盘快照涨停池/热股榜自动补充。
   **关键口径（已实测）：集合竞价结束后，`stage=live` 与 `stage=final` 返回完全相同的 09:25 定盘冻结值（`auction_phase=closed`），只有 `last_price` 随盘中变。** 所以「竞价过程曲线」只能靠 09:15–09:25 本地逐轮留存拿到，事后补抓画不出过程；每轮因此带 `in_window` 标记。
 - **量化平台**：引擎内置 `quant/`（无硬编码路径，换机即用）；行情用 hithink 本地 DuckDB（个股秒级）+ 远端 fund.history（ETF），与复盘板块共享 hithink 基础设施；选股因子缓存 quant/data/screener/，任务临时产物在 data/quant/jobs/
-- **全球总览**：新浪通道为主（环球指数/美股指数/美股个股实时；本网络环境东财 push2 系列接口不通，勿用）；美股个股 5/20 日窗口直接解析新浪 staticdata 日线；A股雷达动量复用本地复盘快照逐日复合，A股热力图行业窗口用快照复合、个股窗口用 hithink 前复权日线（限流自动重试）；世界地图 GeoJSON 已本地化在 web/lib/map/
+- **全球总览**：新浪通道为主（环球指数/美股指数/美股个股实时；本网络环境东财 push2 系列接口不通，勿用）；美股个股 5/20 日窗口直接解析新浪 staticdata 日线；A股雷达动量复用本地复盘快照逐日复合，A股热力图行业窗口用快照复合、个股窗口用 hithink 前复权日线（限流自动重试）；热力图 payload 的 `windows` 字段（`{label,status,n_ok,n_total}`）按实际覆盖计算：0/N → unknown、部分 → partial、全覆盖 → ok，日志对应 `[warn]`/`[ok]`，0/N 不再伪装 ok；人工诊断可跑 `.venv-ci\Scripts\python.exe tools\probe_global_cn.py --limit 50`（Windows；POSIX 用 `.venv-ci/bin/python`；只读探针，不调度、不进 CI、不写 data/）；世界地图 GeoJSON 已本地化在 web/lib/map/
 - **研究库**：hithink 本地 DuckDB（`hithink-finance db query` 可查 10 年日线），每日 data sync 增量（17:05 与次日 04:05 各一次防竞态）；上游未发布时日线层会整层缺口——投机分析验证侧 OHLC 缺行走腾讯前复权日线备源兜底（`spec_ohlc_fb`，行带备源标记；东财 push2 本网络直连不通故弃用），层探测状态落 `.status/duckdb.json`（/api/health `duckdb` 段 + 新鲜度弹窗告警）；全市场扫描（低吸组/偏离/量能）无备源，缺口日诚实降级（量能闸门不启用，`_market_amt_ratio` 拒用错日数据）
 
 ### 上游失败现场采样与应急取数（2026-10-27 起）

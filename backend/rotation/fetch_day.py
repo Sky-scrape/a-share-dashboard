@@ -5,16 +5,21 @@
 本文件与其 trends2/clist 接口只服务东财 BK 历史归档（daily_legacy_eastmoney/），
 不再接入任何计划任务；保留仅为口径回溯参考。
 
-原说明：
-    python fetch_day.py                 # 拉取今天（默认）
-    python fetch_day.py --date 2026-08-10
-    python fetch_day.py --industry 70 --concepts 30   # 调整板块数量
-    python fetch_day.py --refresh       # 强制刷新板块清单
+原说明（现全部为 LEGACY 口径，必须显式 --legacy 才执行）：
+    python fetch_day.py --legacy                 # 拉取今天（默认）写入归档目录
+    python fetch_day.py --legacy --date 2026-08-10
+    python fetch_day.py --legacy --industry 70 --concepts 30   # 调整板块数量
+    python fetch_day.py --legacy --refresh       # 强制刷新板块清单（boards_legacy.json）
+    python fetch_day.py --legacy --prune         # 额外清理归档中超 --keep-days 的文件（默认不清理）
 
 说明:
+    - 不带 --legacy 只打印横幅并以退出码 2 结束，不写任何文件
+    - 输出落在归档侧：data/rotation/daily_legacy_eastmoney/、data/rotation/boards_legacy.json、
+      .status/rotation_legacy.json；现行 data/rotation/daily/ 与 .status/rotation.json 归 ths_collect.py
     - 板块分时接口只提供当日数据，收盘后拉取可获得全天 241 个 1 分钟点
     - 盘中运行也能拉（数据只到当前时刻），配合 collect.py 做盘中监控
     - 接口有频率限制：内置限速 + 指数退避重试 + 错误隔离（单板块失败不影响其他）
+    - 归档清理是 opt-in：只有 --prune 才按 --keep-days 删除旧文件（默认绝不删归档）
 """
 import argparse
 import concurrent.futures as cf
@@ -35,6 +40,9 @@ import fsutil   # noqa: E402  原子写盘单一来源（backend/fsutil.py）
 import lockutil  # noqa: E402
 
 LOCK_PATH = os.path.join(config.PROJECT_ROOT, ".status", "fetch-rotation.lock")
+# LEGACY 归档输出：daily/ 与 .status/rotation.json 归现行同花顺链（ths_collect.py），本脚本不写
+DAILY_DIR = os.path.join(config.DATA_DIR, "daily_legacy_eastmoney")
+STATUS_PATH = os.path.join(config.PROJECT_ROOT, ".status", "rotation_legacy.json")
 
 # 禁用系统代理：直连东财接口（坏代理会导致请求挂起重试）
 os.environ.setdefault("HTTP_PROXY", "")
@@ -124,8 +132,24 @@ def parse_trend(data):
             "pre_ok": pre_close > 0}
 
 
+def _require_legacy(argv=None) -> bool:
+    """LEGACY 显式开关：命中 --legacy 打横幅返回 True；否则打提示返回 False。
+
+    退役脚本默认不执行（调用方拿到 False 后 sys.exit(2)），避免无人察觉地跑旧口径。
+    """
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--legacy" in argv:
+        print(f"【LEGACY · 东财口径】--legacy 已确认：写入归档 {DAILY_DIR}（现行 daily/ 不受影响）")
+        return True
+    print(f"【LEGACY · 东财口径】本脚本已退役，输出只进归档目录；"
+          f"确需运行请显式加 --legacy（归档目录：{DAILY_DIR}）。本次不执行、不写任何文件。")
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--legacy", action="store_true",
+                    help="确认以 LEGACY 东财口径运行（写归档目录，必需；否则退出码 2）")
     ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
     ap.add_argument("--industry", type=int, default=31, help="行业板块数量上限（口径=申万一级，默认全量 31）")
     ap.add_argument("--concepts", type=int, default=0, help="概念板块数量（默认不加）")
@@ -133,8 +157,13 @@ def main():
     ap.add_argument("--force", action="store_true",
                     help="非交易日（周末/节假日）也强制抓取")
     ap.add_argument("--keep-days", type=int, default=120,
-                    help="保留最近 N 天分时数据，更旧的自动清理（默认 120）")
+                    help="保留最近 N 天分时数据（仅与 --prune 联用，默认 120）")
+    ap.add_argument("--prune", action="store_true",
+                    help="清理 daily_legacy_eastmoney 中超 keep-days 的文件（默认关闭：归档不自动删除）")
     args = ap.parse_args()
+
+    if not _require_legacy(["--legacy"] if args.legacy else []):
+        sys.exit(2)
 
     # 跨进程锁：手动重抓与计划任务不并发（拿到锁后退出时释放）
     lock = lockutil.acquire(LOCK_PATH)
@@ -273,17 +302,17 @@ def _run(args):
         "trimmed_note": trimmed_note,
     }
 
-    os.makedirs(os.path.join(config.DATA_DIR, "daily"), exist_ok=True)
-    path = os.path.join(config.DATA_DIR, "daily", f"{args.date}.json")
-    # 原子写（fsutil）：server/derive 随时在读，直写的截断窗口会拿到半截 JSON
+    os.makedirs(DAILY_DIR, exist_ok=True)
+    path = os.path.join(DAILY_DIR, f"{args.date}.json")
+    # 原子写（fsutil）：读取方随时在读，直写的截断窗口会拿到半截 JSON
     fsutil.save_json_atomic(path, out)
     print(f"完成：{len(out['boards'])} 个板块，时间点 {len(out['times'])} 个 -> {path}")
-    # 任务状态：供 /api/health 数据管家展示（失败不影响主流程）
-    # 注意：必须写项目根 .status/（旧版误写 backend/.status 导致 health 永远看旧数据）
+    # 任务状态：LEGACY 专用 .status/rotation_legacy.json（现行 rotation.json 归 ths_collect.py）
     try:
-        st_dir = os.path.join(config.PROJECT_ROOT, ".status")
+        st_dir = os.path.dirname(STATUS_PATH)
         os.makedirs(st_dir, exist_ok=True)
-        fsutil.save_json_atomic(os.path.join(st_dir, "rotation.json"), {
+        fsutil.save_json_atomic(STATUS_PATH, {
+            "legacy": "eastmoney",
             "last_run": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "date": args.date,
             "boards": len(out["boards"]),
@@ -296,19 +325,20 @@ def _run(args):
 
     print(f"耗时 {time.time()-t0:.0f}s；失败 {len(failed)} 个: {failed[:8]}")
 
-    # 数据保留：清理超过 keep_days 天的历史分时文件
-    daily_dir = os.path.join(config.DATA_DIR, "daily")
-    cutoff = datetime.date.today() - datetime.timedelta(days=args.keep_days)
-    for fn in os.listdir(daily_dir):
-        if not (len(fn) == 15 and fn.endswith(".json")):
-            continue
-        try:
-            d = datetime.date.fromisoformat(fn[:10])
-        except ValueError:
-            continue
-        if d < cutoff:
-            os.remove(os.path.join(daily_dir, fn))
-            print(f"  已清理旧数据 {fn}（超 {args.keep_days} 天）")
+    # 数据保留（opt-in）：仅 --prune 时清理归档中超 keep_days 天的历史分时文件
+    if args.prune:
+        daily_dir = DAILY_DIR
+        cutoff = datetime.date.today() - datetime.timedelta(days=args.keep_days)
+        for fn in os.listdir(daily_dir):
+            if not (len(fn) == 15 and fn.endswith(".json")):
+                continue
+            try:
+                d = datetime.date.fromisoformat(fn[:10])
+            except ValueError:
+                continue
+            if d < cutoff:
+                os.remove(os.path.join(daily_dir, fn))
+                print(f"  已清理旧数据 {fn}（超 {args.keep_days} 天）")
 
 
 if __name__ == "__main__":

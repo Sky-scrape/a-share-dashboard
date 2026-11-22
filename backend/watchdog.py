@@ -194,7 +194,7 @@ def _recap_alert(st):
     # 告警链静默失效数天（见 watchdog_task.bat 的 data-2 注释），这里显式兜住。
     try:
         import notify
-        notify.send(
+        res = notify.send(
             title="复盘快照缺失",
             text=(f"{time.strftime('%Y-%m-%d %H:%M')}：最近一个交易日（{today8} 或更早）"
                   "的复盘快照不存在——17:05 采集链失败，或机器休眠/关机错过了任务。\n"
@@ -202,8 +202,19 @@ def _recap_alert(st):
                   "python backend/recap/fetch_daily.py（缺 T 日备选池再跑 "
                   "python backend/recap/us_close_task.py）。\n"
                   "（若本条一直没收到，是 .status/notify.json 尚未配置推送渠道。）"),
-            key=f"watchdog:recap-missing:{today8}", min_interval_hours=12)
-        st["recap_alert_date"] = today8
+            key=f"watchdog:recap-missing:{today8}", min_interval_hours=12) or {}
+        if res.get("sent"):
+            st["recap_alert_date"] = today8      # 只有真送达才消耗当日去重额度
+            st.pop("recap_alert_last", None)
+        else:
+            code = str(res.get("code") or "unknown")
+            last = st.get("recap_alert_last") or {}
+            if last.get("date") != today8 or last.get("code") != code:
+                st["recap_alert_last"] = {"date": today8, "sent": False, "code": code,
+                                          "reason": str(res.get("reason") or "")[:200],
+                                          "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+                _log(f"[warn] 复盘缺口告警未送达（code={code}）："
+                     "当日去重额度未消耗，下一轮巡检重试")
     except Exception as e:  # noqa: BLE001 - 探活链路优先级高于告警
         _log(f"[warn] 复盘缺口告警发送失败（不影响探活）: {type(e).__name__}: {e}")
 

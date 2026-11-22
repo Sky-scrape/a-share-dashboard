@@ -26,6 +26,8 @@ jobs:
       - name: Outbound HTTP guard（出站调用点守卫，backend 裸 requests 必须走 http_retry/netguard）
         if: runner.os == 'Linux'
         run: python tools/check_outbound.py
+      - name: Task entry guard（bat/vbs 行尾、BOM、编码 + 引用存在且已跟踪）
+        run: python tools/check_task_entries.py
       - name: Lint (ruff, 宽松基线见 ruff.toml)
         if: runner.os == 'Linux'
         run: |

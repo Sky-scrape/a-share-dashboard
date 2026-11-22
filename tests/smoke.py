@@ -409,11 +409,14 @@ def main():
         # 2026-09-03 实测：rotation 采集 bat 变 LF 后计划任务全天秒退 255、今日上午整段漏采
         import glob as _glob
         _bad_bats = []
-        for _bf in _glob.glob(os.path.join(ROOT, "backend", "**", "*.bat"), recursive=True):
+        for _bf in (_glob.glob(os.path.join(ROOT, "backend", "**", "*.bat"), recursive=True)
+                    + _glob.glob(os.path.join(ROOT, "*.bat"))):
             _bb = open(_bf, "rb").read()
+            if _bb.startswith(b"\xef\xbb\xbf"):
+                _bad_bats.append(_bf + "（BOM）")
             if _bb and _bb.count(b"\n") != _bb.count(b"\r\n"):
-                _bad_bats.append(_bf)
-        check("所有 backend bat 均为 CRLF 行尾（LF-only 会让 cmd 解析错乱、任务秒退 255）", not _bad_bats)
+                _bad_bats.append(_bf + "（LF-only）")
+        check("backend 与根目录 bat 均为 CRLF、无 BOM（LF-only/BOM 会让 cmd 解析错乱、任务秒退 255）", not _bad_bats)
         check("轮动采集器每轮采集后刷新派生面板（盘中矩阵不再冻结到收盘）",
               "run_derive" in open(os.path.join(ROOT, "backend", "rotation", "ths_collect.py"), encoding="utf-8").read())
         _tc_src = open(os.path.join(ROOT, "backend", "rotation", "ths_collect.py"), encoding="utf-8").read()

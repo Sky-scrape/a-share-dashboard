@@ -26,6 +26,8 @@ strategy-iter/raw/
 # 研究轮次的中间面板（C16~C20 的 panel/pool parquet 合计 300MB+，留在本地复现；
 # 需要入库时 git add -f）
 strategy-iter/runs/**/*.parquet
+# 影子账本 strategy-iter/runs/shadow_0_2/ledger.csv 是审计证据，必须入库；
+# 上面的 parquet 规则不匹配它，勿再加宽 runs/ 的忽略范围
 
 # ---- Python ----
 __pycache__/
@@ -56,6 +58,10 @@ docs/legacy/1.jpg
 Thumbs.db
 .vscode/
 .idea/
+
+# ---- 本地临时副本（不入库）----
+/Microsoft/
+/_tmp_*.py
 
 # 量化引擎在后端目录下的运行时数据缓存（cn_a 本地行情库，运行生成不入库）
 /backend/quant/data/

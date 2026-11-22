@@ -1,4 +1,6 @@
-# rotation-intraday-fetch 重建 v2（v1 属性/参数名错误且已把旧任务注销，必须立即恢复）
+﻿# rotation-intraday-fetch 重建 v2（v1 属性/参数名错误且已把旧任务注销，必须立即恢复）
+# 2026-11-22 补 -DontStopOnIdleEnd：本脚本负责「新建任务」；已存在任务的就地修复
+# 用 20261122_fix-task-idle.ps1（只改 StopOnIdleEnd，不重建触发器/动作）。
 $ErrorActionPreference = 'Stop'
 $bat = 'D:\AsusDownload\Desktop\A\backend\rotation\fetch_day_task.bat'
 $action = New-ScheduledTaskAction -Execute 'cmd' -Argument ("/c " + $bat)
@@ -8,7 +10,8 @@ $settings = New-ScheduledTaskSettingsSet `
   -MultipleInstances IgnoreNew `
   -StartWhenAvailable `
   -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries
+  -DontStopIfGoingOnBatteries `
+  -DontStopOnIdleEnd
 Register-ScheduledTask -TaskName 'rotation-intraday-fetch' -Action $action -Trigger $trigger -Settings $settings | Out-Null
 # 注册后再补日内重复（每 5 分钟重试触发，防常驻进程中途死掉；IgnoreNew 保证不重入）
 $t = Get-ScheduledTask -TaskName 'rotation-intraday-fetch'
